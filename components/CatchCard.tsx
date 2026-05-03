@@ -1,0 +1,121 @@
+'use client';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { Anchor, Globe, Lock, MapPin, MessageCircle, Tent, Users } from 'lucide-react';
+import type { Catch, Profile, Trip } from '@/lib/types';
+import { formatDate, formatWeight } from '@/lib/util';
+import { photoPublicUrl } from '@/lib/db';
+import AvatarBubble from './AvatarBubble';
+
+const SPECIES = [
+  { id: 'common',  label: 'Common',  hue: '#B07A3F' },
+  { id: 'mirror',  label: 'Mirror',  hue: '#C9A961' },
+  { id: 'leather', label: 'Leather', hue: '#7A5A2E' },
+  { id: 'ghost',   label: 'Ghost',   hue: '#D8D2C0' },
+  { id: 'koi',     label: 'Koi',     hue: '#D85B47' },
+  { id: 'other',   label: 'Other',   hue: '#8A9D96' },
+];
+
+function VisibilityIcon({ v }: { v: Catch['visibility'] }) {
+  if (v === 'public') return <Globe size={11} style={{ color: 'var(--sage)' }} />;
+  if (v === 'private') return <Lock size={11} style={{ color: 'var(--text-3)' }} />;
+  return <Users size={11} style={{ color: 'var(--gold-2)' }} />;
+}
+
+export default function CatchCard({ catchData, angler, trip, onClick }: {
+  catchData: Catch;
+  angler: Profile | null;
+  trip: Trip | null;
+  onClick?: () => void;
+}) {
+  const species = SPECIES.find(s => s.id === catchData.species);
+  const commentCount = (catchData.comments || []).length;
+  const [photoErr, setPhotoErr] = useState(false);
+  const photoUrl = catchData.has_photo && angler ? photoPublicUrl(angler.id, catchData.id) : null;
+
+  if (catchData.lost) {
+    return (
+      <div className="card tap fade-in" onClick={onClick} style={{ padding: 14, cursor: 'pointer', borderColor: 'rgba(220,107,88,0.32)', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ width: 40, height: 40, borderRadius: 12, background: 'rgba(220,107,88,0.15)', border: '1px solid rgba(220,107,88,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <Anchor size={18} style={{ color: 'var(--danger)' }} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, marginBottom: 2 }}>
+            {angler && (
+              <Link href={`/profile/${angler.username}`} onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text)', textDecoration: 'none' }}>
+                <AvatarBubble username={angler.username} displayName={angler.display_name} avatarUrl={angler.avatar_url} size={20} link={false} fontWeight={700} />
+                <strong style={{ fontWeight: 600 }}>{angler.display_name}</strong>
+              </Link>
+            )}
+            <span style={{ color: 'var(--text-3)' }}>lost one</span>
+            {commentCount > 0 && <span style={{ marginLeft: 'auto', color: 'var(--text-3)', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 3 }}><MessageCircle size={11} />{commentCount}</span>}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', display: 'flex', alignItems: 'center', gap: 5 }}>
+            <VisibilityIcon v={catchData.visibility} />
+            {formatDate(catchData.date)}
+            {catchData.swim && ` · Swim ${catchData.swim}`}
+            {catchData.rig && ` · ${catchData.rig}`}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card tap fade-in" onClick={onClick} style={{ overflow: 'hidden', cursor: 'pointer' }}>
+      {catchData.has_photo && photoUrl && !photoErr && (
+        <div style={{ width: '100%', aspectRatio: '4/3', background: 'rgba(10,24,22,0.5)', position: 'relative', overflow: 'hidden', borderRadius: '22px 22px 0 0' }}>
+          <img src={photoUrl} alt="" loading="lazy" onError={() => setPhotoErr(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 50%, rgba(5,14,13,0.9))' }} />
+          {trip && (
+            <div style={{ position: 'absolute', top: 12, left: 12 }}>
+              <span className="pill" style={{ background: 'rgba(5,14,13,0.7)', color: 'var(--gold-2)', border: '1px solid rgba(212,182,115,0.4)', backdropFilter: 'blur(8px)' }}>
+                <Tent size={10} /> {trip.name}
+              </span>
+            </div>
+          )}
+          <div style={{ position: 'absolute', bottom: 14, left: 16, right: 16, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
+            <div className="num-display" style={{ fontSize: 38, lineHeight: 0.95, color: 'var(--text)', textShadow: '0 2px 12px rgba(0,0,0,0.5)' }}>
+              {catchData.lbs}<span style={{ fontSize: 22 }}>lb</span>
+              {catchData.oz > 0 && <> {catchData.oz}<span style={{ fontSize: 18 }}>oz</span></>}
+            </div>
+            {species && <span className="pill" style={{ background: `${species.hue}33`, color: species.hue, border: `1px solid ${species.hue}66` }}>{species.label}</span>}
+          </div>
+        </div>
+      )}
+
+      <div style={{ padding: catchData.has_photo && !photoErr ? '14px 16px' : '18px' }}>
+        {(!catchData.has_photo || photoErr) && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12 }}>
+            <div className="num-display" style={{ fontSize: 34, lineHeight: 0.95 }}>
+              {catchData.lbs}<span style={{ fontSize: 18, color: 'var(--text-3)' }}>lb</span>
+              {catchData.oz > 0 && <> {catchData.oz}<span style={{ fontSize: 16, color: 'var(--text-3)' }}>oz</span></>}
+            </div>
+            {species && <span className="pill" style={{ background: `${species.hue}33`, color: species.hue, border: `1px solid ${species.hue}66` }}>{species.label}</span>}
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+          {angler && (
+            <Link href={`/profile/${angler.username}`} onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text)', textDecoration: 'none' }}>
+              <AvatarBubble username={angler.username} displayName={angler.display_name} avatarUrl={angler.avatar_url} size={22} link={false} />
+              <span style={{ fontSize: 14, fontWeight: 600 }}>{angler.display_name}</span>
+            </Link>
+          )}
+          <span style={{ color: 'var(--text-3)', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <VisibilityIcon v={catchData.visibility} /> {formatDate(catchData.date)}
+          </span>
+          {commentCount > 0 && <span style={{ marginLeft: 'auto', color: 'var(--text-3)', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 3 }}><MessageCircle size={12} />{commentCount}</span>}
+        </div>
+        {(catchData.lake || catchData.swim || catchData.bait) && (
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8, fontSize: 12, color: 'var(--text-3)' }}>
+            {catchData.lake && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><MapPin size={12} />{catchData.lake}{catchData.swim ? ` · Swim ${catchData.swim}` : ''}</span>}
+            {!catchData.lake && catchData.swim && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><MapPin size={12} />Swim {catchData.swim}</span>}
+            {catchData.bait && <span>{'🎣'} {catchData.bait}</span>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export { SPECIES };

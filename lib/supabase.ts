@@ -1,12 +1,4 @@
-'use client';
-import { createClient } from '@supabase/supabase-js';
-
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
-export const supabase = createClient(url, anon, {
-  realtime: { params: { eventsPerSecond: 10 } },
-  auth: { persistSession: false },
-});
-
-export const hasSupabase = Boolean(url && anon);
+// Compatibility shim — older imports `import { supabase } from '@/lib/supabase'`
+// continue to resolve. Prefer `@/lib/supabase/client` (browser) or
+// `@/lib/supabase/server` (server components / route handlers) for new code.
+export { supabase, hasSupabase, createClient } from './supabase/client';

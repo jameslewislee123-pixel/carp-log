@@ -1,163 +1,180 @@
 'use client';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Camera, Plus, Trophy, Images, Settings, X, Check, Fish, MapPin, Calendar,
   Edit2, Trash2, ChevronRight, Loader2, Download, ArrowLeft, Sparkles, Crown,
   Cloud, Wind, Thermometer, MessageCircle, Bell, Send, Anchor, BarChart3,
-  Clock, Tent, MapPinned, Moon as MoonIcon, Star,
+  Clock, Tent, MapPinned, Star, Globe, Users as UsersIcon, Lock, LogOut, UserPlus, Mail,
 } from 'lucide-react';
 
-import { hasSupabase, supabase } from '@/lib/supabase';
+import { hasSupabase, supabase } from '@/lib/supabase/client';
 import * as db from '@/lib/db';
 import type {
-  Angler, Catch as CatchT, Comment, Moon as MoonT, NotifyConfig, Trip, Weather,
+  Profile, Catch as CatchT, Comment, Moon as MoonT, NotifyConfig, Trip, TripMember, Weather, CatchVisibility, TripVisibility,
 } from '@/lib/types';
 import {
   formatDate, formatDateRange, formatWeight, totalOz, compressImage, sendTelegram,
 } from '@/lib/util';
 import {
-  getMoonIllumination, getMoonPhaseLabel, getMoonTimes, getSolunarWindows,
+  getMoonIllumination, getMoonPhaseLabel, getSolunarWindows,
   isInSolunarWindow, getBiteRating,
 } from '@/lib/suncalc';
 import { fetchWeatherFor, geocodeLake, getCurrentLocation } from '@/lib/weather';
+import AvatarBubble from './AvatarBubble';
+import VisibilityPicker from './VisibilityPicker';
+import CatchCard, { SPECIES } from './CatchCard';
 
-// ============ CONSTANTS ============
-const SPECIES = [
-  { id: 'common',  label: 'Common',  hue: '#B07A3F' },
-  { id: 'mirror',  label: 'Mirror',  hue: '#C9A961' },
-  { id: 'leather', label: 'Leather', hue: '#7A5A2E' },
-  { id: 'ghost',   label: 'Ghost',   hue: '#D8D2C0' },
-  { id: 'koi',     label: 'Koi',     hue: '#D85B47' },
-  { id: 'other',   label: 'Other',   hue: '#8A9D96' },
-];
 const ANGLER_COLORS = ['#C9A961', '#7BA888', '#D8826B', '#9A8FBF', '#7AA8C4'];
 const WEATHER_CONDITIONS = [
-  { id: 'sunny',     label: 'Sunny',     icon: '☀️' },
-  { id: 'cloudy',    label: 'Cloudy',    icon: '☁️' },
-  { id: 'overcast',  label: 'Overcast',  icon: '🌥️' },
-  { id: 'rain',      label: 'Rain',      icon: '🌧️' },
-  { id: 'storm',     label: 'Storm',     icon: '⛈️' },
-  { id: 'mist',      label: 'Mist',      icon: '🌫️' },
+  { id: 'sunny',    label: 'Sunny',    icon: '☀️' },
+  { id: 'cloudy',   label: 'Cloudy',   icon: '☁️' },
+  { id: 'overcast', label: 'Overcast', icon: '🌥️' },
+  { id: 'rain',     label: 'Rain',     icon: '🌧️' },
+  { id: 'storm',    label: 'Storm',    icon: '⛈️' },
+  { id: 'mist',     label: 'Mist',     icon: '🌫️' },
 ];
 const WIND_DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const LOC_KEY = 'carp_log_loc_v1';
 
-const ME_KEY = 'carp_log_me_v1';
-const LOC_KEY = 'carp_log_loc_v1'; // recent geo cache
-
-// ============ ROOT ============
 export default function CarpApp() {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [anglers, setAnglers] = useState<Angler[]>([]);
-  const [me, setMe] = useState<{ anglerId: string } | null>(null);
+  const [me, setMe] = useState<Profile | null>(null);
   const [catches, setCatches] = useState<CatchT[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
+  const [profilesById, setProfilesById] = useState<Record<string, Profile>>({});
   const [notify, setNotify] = useState<NotifyConfig | null>(null);
-  const [photos, setPhotos] = useState<Record<string, string>>({});
+  const [unread, setUnread] = useState<number>(0);
   const [view, setView] = useState<'feed' | 'trips' | 'stats' | 'gallery'>('feed');
   const [showAdd, setShowAdd] = useState(false);
   const [detailCatch, setDetailCatch] = useState<CatchT | null>(null);
   const [detailTrip, setDetailTrip] = useState<Trip | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [showOnboard, setShowOnboard] = useState(false);
   const [showAddTrip, setShowAddTrip] = useState(false);
   const [editTrip, setEditTrip] = useState<Trip | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
 
-  // Initial load
+  const refreshProfilesFor = useCallback(async (rows: { angler_id?: string; owner_id?: string; comments?: Comment[] }[]) => {
+    const ids = new Set<string>();
+    rows.forEach(r => {
+      if ('angler_id' in r && r.angler_id) ids.add(r.angler_id);
+      if ('owner_id' in r && r.owner_id) ids.add(r.owner_id);
+      if (Array.isArray(r.comments)) r.comments.forEach(c => c.anglerId && ids.add(c.anglerId));
+    });
+    const need = Array.from(ids).filter(id => !profilesById[id]);
+    if (need.length === 0) return;
+    const fetched = await db.listProfilesByIds(need);
+    setProfilesById(prev => {
+      const out = { ...prev };
+      fetched.forEach(p => { out[p.id] = p; });
+      return out;
+    });
+  }, [profilesById]);
+
   useEffect(() => {
     if (!hasSupabase) {
       setSetupError('Supabase env vars are missing. Configure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.');
-      setLoading(false);
-      return;
+      setLoading(false); return;
     }
     (async () => {
       try {
-        const [a, t, c, n] = await Promise.all([
-          db.listAnglers(), db.listTrips(), db.listCatches(), db.getNotify(),
+        const meProfile = await db.getMe();
+        if (!meProfile) { router.replace('/auth/sign-in'); return; }
+        setMe(meProfile);
+        const [cs, ts, n, u] = await Promise.all([
+          db.listCatches(), db.listTrips(), db.getMyNotify(), db.unreadCount(),
         ]);
-        setAnglers(a); setTrips(t); setCatches(c); setNotify(n);
-        const meRaw = typeof window !== 'undefined' ? localStorage.getItem(ME_KEY) : null;
-        const meParsed = meRaw ? JSON.parse(meRaw) : null;
-        const meValid = meParsed && a.find(x => x.id === meParsed.anglerId) ? meParsed : null;
-        setMe(meValid);
-        if (a.length === 0 || !meValid) setShowOnboard(true);
+        setCatches(cs); setTrips(ts); setNotify(n); setUnread(u);
+        const ids = new Set<string>();
+        cs.forEach(c => { ids.add(c.angler_id); (c.comments || []).forEach(cm => cm.anglerId && ids.add(cm.anglerId)); });
+        ts.forEach(t => ids.add(t.owner_id));
+        ids.add(meProfile.id);
+        const arr = Array.from(ids);
+        if (arr.length) {
+          const profs = await db.listProfilesByIds(arr);
+          const map: Record<string, Profile> = {};
+          profs.forEach(p => { map[p.id] = p; });
+          map[meProfile.id] = meProfile;
+          setProfilesById(map);
+        }
       } catch (e: any) {
         setSetupError(e?.message || 'Failed to load data');
-      } finally {
-        setLoading(false);
-      }
+      } finally { setLoading(false); }
     })();
-  }, []);
+  }, [router]);
 
-  // Realtime subscriptions
+  // Realtime subscriptions: catches, trips, notifications.
   useEffect(() => {
-    if (!hasSupabase) return;
-    const ch = supabase
+    if (!hasSupabase || !me) return;
+    const ch = supabase()
       .channel('carp-log-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'catches' }, async () => {
-        try { setCatches(await db.listCatches()); } catch {}
+        try {
+          const cs = await db.listCatches();
+          setCatches(cs);
+          await refreshProfilesFor(cs);
+        } catch {}
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trips' }, async () => {
-        try { setTrips(await db.listTrips()); } catch {}
+        try { const ts = await db.listTrips(); setTrips(ts); await refreshProfilesFor(ts); } catch {}
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'anglers' }, async () => {
-        try { setAnglers(await db.listAnglers()); } catch {}
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notify_config' }, async () => {
-        try { setNotify(await db.getNotify()); } catch {}
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${me.id}` }, async () => {
+        setUnread(await db.unreadCount());
       })
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, []);
+    return () => { supabase().removeChannel(ch); };
+  }, [me, refreshProfilesFor]);
 
-  const getPhoto = useCallback(async (id: string) => {
-    if (photos[id]) return photos[id];
-    const p = await db.getPhoto(id);
-    if (p) setPhotos(prev => ({ ...prev, [id]: p }));
-    return p;
-  }, [photos]);
-
-  const meAngler = anglers.find(a => a.id === me?.anglerId) || null;
-
+  const meAngler = me;
   const activeTrips = useMemo(() => trips.filter(t => {
     const now = Date.now();
     return new Date(t.start_date).getTime() <= now && new Date(t.end_date).getTime() >= now - 86400000;
   }), [trips]);
 
-  // Save catch (with telegram + photo)
-  async function saveCatch(input: db.CatchInput, photo: string | null, isNew: boolean) {
+  async function saveCatch(input: db.CatchInput, photoDataUrl: string | null, isNew: boolean) {
     const saved = await db.upsertCatch(input);
-    if (photo) {
-      await db.setPhoto(saved.id, photo);
-      setPhotos(prev => ({ ...prev, [saved.id]: photo }));
+    if (photoDataUrl) {
+      try { await db.uploadPhotoFromDataUrl(saved.id, photoDataUrl); } catch (e) { console.warn('photo upload failed', e); }
     }
-    if (isNew && notify?.enabled) {
-      const angler = anglers.find(a => a.id === saved.angler_id);
-      const species = SPECIES.find(s => s.id === saved.species);
-      let msg: string;
-      if (saved.lost) {
-        msg = `💔 <b>${angler?.name || ''}</b> lost one${saved.swim ? ` at swim ${saved.swim}` : ''}${saved.rig ? ` on a ${saved.rig}` : ''}`;
-      } else {
-        msg = `🎣 <b>${angler?.name || ''}</b> just banked <b>${formatWeight(saved.lbs, saved.oz)}</b>${species ? ` ${species.label.toLowerCase()}` : ''}${saved.lake ? ` at ${saved.lake}` : ''}${saved.swim ? ` (swim ${saved.swim})` : ''}`;
-        if (saved.bait) msg += `\n🎯 Bait: ${saved.bait}`;
+    if (isNew) {
+      // 1) Personal Telegram alert if user has notify enabled
+      if (notify?.enabled) {
+        const species = SPECIES.find(s => s.id === saved.species);
+        const msg = saved.lost
+          ? `💔 <b>${me?.display_name || ''}</b> lost one${saved.swim ? ` at swim ${saved.swim}` : ''}${saved.rig ? ` on a ${saved.rig}` : ''}`
+          : `🎣 <b>${me?.display_name || ''}</b> just banked <b>${formatWeight(saved.lbs, saved.oz)}</b>${species ? ` ${species.label.toLowerCase()}` : ''}${saved.lake ? ` at ${saved.lake}` : ''}${saved.swim ? ` (swim ${saved.swim})` : ''}${saved.bait ? `\n🎯 Bait: ${saved.bait}` : ''}`;
+        sendTelegram({ token: notify.token, chat_id: notify.chat_id, enabled: notify.enabled }, msg);
       }
-      sendTelegram({ token: notify.token, chat_id: notify.chat_id, enabled: notify.enabled }, msg);
+      // 2) If trip-attached, ping the trip owner's Telegram (different person than me).
+      if (saved.trip_id) {
+        const trip = trips.find(t => t.id === saved.trip_id);
+        if (trip && trip.owner_id !== me?.id) {
+          const ownerCfg = await db.getNotifyForAngler(trip.owner_id).catch(() => null);
+          if (ownerCfg?.enabled) {
+            const msg = saved.lost
+              ? `💔 <b>${me?.display_name || ''}</b> lost one on your trip <b>${trip.name}</b>`
+              : `🎣 <b>${me?.display_name || ''}</b> banked <b>${formatWeight(saved.lbs, saved.oz)}</b> on your trip <b>${trip.name}</b>`;
+            sendTelegram({ token: ownerCfg.token, chat_id: ownerCfg.chat_id, enabled: ownerCfg.enabled }, msg);
+          }
+        }
+      }
     }
     return saved;
   }
+
   async function deleteCatchHandler(id: string) {
     await db.deleteCatch(id);
-    setPhotos(prev => { const n = { ...prev }; delete n[id]; return n; });
   }
+
   async function addComment(catchId: string, text: string) {
     if (!me) return;
-    const angler = anglers.find(a => a.id === me.anglerId);
-    if (!angler) return;
     const cur = catches.find(c => c.id === catchId);
     const next: Comment[] = [...(cur?.comments || []), {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-      anglerId: me.anglerId, anglerName: angler.name, text, ts: Date.now(),
+      anglerId: me.id, anglerName: me.display_name, text, ts: Date.now(),
     }];
     await db.setComments(catchId, next);
     if (detailCatch?.id === catchId) setDetailCatch(d => d ? { ...d, comments: next } : d);
@@ -168,112 +185,69 @@ export default function CarpApp() {
     await db.setComments(catchId, next);
     if (detailCatch?.id === catchId) setDetailCatch(d => d ? { ...d, comments: next } : d);
   }
-  async function saveTripHandler(input: Partial<Trip> & { name: string; start_date: string; end_date: string }) {
+  async function saveTripHandler(input: Partial<Trip> & { name: string; start_date: string; end_date: string; visibility?: TripVisibility }) {
     await db.upsertTrip(input);
   }
   async function deleteTripHandler(id: string) { await db.deleteTrip(id); }
-  async function saveNotifyHandler(n: NotifyConfig) { await db.setNotify(n); setNotify(n); }
-  async function saveMeHandler(m: { anglerId: string }) {
-    setMe(m); localStorage.setItem(ME_KEY, JSON.stringify(m));
-  }
-  async function saveAnglersHandler(rows: Angler[]) {
-    await db.updateAnglers(rows);
-    setAnglers(await db.listAnglers());
+  async function saveNotifyHandler(n: { token: string | null; chat_id: string | null; enabled: boolean }) {
+    await db.saveMyNotify(n); setNotify(await db.getMyNotify());
   }
 
-  if (setupError) {
-    return (
-      <div className="app-root">
-        <div className="app-content" style={{ padding: 24 }}>
-          <h1 className="display-font" style={{ fontSize: 28, color: 'var(--gold-2)' }}>Carp Log</h1>
-          <p style={{ color: 'var(--text-2)' }}>{setupError}</p>
-          <p style={{ color: 'var(--text-3)', fontSize: 13 }}>
-            Add your env vars on Vercel and redeploy, or copy <code>.env.local.example</code> to <code>.env.local</code>.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  if (setupError) return (
+    <div className="app-root"><div className="app-content" style={{ padding: 24 }}>
+      <h1 className="display-font" style={{ fontSize: 28, color: 'var(--gold-2)' }}>Carp Log</h1>
+      <p style={{ color: 'var(--text-2)' }}>{setupError}</p>
+    </div></div>
+  );
 
-  if (loading) {
-    return (
-      <div className="app-root">
-        <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
-          <Fish size={48} style={{ color: 'var(--gold)' }} />
-          <Loader2 size={20} className="spin" style={{ color: 'var(--text-3)' }} />
-        </div>
-      </div>
-    );
-  }
-
-  if (showOnboard) {
-    return (
-      <Onboarding
-        existingAnglers={anglers}
-        onComplete={async (newAnglers, meId) => {
-          if (anglers.length === 0) {
-            const created = await db.bulkSetAnglers(newAnglers.map(a => ({ name: a.name, color: a.color })));
-            setAnglers(created);
-            const target = created.find(c => c.name === newAnglers.find(x => x.tempId === meId)?.name);
-            if (target) {
-              const m = { anglerId: target.id };
-              setMe(m); localStorage.setItem(ME_KEY, JSON.stringify(m));
-            }
-          } else {
-            const m = { anglerId: meId };
-            setMe(m); localStorage.setItem(ME_KEY, JSON.stringify(m));
-          }
-          setShowOnboard(false);
-        }}
-      />
-    );
-  }
+  if (loading || !me) return (
+    <div className="app-root"><div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
+      <Fish size={48} style={{ color: 'var(--gold)' }} />
+      <Loader2 size={20} className="spin" style={{ color: 'var(--text-3)' }} />
+    </div></div>
+  );
 
   return (
     <div className="app-root">
       <div className="app-content">
-        <Header me={meAngler} onSettings={() => setShowSettings(true)} view={view} />
+        <Header me={meAngler} unread={unread} onSettings={() => setShowSettings(true)} view={view} />
 
         {view === 'feed' && (
           <Feed
-            catches={catches} trips={trips} anglers={anglers} photos={photos} getPhoto={getPhoto}
+            me={me} catches={catches} trips={trips} profilesById={profilesById}
             onOpen={setDetailCatch} onOpenTrip={setDetailTrip}
           />
         )}
         {view === 'trips' && (
           <TripsView
-            trips={trips} catches={catches}
+            me={me} trips={trips} catches={catches} profilesById={profilesById}
             onOpenTrip={setDetailTrip}
             onAddTrip={() => { setEditTrip(null); setShowAddTrip(true); }}
           />
         )}
         {view === 'stats' && (
-          <Stats catches={catches} anglers={anglers} photos={photos} getPhoto={getPhoto} onOpen={setDetailCatch} />
+          <Stats catches={catches} profilesById={profilesById} me={me} onOpen={setDetailCatch} />
         )}
         {view === 'gallery' && (
-          <Gallery catches={catches} photos={photos} getPhoto={getPhoto} onOpen={setDetailCatch} />
+          <Gallery catches={catches} profilesById={profilesById} onOpen={setDetailCatch} />
         )}
       </div>
 
       <FAB onClick={() => setShowAdd(true)} />
       <BottomNav view={view} onChange={setView} />
 
-      {showAdd && me && (
+      {showAdd && (
         <AddCatchModal
-          anglers={anglers} me={me} trips={trips} activeTrips={activeTrips}
+          me={me} trips={trips} activeTrips={activeTrips}
           onClose={() => setShowAdd(false)}
           onSave={async (data, photo) => { await saveCatch(data, photo, true); setShowAdd(false); }}
         />
       )}
-
-      {detailCatch && me && (
+      {detailCatch && (
         <CatchDetail
-          catchData={detailCatch} photo={photos[detailCatch.id]}
-          getPhoto={getPhoto} anglers={anglers} me={me} trips={trips}
+          catchData={detailCatch} me={me} profilesById={profilesById} trips={trips}
           onClose={() => setDetailCatch(null)}
-          onDelete={async () => {
-            if (confirm('Delete this catch?')) { await deleteCatchHandler(detailCatch.id); setDetailCatch(null); }
-          }}
+          onDelete={async () => { if (confirm('Delete this catch?')) { await deleteCatchHandler(detailCatch.id); setDetailCatch(null); } }}
           onUpdate={async (data, photo) => {
             const saved = await saveCatch({ ...data, id: detailCatch.id }, photo, false);
             setDetailCatch(saved);
@@ -283,21 +257,17 @@ export default function CarpApp() {
           onOpenTrip={(t) => { setDetailCatch(null); setDetailTrip(t); }}
         />
       )}
-
       {detailTrip && (
         <TripDetail
-          trip={detailTrip} catches={catches} anglers={anglers} photos={photos} getPhoto={getPhoto}
+          me={me} trip={detailTrip} catches={catches} profilesById={profilesById}
           onClose={() => setDetailTrip(null)}
           onEdit={() => { setEditTrip(detailTrip); setShowAddTrip(true); setDetailTrip(null); }}
           onDelete={async () => {
-            if (confirm('Delete this trip? Catches will stay but become unlinked.')) {
-              await deleteTripHandler(detailTrip.id); setDetailTrip(null);
-            }
+            if (confirm('Delete this trip? Catches will stay but become unlinked.')) { await deleteTripHandler(detailTrip.id); setDetailTrip(null); }
           }}
           onOpenCatch={setDetailCatch}
         />
       )}
-
       {showAddTrip && (
         <AddTripModal
           existing={editTrip}
@@ -305,13 +275,11 @@ export default function CarpApp() {
           onSave={async (data) => { await saveTripHandler(data); setShowAddTrip(false); setEditTrip(null); }}
         />
       )}
-
-      {showSettings && me && (
+      {showSettings && (
         <SettingsModal
-          anglers={anglers} me={me} catches={catches} trips={trips} notify={notify}
+          me={me} catches={catches} trips={trips} notify={notify}
           onClose={() => setShowSettings(false)}
-          onSaveAnglers={saveAnglersHandler}
-          onSaveMe={saveMeHandler}
+          onSaveProfile={async (patch) => { const updated = await db.updateProfile(patch); if (updated) setMe(updated); }}
           onSaveNotify={saveNotifyHandler}
         />
       )}
@@ -319,170 +287,103 @@ export default function CarpApp() {
   );
 }
 
-// ============ ONBOARDING ============
-function Onboarding({
-  existingAnglers,
-  onComplete,
-}: {
-  existingAnglers: Angler[];
-  onComplete: (anglers: { tempId: string; name: string; color: string }[], meId: string) => void;
-}) {
-  const [step, setStep] = useState(existingAnglers.length > 0 ? 1 : 0);
-  const initial = existingAnglers.length > 0
-    ? existingAnglers.map(a => ({ tempId: a.id, name: a.name, color: a.color }))
-    : [
-        { tempId: 'a1', name: '', color: ANGLER_COLORS[0] },
-        { tempId: 'a2', name: '', color: ANGLER_COLORS[1] },
-        { tempId: 'a3', name: '', color: ANGLER_COLORS[2] },
-      ];
-  const [anglers, setAnglers] = useState(initial);
-  const [meTempId, setMeTempId] = useState<string | null>(null);
-
-  return (
-    <div className="app-root">
-      <div className="app-content" style={{ padding: '60px 24px 40px' }}>
-        {step === 0 && (
-          <div className="fade-in">
-            <Fish size={40} style={{ color: 'var(--gold)', marginBottom: 24 }} />
-            <h1 className="display-font" style={{ fontSize: 38, lineHeight: 1.05, margin: '0 0 12px', fontWeight: 500, letterSpacing: '-0.02em' }}>The Carp Log</h1>
-            <p style={{ color: 'var(--text-2)', fontSize: 16, margin: '0 0 32px', lineHeight: 1.5 }}>
-              Track every fish, every trip. Shared between you and your mates in real time.
-            </p>
-            <label className="label">Your fishing crew</label>
-            <p style={{ color: 'var(--text-3)', fontSize: 13, marginTop: -4, marginBottom: 16 }}>
-              Add the names of everyone in your group. You can edit these later.
-            </p>
-            {anglers.map((a, i) => (
-              <div key={a.tempId} style={{ display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center' }}>
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: a.color, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#1A1004', fontWeight: 700 }}>
-                  {a.name ? a.name[0].toUpperCase() : '?'}
-                </div>
-                <input
-                  className="input" placeholder={`Angler ${i + 1}`} value={a.name}
-                  onChange={(e) => { const n = [...anglers]; n[i] = { ...n[i], name: e.target.value }; setAnglers(n); }}
-                />
-              </div>
-            ))}
-            <button
-              className="btn btn-primary"
-              style={{ width: '100%', marginTop: 24, fontSize: 16, padding: '16px' }}
-              disabled={!anglers.every(a => a.name.trim())}
-              onClick={() => setStep(1)}
-            >
-              Continue <ChevronRight size={18} />
-            </button>
-          </div>
-        )}
-        {step === 1 && (
-          <div className="fade-in">
-            <Sparkles size={32} style={{ color: 'var(--gold)', marginBottom: 24 }} />
-            <h1 className="display-font" style={{ fontSize: 32, lineHeight: 1.1, margin: '0 0 12px', fontWeight: 500, letterSpacing: '-0.02em' }}>Which one are you?</h1>
-            <p style={{ color: 'var(--text-2)', fontSize: 15, margin: '0 0 32px' }}>We'll attribute your catches automatically on this device.</p>
-            {anglers.map(a => (
-              <button
-                key={a.tempId} className="tap"
-                onClick={() => setMeTempId(a.tempId)}
-                style={{
-                  width: '100%', padding: 16, marginBottom: 10,
-                  background: meTempId === a.tempId ? 'rgba(212,182,115,0.10)' : 'rgba(20,42,38,0.55)',
-                  border: `1px solid ${meTempId === a.tempId ? 'var(--gold)' : 'rgba(234,201,136,0.14)'}`,
-                  backdropFilter: 'blur(12px) saturate(180%)',
-                  WebkitBackdropFilter: 'blur(12px) saturate(180%)',
-                  borderRadius: 16, display: 'flex', alignItems: 'center', gap: 14,
-                  cursor: 'pointer', textAlign: 'left', color: 'var(--text)', fontFamily: 'inherit',
-                }}
-              >
-                <div style={{ width: 44, height: 44, borderRadius: 12, background: a.color, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#1A1004', fontWeight: 700, fontSize: 18 }}>
-                  {a.name[0]?.toUpperCase()}
-                </div>
-                <span style={{ flex: 1, fontSize: 17, fontWeight: 500 }}>{a.name}</span>
-                {meTempId === a.tempId && <Check size={20} style={{ color: 'var(--gold)' }} />}
-              </button>
-            ))}
-            <button
-              className="btn btn-primary"
-              style={{ width: '100%', marginTop: 24, fontSize: 16, padding: '16px' }}
-              disabled={!meTempId}
-              onClick={() => meTempId && onComplete(anglers, meTempId)}
-            >
-              Start tracking <ChevronRight size={18} />
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ============ HEADER ============
-function Header({ me, onSettings, view }: { me: Angler | null; onSettings: () => void; view: string }) {
+function Header({ me, unread, onSettings, view }: { me: Profile | null; unread: number; onSettings: () => void; view: string }) {
   const titles: Record<string, string> = { feed: 'The Log', trips: 'Trips', stats: 'The Board', gallery: 'Gallery' };
   return (
-    <div style={{ padding: '24px 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-      <div>
+    <div style={{ padding: '24px 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--text-3)', fontWeight: 600 }}>Carp Tracker</div>
         <h1 className="display-font" style={{ fontSize: 30, margin: '2px 0 0', fontWeight: 500, letterSpacing: '-0.02em' }}>{titles[view]}</h1>
       </div>
-      <button
-        onClick={onSettings} className="tap"
-        style={{
-          width: 42, height: 42, borderRadius: 14,
-          background: me?.color || 'var(--bg-2)',
-          border: 'none', cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: '#1A1004', fontWeight: 700, fontSize: 16,
-          boxShadow: '0 4px 14px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.3)',
-        }}
-      >
-        {me?.name?.[0]?.toUpperCase() || <Settings size={18} />}
+      <Link href="/notifications" className="tap" style={{
+        position: 'relative', width: 42, height: 42, borderRadius: 14,
+        background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.14)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: 'var(--text-2)', textDecoration: 'none',
+        backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+      }}>
+        <Bell size={18} />
+        {unread > 0 && (
+          <span style={{ position: 'absolute', top: 6, right: 6, minWidth: 16, height: 16, padding: '0 4px',
+            borderRadius: 8, background: 'var(--danger)', color: '#FFF', fontSize: 10, fontWeight: 700,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
+      </Link>
+      <Link href="/friends" className="tap" style={{
+        width: 42, height: 42, borderRadius: 14,
+        background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.14)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: 'var(--text-2)', textDecoration: 'none',
+        backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+      }}>
+        <UsersIcon size={18} />
+      </Link>
+      <button onClick={onSettings} className="tap" style={{
+        width: 42, height: 42, borderRadius: 14,
+        background: me?.avatar_url ? `center/cover no-repeat url("${me.avatar_url}")` : (me ? 'var(--gold)' : 'rgba(10,24,22,0.55)'),
+        border: '1px solid rgba(234,201,136,0.18)', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: '#1A1004', fontWeight: 700, fontSize: 16,
+        boxShadow: '0 4px 14px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.3)',
+      }}>
+        {!me?.avatar_url && (me?.display_name?.[0]?.toUpperCase() || <Settings size={18} />)}
       </button>
     </div>
   );
 }
 
 // ============ FEED ============
-function Feed({
-  catches, trips, anglers, photos, getPhoto, onOpen, onOpenTrip,
-}: {
-  catches: CatchT[]; trips: Trip[]; anglers: Angler[]; photos: Record<string, string>;
-  getPhoto: (id: string) => Promise<string | null>;
+function Feed({ me, catches, trips, profilesById, onOpen, onOpenTrip }: {
+  me: Profile;
+  catches: CatchT[]; trips: Trip[]; profilesById: Record<string, Profile>;
   onOpen: (c: CatchT) => void; onOpenTrip: (t: Trip) => void;
 }) {
-  const [filter, setFilter] = useState<string>('all');
-
+  const [filter, setFilter] = useState<'all' | 'mine' | string>('all');
   const filtered = useMemo(() => {
     const sorted = [...catches].sort((a, b) => +new Date(b.date) - +new Date(a.date));
     if (filter === 'all') return sorted;
+    if (filter === 'mine') return sorted.filter(c => c.angler_id === me.id);
     return sorted.filter(c => c.angler_id === filter);
-  }, [catches, filter]);
+  }, [catches, filter, me.id]);
 
   const activeTrip = useMemo(() => {
     const now = Date.now();
     return trips.find(t => +new Date(t.start_date) <= now && +new Date(t.end_date) >= now - 86400000);
   }, [trips]);
 
+  // chips show distinct anglers visible in the feed (sorted: me first, then others by recency)
+  const anglerChips = useMemo(() => {
+    const seen = new Set<string>();
+    const order: string[] = [];
+    for (const c of catches) {
+      if (!seen.has(c.angler_id)) { seen.add(c.angler_id); order.push(c.angler_id); }
+    }
+    return order
+      .map(id => profilesById[id])
+      .filter((p): p is Profile => !!p && p.id !== me.id);
+  }, [catches, profilesById, me.id]);
+
   return (
     <div style={{ padding: '8px 20px' }}>
       <BiteForecast catches={catches} />
-      {activeTrip && (
-        <ActiveTripBanner trip={activeTrip} catches={catches} onClick={() => onOpenTrip(activeTrip)} />
-      )}
+      {activeTrip && <ActiveTripBanner trip={activeTrip} catches={catches} onClick={() => onOpenTrip(activeTrip)} />}
       <div className="scrollbar-thin" style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 16, paddingBottom: 4 }}>
-        <Chip active={filter === 'all'} onClick={() => setFilter('all')}>All catches</Chip>
-        {anglers.map(a => (
-          <Chip key={a.id} active={filter === a.id} onClick={() => setFilter(a.id)} color={a.color}>{a.name}</Chip>
+        <Chip active={filter === 'all'}  onClick={() => setFilter('all')}>All visible</Chip>
+        <Chip active={filter === 'mine'} onClick={() => setFilter('mine')}>My catches</Chip>
+        {anglerChips.map(p => (
+          <Chip key={p.id} active={filter === p.id} onClick={() => setFilter(p.id)}>{p.display_name}</Chip>
         ))}
       </div>
       {filtered.length === 0 ? <EmptyState /> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {filtered.map(c => (
-            <CatchCard
-              key={c.id} catchData={c}
-              angler={anglers.find(a => a.id === c.angler_id) || null}
+            <CatchCard key={c.id} catchData={c}
+              angler={profilesById[c.angler_id] || null}
               trip={c.trip_id ? trips.find(t => t.id === c.trip_id) || null : null}
-              photo={photos[c.id]} getPhoto={getPhoto}
-              onClick={() => onOpen(c)}
-            />
+              onClick={() => onOpen(c)} />
           ))}
         </div>
       )}
@@ -490,12 +391,10 @@ function Feed({
   );
 }
 
-// ============ BITE FORECAST ============
+// ============ BITE FORECAST (unchanged from v1) ============
 function BiteForecast({ catches }: { catches: CatchT[] }) {
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
-
-  // Pick coords: prefer GPS, fallback to last lake from catches, fallback London
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -503,22 +402,15 @@ function BiteForecast({ catches }: { catches: CatchT[] }) {
       if (stored) { try { const j = JSON.parse(stored); if (!cancelled) setCoords(j); return; } catch {} }
       const gps = await getCurrentLocation();
       if (gps) {
-        if (!cancelled) {
-          setCoords(gps);
-          localStorage.setItem(LOC_KEY, JSON.stringify(gps));
-        }
+        if (!cancelled) { setCoords(gps); localStorage.setItem(LOC_KEY, JSON.stringify(gps)); }
         return;
       }
       const lastWithLake = [...catches].reverse().find(c => c.lake);
       if (lastWithLake?.lake) {
         const g = await geocodeLake(lastWithLake.lake);
-        if (g && !cancelled) {
-          setCoords(g);
-          localStorage.setItem(LOC_KEY, JSON.stringify(g));
-          return;
-        }
+        if (g && !cancelled) { setCoords(g); localStorage.setItem(LOC_KEY, JSON.stringify(g)); return; }
       }
-      if (!cancelled) setCoords({ lat: 52.05, lng: -0.7 }); // UK midlands fallback
+      if (!cancelled) setCoords({ lat: 52.05, lng: -0.7 });
     })();
     return () => { cancelled = true; };
   }, [catches.length]);
@@ -534,48 +426,32 @@ function BiteForecast({ catches }: { catches: CatchT[] }) {
     const upcoming = windows.filter(w => w.start.getTime() > now.getTime()).slice(0, 1)[0] || null;
     return { ill, phaseInfo, rating, windows, cur, upcoming };
   }, [coords]);
-
   if (!data) return null;
   const { phaseInfo, ill, rating, windows, cur, upcoming } = data;
-
   return (
-    <div
-      onClick={() => setOpen(o => !o)}
-      className="fade-in"
-      style={{
-        marginBottom: 14,
-        padding: 14,
-        borderRadius: 22,
-        background: 'linear-gradient(135deg, rgba(234,201,136,0.18), rgba(212,182,115,0.06))',
-        border: '1px solid rgba(234, 201, 136, 0.35)',
-        backdropFilter: 'blur(28px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(28px) saturate(180%)',
-        cursor: 'pointer',
-        position: 'relative',
-        overflow: 'hidden',
-        boxShadow: '0 10px 30px -10px rgba(212,182,115,0.25)',
-      }}
-    >
+    <div onClick={() => setOpen(o => !o)} className="fade-in" style={{
+      marginBottom: 14, padding: 14, borderRadius: 22,
+      background: 'linear-gradient(135deg, rgba(234,201,136,0.18), rgba(212,182,115,0.06))',
+      border: '1px solid rgba(234, 201, 136, 0.35)',
+      backdropFilter: 'blur(28px) saturate(180%)', WebkitBackdropFilter: 'blur(28px) saturate(180%)',
+      cursor: 'pointer', position: 'relative', overflow: 'hidden',
+      boxShadow: '0 10px 30px -10px rgba(212,182,115,0.25)',
+    }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div style={{ fontSize: 36, lineHeight: 1, filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.4))' }}>{phaseInfo.emoji}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--gold-2)', fontWeight: 700 }}>Bite Forecast</div>
-          <div className="display-font" style={{ fontSize: 18, color: 'var(--text)', fontWeight: 500 }}>
-            {phaseInfo.label} · {(ill.fraction * 100).toFixed(0)}%
-          </div>
+          <div className="display-font" style={{ fontSize: 18, color: 'var(--text)', fontWeight: 500 }}>{phaseInfo.label} · {(ill.fraction * 100).toFixed(0)}%</div>
           <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 1 }}>{rating.reason}</div>
         </div>
         <div style={{ display: 'flex', gap: 1 }}>
           {Array.from({ length: 5 }).map((_, i) => (
-            <Star key={i} size={14}
-              fill={i < rating.stars ? 'var(--gold-2)' : 'transparent'}
-              style={{ color: i < rating.stars ? 'var(--gold-2)' : 'var(--text-3)' }}
-            />
+            <Star key={i} size={14} fill={i < rating.stars ? 'var(--gold-2)' : 'transparent'}
+              style={{ color: i < rating.stars ? 'var(--gold-2)' : 'var(--text-3)' }} />
           ))}
         </div>
         <ChevronRight size={16} style={{ color: 'var(--text-3)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
       </div>
-
       {open && (
         <div className="fade-in" style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(234,201,136,0.2)' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
@@ -595,9 +471,7 @@ function BiteForecast({ catches }: { catches: CatchT[] }) {
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1 }}>{upcoming.kind === 'major' ? 'Major' : 'Minor'} · {upcoming.centerLabel}</div>
                 </>
-              ) : (
-                <div style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 2 }}>None today</div>
-              )}
+              ) : <div style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 2 }}>None today</div>}
             </div>
           </div>
           <div className="label" style={{ marginBottom: 8 }}>Today's windows</div>
@@ -610,13 +484,8 @@ function BiteForecast({ catches }: { catches: CatchT[] }) {
                   borderRadius: 10, background: isCur ? 'rgba(234,201,136,0.16)' : 'rgba(10,24,22,0.4)',
                   border: `1px solid ${isCur ? 'var(--gold)' : 'transparent'}`,
                 }}>
-                  <div style={{
-                    width: 8, height: 8, borderRadius: 999,
-                    background: w.kind === 'major' ? 'var(--gold-2)' : 'var(--sage)',
-                  }} />
-                  <span style={{ fontSize: 12, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600, minWidth: 50 }}>
-                    {w.kind === 'major' ? 'Major' : 'Minor'}
-                  </span>
+                  <div style={{ width: 8, height: 8, borderRadius: 999, background: w.kind === 'major' ? 'var(--gold-2)' : 'var(--sage)' }} />
+                  <span style={{ fontSize: 12, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600, minWidth: 50 }}>{w.kind === 'major' ? 'Major' : 'Minor'}</span>
                   <span style={{ fontSize: 13, color: 'var(--text)', flex: 1, fontWeight: 500 }}>
                     {w.start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {w.end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </span>
@@ -648,113 +517,23 @@ function ActiveTripBanner({ trip, catches, onClick }: { trip: Trip; catches: Cat
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--gold-2)', fontWeight: 700 }}>Active Trip</div>
         <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{trip.name}</div>
-        <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
-          {total} fish{biggest ? ` · biggest ${formatWeight(biggest.lbs, biggest.oz)}` : ''}
-        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{total} fish{biggest ? ` · biggest ${formatWeight(biggest.lbs, biggest.oz)}` : ''}</div>
       </div>
       <ChevronRight size={18} style={{ color: 'var(--text-3)' }} />
     </div>
   );
 }
 
-function Chip({ active, onClick, color, children }: { active: boolean; onClick: () => void; color?: string; children: React.ReactNode }) {
+function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button onClick={onClick} className="tap" style={{
       flexShrink: 0, padding: '8px 14px', borderRadius: 999,
-      border: `1px solid ${active ? (color || 'var(--gold)') : 'rgba(234,201,136,0.18)'}`,
-      background: active ? (color ? `${color}22` : 'rgba(212,182,115,0.12)') : 'rgba(10,24,22,0.45)',
+      border: `1px solid ${active ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
+      background: active ? 'rgba(212,182,115,0.12)' : 'rgba(10,24,22,0.45)',
       backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-      color: active ? (color || 'var(--gold-2)') : 'var(--text-2)',
+      color: active ? 'var(--gold-2)' : 'var(--text-2)',
       fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
     }}>{children}</button>
-  );
-}
-
-function CatchCard({ catchData, angler, trip, photo, getPhoto, onClick }: {
-  catchData: CatchT; angler: Angler | null; trip: Trip | null;
-  photo?: string; getPhoto: (id: string) => Promise<string | null>; onClick: () => void;
-}) {
-  useEffect(() => { if (!photo && catchData.has_photo) getPhoto(catchData.id); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [catchData.id]);
-  const species = SPECIES.find(s => s.id === catchData.species);
-  const commentCount = (catchData.comments || []).length;
-
-  if (catchData.lost) {
-    return (
-      <div className="card tap fade-in" onClick={onClick} style={{ padding: 14, cursor: 'pointer', borderColor: 'rgba(220,107,88,0.32)', display: 'flex', alignItems: 'center', gap: 12 }}>
-        <div style={{ width: 40, height: 40, borderRadius: 12, background: 'rgba(220,107,88,0.15)', border: '1px solid rgba(220,107,88,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <Anchor size={18} style={{ color: 'var(--danger)' }} />
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, marginBottom: 2 }}>
-            {angler && <>
-              <div style={{ width: 18, height: 18, borderRadius: 6, background: angler.color, color: '#1A1004', fontWeight: 700, fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{angler.name[0].toUpperCase()}</div>
-              <strong style={{ fontWeight: 600 }}>{angler.name}</strong>
-            </>}
-            <span style={{ color: 'var(--text-3)' }}>lost one</span>
-            {commentCount > 0 && <span style={{ marginLeft: 'auto', color: 'var(--text-3)', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 3 }}><MessageCircle size={11} />{commentCount}</span>}
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
-            {formatDate(catchData.date)}
-            {catchData.swim && ` · Swim ${catchData.swim}`}
-            {catchData.rig && ` · ${catchData.rig}`}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="card tap fade-in" onClick={onClick} style={{ overflow: 'hidden', cursor: 'pointer' }}>
-      {catchData.has_photo && (
-        <div style={{ width: '100%', aspectRatio: '4/3', background: 'rgba(10,24,22,0.5)', position: 'relative', overflow: 'hidden', borderRadius: '22px 22px 0 0' }}>
-          {photo ? <img src={photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                 : <div className="skeleton" style={{ width: '100%', height: '100%' }} />}
-          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 50%, rgba(5,14,13,0.9))' }} />
-          {trip && (
-            <div style={{ position: 'absolute', top: 12, left: 12 }}>
-              <span className="pill" style={{ background: 'rgba(5,14,13,0.7)', color: 'var(--gold-2)', border: '1px solid rgba(212,182,115,0.4)', backdropFilter: 'blur(8px)' }}>
-                <Tent size={10} /> {trip.name}
-              </span>
-            </div>
-          )}
-          <div style={{ position: 'absolute', bottom: 14, left: 16, right: 16, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
-            <div className="num-display" style={{ fontSize: 38, lineHeight: 0.95, color: 'var(--text)', textShadow: '0 2px 12px rgba(0,0,0,0.5)' }}>
-              {catchData.lbs}<span style={{ fontSize: 22 }}>lb</span>
-              {catchData.oz > 0 && <> {catchData.oz}<span style={{ fontSize: 18 }}>oz</span></>}
-            </div>
-            {species && (
-              <span className="pill" style={{ background: `${species.hue}33`, color: species.hue, border: `1px solid ${species.hue}66` }}>{species.label}</span>
-            )}
-          </div>
-        </div>
-      )}
-      <div style={{ padding: catchData.has_photo ? '14px 16px' : '18px' }}>
-        {!catchData.has_photo && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12 }}>
-            <div className="num-display" style={{ fontSize: 34, lineHeight: 0.95 }}>
-              {catchData.lbs}<span style={{ fontSize: 18, color: 'var(--text-3)' }}>lb</span>
-              {catchData.oz > 0 && <> {catchData.oz}<span style={{ fontSize: 16, color: 'var(--text-3)' }}>oz</span></>}
-            </div>
-            {species && <span className="pill" style={{ background: `${species.hue}33`, color: species.hue, border: `1px solid ${species.hue}66` }}>{species.label}</span>}
-          </div>
-        )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-          {angler && <>
-            <div style={{ width: 22, height: 22, borderRadius: 7, background: angler.color, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#1A1004', fontWeight: 700, fontSize: 11 }}>{angler.name[0].toUpperCase()}</div>
-            <span style={{ fontSize: 14, fontWeight: 600 }}>{angler.name}</span>
-          </>}
-          <span style={{ color: 'var(--text-3)', fontSize: 13 }}>· {formatDate(catchData.date)}</span>
-          {commentCount > 0 && <span style={{ marginLeft: 'auto', color: 'var(--text-3)', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 3 }}><MessageCircle size={12} />{commentCount}</span>}
-        </div>
-        {(catchData.lake || catchData.swim || catchData.bait) && (
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8, fontSize: 12, color: 'var(--text-3)' }}>
-            {catchData.lake && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><MapPin size={12} />{catchData.lake}{catchData.swim ? ` · Swim ${catchData.swim}` : ''}</span>}
-            {!catchData.lake && catchData.swim && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><MapPin size={12} />Swim {catchData.swim}</span>}
-            {catchData.bait && <span>{'🎣'} {catchData.bait}</span>}
-          </div>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -769,7 +548,10 @@ function EmptyState({ icon, title = 'No catches yet', subtitle = 'Tap the + butt
 }
 
 // ============ TRIPS ============
-function TripsView({ trips, catches, onOpenTrip, onAddTrip }: { trips: Trip[]; catches: CatchT[]; onOpenTrip: (t: Trip) => void; onAddTrip: () => void }) {
+function TripsView({ me, trips, catches, profilesById, onOpenTrip, onAddTrip }: {
+  me: Profile; trips: Trip[]; catches: CatchT[]; profilesById: Record<string, Profile>;
+  onOpenTrip: (t: Trip) => void; onAddTrip: () => void;
+}) {
   const sorted = useMemo(() => [...trips].sort((a, b) => +new Date(b.start_date) - +new Date(a.start_date)), [trips]);
   const tripStats = (id: string) => {
     const tc = catches.filter(c => c.trip_id === id);
@@ -780,7 +562,6 @@ function TripsView({ trips, catches, onOpenTrip, onAddTrip }: { trips: Trip[]; c
     return { count: landed.length, lost: lost.length, biggest, totalWeightOz };
   };
   const isActive = (t: Trip) => { const now = Date.now(); return +new Date(t.start_date) <= now && +new Date(t.end_date) >= now - 86400000; };
-
   return (
     <div style={{ padding: '8px 20px' }}>
       <button onClick={onAddTrip} className="tap" style={{
@@ -796,6 +577,7 @@ function TripsView({ trips, catches, onOpenTrip, onAddTrip }: { trips: Trip[]; c
           {sorted.map(t => {
             const s = tripStats(t.id);
             const active = isActive(t);
+            const owner = profilesById[t.owner_id];
             return (
               <div key={t.id} className="card tap fade-in" onClick={() => onOpenTrip(t)} style={{ padding: 16, cursor: 'pointer' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -805,9 +587,10 @@ function TripsView({ trips, catches, onOpenTrip, onAddTrip }: { trips: Trip[]; c
                   </div>
                   <ChevronRight size={16} style={{ color: 'var(--text-3)' }} />
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <Calendar size={11} /> {formatDateRange(t.start_date, t.end_date)}
                   {t.location && <><span>·</span><MapPin size={11} />{t.location}</>}
+                  {owner && owner.id !== me.id && <span>· hosted by {owner.display_name}</span>}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
                   <MiniStat label="Fish" value={s.count} />
@@ -832,21 +615,41 @@ function MiniStat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function TripDetail({ trip, catches, anglers, photos, getPhoto, onClose, onEdit, onDelete, onOpenCatch }: {
-  trip: Trip; catches: CatchT[]; anglers: Angler[];
-  photos: Record<string, string>; getPhoto: (id: string) => Promise<string | null>;
+function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete, onOpenCatch }: {
+  me: Profile; trip: Trip; catches: CatchT[]; profilesById: Record<string, Profile>;
   onClose: () => void; onEdit: () => void; onDelete: () => void; onOpenCatch: (c: CatchT) => void;
 }) {
+  const [members, setMembers] = useState<TripMember[]>([]);
+  const [memberProfiles, setMemberProfiles] = useState<Record<string, Profile>>(profilesById);
+  const [showInvite, setShowInvite] = useState(false);
+  const isOwner = trip.owner_id === me.id;
+  useEffect(() => {
+    (async () => {
+      const m = await db.listTripMembers(trip.id);
+      setMembers(m);
+      const need = m.map(x => x.angler_id).filter(id => !memberProfiles[id]);
+      if (need.length > 0) {
+        const profs = await db.listProfilesByIds(need);
+        setMemberProfiles(prev => { const out = { ...prev }; profs.forEach(p => out[p.id] = p); return out; });
+      }
+    })();
+  /* eslint-disable-next-line */
+  }, [trip.id]);
+
   const tripCatches = useMemo(() => catches.filter(c => c.trip_id === trip.id).sort((a, b) => +new Date(b.date) - +new Date(a.date)), [catches, trip.id]);
   const landed = tripCatches.filter(c => !c.lost);
   const lost = tripCatches.filter(c => c.lost);
   const biggest = landed.reduce<CatchT | null>((m, c) => !m || totalOz(c.lbs, c.oz) > totalOz(m.lbs, m.oz) ? c : m, null);
   const totalWeightOz = landed.reduce((s, c) => s + totalOz(c.lbs, c.oz), 0);
-  const perAngler = useMemo(() => anglers.map(a => {
-    const ac = landed.filter(c => c.angler_id === a.id);
+  const joinedMembers = members.filter(m => m.status === 'joined');
+  const perAngler = useMemo(() => joinedMembers.map(jm => {
+    const ac = landed.filter(c => c.angler_id === jm.angler_id);
     const big = ac.reduce<CatchT | null>((m, c) => !m || totalOz(c.lbs, c.oz) > totalOz(m.lbs, m.oz) ? c : m, null);
-    return { angler: a, count: ac.length, biggest: big, totalOz: ac.reduce((s, c) => s + totalOz(c.lbs, c.oz), 0) };
-  }).sort((a, b) => b.count - a.count), [landed, anglers]);
+    return {
+      profile: memberProfiles[jm.angler_id], member: jm,
+      count: ac.length, biggest: big, totalOz: ac.reduce((s, c) => s + totalOz(c.lbs, c.oz), 0),
+    };
+  }).filter(p => p.profile).sort((a, b) => b.count - a.count), [joinedMembers, landed, memberProfiles]);
 
   return (
     <ModalShell hideTitle onClose={onClose}>
@@ -863,6 +666,39 @@ function TripDetail({ trip, catches, anglers, photos, getPhoto, onClose, onEdit,
         <StatCard label="Biggest" value={biggest ? formatWeight(biggest.lbs, biggest.oz) : '—'} />
         <StatCard label="Total" value={totalWeightOz ? `${Math.floor(totalWeightOz / 16)}lb` : '—'} />
       </div>
+
+      {/* Members */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div className="label" style={{ marginBottom: 0 }}>Members ({joinedMembers.length})</div>
+        {isOwner && (
+          <button onClick={() => setShowInvite(true)} className="tap" style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '6px 10px', borderRadius: 999, border: '1px solid var(--gold)',
+            background: 'rgba(212,182,115,0.12)', color: 'var(--gold-2)',
+            fontFamily: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+          }}>
+            <UserPlus size={12} /> Invite angler
+          </button>
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        {joinedMembers.map(m => {
+          const p = memberProfiles[m.angler_id];
+          if (!p) return null;
+          return (
+            <Link key={m.id} href={`/profile/${p.username}`} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 10px 6px 6px',
+              borderRadius: 999, border: '1px solid rgba(234,201,136,0.18)',
+              background: 'rgba(10,24,22,0.5)', color: 'var(--text)', textDecoration: 'none',
+              fontSize: 12, fontWeight: 600,
+            }}>
+              <AvatarBubble username={p.username} displayName={p.display_name} avatarUrl={p.avatar_url} size={22} link={false} />
+              {p.display_name}{m.role === 'owner' && <span style={{ color: 'var(--gold-2)', fontSize: 10, fontWeight: 700 }}>·OWNER</span>}
+            </Link>
+          );
+        })}
+      </div>
+
       {lost.length > 0 && (
         <div style={{ background: 'rgba(220,107,88,0.08)', border: '1px solid rgba(220,107,88,0.25)', borderRadius: 12, padding: 10, marginBottom: 16, fontSize: 13, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 8 }}>
           <Anchor size={14} style={{ color: 'var(--danger)' }} />
@@ -880,10 +716,10 @@ function TripDetail({ trip, catches, anglers, photos, getPhoto, onClose, onEdit,
           <div className="label">Crew breakdown</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
             {perAngler.filter(p => p.count > 0).map(p => (
-              <div key={p.angler.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 9, background: p.angler.color, color: '#1A1004', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{p.angler.name[0].toUpperCase()}</div>
+              <div key={p.profile.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12 }}>
+                <AvatarBubble username={p.profile.username} displayName={p.profile.display_name} avatarUrl={p.profile.avatar_url} size={32} link={false} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>{p.angler.name}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{p.profile.display_name}</div>
                   <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{p.count} fish · biggest {p.biggest ? formatWeight(p.biggest.lbs, p.biggest.oz) : '—'}</div>
                 </div>
                 <div className="num-display" style={{ fontSize: 18, color: 'var(--text)' }}>{Math.floor(p.totalOz / 16)}<span style={{ fontSize: 12, color: 'var(--text-3)' }}>lb</span></div>
@@ -898,18 +734,84 @@ function TripDetail({ trip, catches, anglers, photos, getPhoto, onClose, onEdit,
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
             {tripCatches.map(c => (
               <CatchCard key={c.id} catchData={c}
-                angler={anglers.find(a => a.id === c.angler_id) || null}
-                trip={null} photo={photos[c.id]} getPhoto={getPhoto}
-                onClick={() => onOpenCatch(c)}
-              />
+                angler={memberProfiles[c.angler_id] || profilesById[c.angler_id] || null}
+                trip={null} onClick={() => onOpenCatch(c)} />
             ))}
           </div>
         </>
       )}
-      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <button onClick={onEdit} className="btn btn-ghost tap" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)' }}><Edit2 size={16} /> Edit</button>
-        <button onClick={onDelete} className="btn btn-ghost tap" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)', color: 'var(--danger)' }}><Trash2 size={16} /> Delete</button>
-      </div>
+      {isOwner && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button onClick={onEdit} className="btn btn-ghost tap" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)' }}><Edit2 size={16} /> Edit</button>
+          <button onClick={onDelete} className="btn btn-ghost tap" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)', color: 'var(--danger)' }}><Trash2 size={16} /> Delete</button>
+        </div>
+      )}
+
+      {showInvite && (
+        <InviteAnglerModal me={me} tripId={trip.id} existingMemberIds={members.map(m => m.angler_id)}
+          onClose={() => setShowInvite(false)}
+          onInvited={async () => { setShowInvite(false); setMembers(await db.listTripMembers(trip.id)); }}
+        />
+      )}
+    </ModalShell>
+  );
+}
+
+function InviteAnglerModal({ me, tripId, existingMemberIds, onClose, onInvited }: {
+  me: Profile; tripId: string; existingMemberIds: string[]; onClose: () => void; onInvited: () => void;
+}) {
+  const [friends, setFriends] = useState<Profile[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    (async () => {
+      const fs = await db.listAcceptedFriends(me.id);
+      setFriends(fs.filter(f => !existingMemberIds.includes(f.id)));
+    })();
+  }, [me.id, existingMemberIds]);
+  function toggle(id: string) {
+    setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  async function submit() {
+    if (selected.size === 0) return;
+    setBusy(true);
+    try {
+      await db.inviteToTrip(tripId, Array.from(selected));
+      onInvited();
+    } catch (e: any) { alert(e?.message || 'Failed to invite'); }
+    finally { setBusy(false); }
+  }
+  return (
+    <ModalShell title="Invite anglers" onClose={onClose}>
+      {friends.length === 0 ? (
+        <EmptyState icon={<UsersIcon size={40} />} title="No friends to invite" subtitle="Add friends from the friends tab first" />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+          {friends.map(f => {
+            const on = selected.has(f.id);
+            return (
+              <button key={f.id} onClick={() => toggle(f.id)} className="tap" style={{
+                display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14,
+                background: on ? 'rgba(212,182,115,0.10)' : 'rgba(10,24,22,0.5)',
+                border: `1px solid ${on ? 'var(--gold)' : 'rgba(234,201,136,0.14)'}`,
+                color: 'var(--text)', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
+              }}>
+                <AvatarBubble username={f.username} displayName={f.display_name} avatarUrl={f.avatar_url} size={36} link={false} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{f.display_name}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-3)' }}>@{f.username}</div>
+                </div>
+                {on && <Check size={18} style={{ color: 'var(--gold)' }} />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <button className="btn btn-primary" onClick={submit} disabled={busy || selected.size === 0}
+        style={{ width: '100%', fontSize: 16, padding: 16 }}>
+        {busy ? <Loader2 size={18} className="spin" /> : <Send size={18} />}
+        Send {selected.size} invite{selected.size === 1 ? '' : 's'}
+      </button>
     </ModalShell>
   );
 }
@@ -917,7 +819,7 @@ function TripDetail({ trip, catches, anglers, photos, getPhoto, onClose, onEdit,
 function AddTripModal({ existing, onClose, onSave }: {
   existing: Trip | null;
   onClose: () => void;
-  onSave: (data: Partial<Trip> & { name: string; start_date: string; end_date: string }) => Promise<void>;
+  onSave: (data: Partial<Trip> & { name: string; start_date: string; end_date: string; visibility: TripVisibility }) => Promise<void>;
 }) {
   const [name, setName] = useState(existing?.name || '');
   const [location, setLocation] = useState(existing?.location || '');
@@ -926,6 +828,7 @@ function AddTripModal({ existing, onClose, onSave }: {
   const [startDate, setStartDate] = useState(existing?.start_date ? existing.start_date.slice(0, 10) : today);
   const [endDate, setEndDate] = useState(existing?.end_date ? existing.end_date.slice(0, 10) : tomorrow);
   const [notes, setNotes] = useState(existing?.notes || '');
+  const [visibility, setVisibility] = useState<TripVisibility>(existing?.visibility || 'invited_only');
   const [saving, setSaving] = useState(false);
 
   async function save() {
@@ -939,6 +842,7 @@ function AddTripModal({ existing, onClose, onSave }: {
         start_date: new Date(startDate + 'T00:00:00').toISOString(),
         end_date: new Date(endDate + 'T23:59:59').toISOString(),
         notes: notes.trim() || null,
+        visibility,
       });
     } finally { setSaving(false); }
   }
@@ -959,6 +863,29 @@ function AddTripModal({ existing, onClose, onSave }: {
           <input className="input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         </div>
       </div>
+      <label className="label">Visibility</label>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
+        {([
+          { id: 'invited_only', label: 'Invited only', icon: Mail },
+          { id: 'friends',      label: 'Friends',      icon: UsersIcon },
+          { id: 'private',      label: 'Just me',      icon: Lock },
+        ] as const).map(o => {
+          const active = visibility === o.id;
+          const Icon = o.icon;
+          return (
+            <button key={o.id} onClick={() => setVisibility(o.id)} className="tap" style={{
+              flex: 1, padding: '10px 6px', borderRadius: 12,
+              border: `1px solid ${active ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
+              background: active ? 'rgba(212,182,115,0.15)' : 'rgba(10,24,22,0.5)',
+              color: active ? 'var(--gold-2)' : 'var(--text-2)',
+              fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            }}>
+              <Icon size={12} /> {o.label}
+            </button>
+          );
+        })}
+      </div>
       <label className="label">Notes</label>
       <textarea className="input" rows={3} placeholder="Lake conditions, expectations, plan…" value={notes} onChange={(e) => setNotes(e.target.value)} style={{ marginBottom: 20, resize: 'vertical', fontFamily: 'inherit' }} />
       <button className="btn btn-primary" onClick={save} disabled={saving} style={{ width: '100%', fontSize: 16, padding: 16 }}>
@@ -969,19 +896,18 @@ function AddTripModal({ existing, onClose, onSave }: {
   );
 }
 
-// ============ STATS (4 sub-tabs) ============
-function Stats({ catches, anglers, photos, getPhoto, onOpen }: {
-  catches: CatchT[]; anglers: Angler[]; photos: Record<string, string>;
-  getPhoto: (id: string) => Promise<string | null>; onOpen: (c: CatchT) => void;
+// ============ STATS ============
+function Stats({ catches, profilesById, me, onOpen }: {
+  catches: CatchT[]; profilesById: Record<string, Profile>; me: Profile; onOpen: (c: CatchT) => void;
 }) {
   const [tab, setTab] = useState<'crew' | 'time' | 'bait' | 'lakes'>('crew');
   if (catches.length === 0) return <div style={{ padding: '40px 20px' }}><EmptyState /></div>;
   const tabs = [
-    { id: 'crew', label: 'Crew', icon: Trophy },
-    { id: 'time', label: 'Time', icon: Clock },
-    { id: 'bait', label: 'Bait', icon: BarChart3 },
-    { id: 'lakes', label: 'Lakes', icon: MapPinned },
-  ] as const;
+    { id: 'crew' as const, label: 'Crew', icon: Trophy },
+    { id: 'time' as const, label: 'Time', icon: Clock },
+    { id: 'bait' as const, label: 'Bait', icon: BarChart3 },
+    { id: 'lakes' as const, label: 'Lakes', icon: MapPinned },
+  ];
   return (
     <div style={{ padding: '8px 20px' }}>
       <div className="scrollbar-thin" style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 16, paddingBottom: 4 }}>
@@ -1002,20 +928,22 @@ function Stats({ catches, anglers, photos, getPhoto, onOpen }: {
           );
         })}
       </div>
-      {tab === 'crew' && <StatsCrew catches={catches} anglers={anglers} photos={photos} getPhoto={getPhoto} onOpen={onOpen} />}
+      {tab === 'crew' && <StatsCrew catches={catches} profilesById={profilesById} me={me} onOpen={onOpen} />}
       {tab === 'time' && <StatsTime catches={catches} />}
       {tab === 'bait' && <StatsBait catches={catches} />}
-      {tab === 'lakes' && <StatsLakes catches={catches} anglers={anglers} photos={photos} getPhoto={getPhoto} onOpen={onOpen} />}
+      {tab === 'lakes' && <StatsLakes catches={catches} profilesById={profilesById} onOpen={onOpen} />}
     </div>
   );
 }
 
-function StatsCrew({ catches, anglers, photos, getPhoto, onOpen }: { catches: CatchT[]; anglers: Angler[]; photos: Record<string, string>; getPhoto: (id: string) => Promise<string | null>; onOpen: (c: CatchT) => void }) {
+function StatsCrew({ catches, profilesById, me, onOpen }: { catches: CatchT[]; profilesById: Record<string, Profile>; me: Profile; onOpen: (c: CatchT) => void }) {
   const [metric, setMetric] = useState<'biggest' | 'count' | 'total'>('biggest');
   const landed = useMemo(() => catches.filter(c => !c.lost), [catches]);
+  // anglers visible in catches list (= "people you've fished with" + me)
+  const anglerIds = useMemo(() => Array.from(new Set([me.id, ...landed.map(c => c.angler_id)])), [landed, me.id]);
   const stats = useMemo(() => {
-    const byAngler: Record<string, { angler: Angler; totalOz: number; biggest: CatchT | null; count: number }> = {};
-    anglers.forEach(a => { byAngler[a.id] = { angler: a, totalOz: 0, biggest: null, count: 0 }; });
+    const byAngler: Record<string, { profile: Profile; totalOz: number; biggest: CatchT | null; count: number }> = {};
+    anglerIds.forEach(id => { const p = profilesById[id]; if (p) byAngler[id] = { profile: p, totalOz: 0, biggest: null, count: 0 }; });
     landed.forEach(c => {
       const s = byAngler[c.angler_id]; if (!s) return;
       s.count++; const oz = totalOz(c.lbs, c.oz); s.totalOz += oz;
@@ -1025,21 +953,19 @@ function StatsCrew({ catches, anglers, photos, getPhoto, onOpen }: { catches: Ca
     const totalOzAll = landed.reduce((s, c) => s + totalOz(c.lbs, c.oz), 0);
     const bySpecies = SPECIES.map(sp => ({ ...sp, count: landed.filter(c => c.species === sp.id).length })).filter(sp => sp.count > 0);
     return { byAngler, biggest, count: landed.length, totalOzAll, bySpecies };
-  }, [landed, anglers]);
+  }, [landed, profilesById, anglerIds]);
   const ranked = useMemo(() => {
     const arr = Object.values(stats.byAngler);
     if (metric === 'biggest') return arr.sort((a, b) => (b.biggest ? totalOz(b.biggest.lbs, b.biggest.oz) : 0) - (a.biggest ? totalOz(a.biggest.lbs, a.biggest.oz) : 0));
     if (metric === 'count') return arr.sort((a, b) => b.count - a.count);
     return arr.sort((a, b) => b.totalOz - a.totalOz);
   }, [stats, metric]);
-
   return (
     <>
       {stats.biggest && (
         <HeroCatch
           catchData={stats.biggest}
-          angler={anglers.find(a => a.id === stats.biggest!.angler_id) || null}
-          photo={photos[stats.biggest.id]} getPhoto={getPhoto}
+          angler={profilesById[stats.biggest.angler_id] || null}
           onClick={() => onOpen(stats.biggest!)}
         />
       )}
@@ -1055,7 +981,7 @@ function StatsCrew({ catches, anglers, photos, getPhoto, onOpen }: { catches: Ca
         ))}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
-        {ranked.map((s, i) => <LeaderRow key={s.angler.id} entry={s} rank={i + 1} metric={metric} />)}
+        {ranked.map((s, i) => <LeaderRow key={s.profile.id} entry={s} rank={i + 1} metric={metric} />)}
       </div>
       <h3 className="display-font" style={{ fontSize: 20, fontWeight: 500, margin: '24px 0 12px' }}>Group totals</h3>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 24 }}>
@@ -1092,11 +1018,7 @@ function StatsTime({ catches }: { catches: CatchT[] }) {
   const landed = catches.filter(c => !c.lost);
   const grid = useMemo(() => {
     const g = Array.from({ length: 7 }, () => Array(24).fill(0));
-    landed.forEach(c => {
-      const d = new Date(c.date);
-      let dow = d.getDay() - 1; if (dow < 0) dow = 6;
-      g[dow][d.getHours()] += 1;
-    });
+    landed.forEach(c => { const d = new Date(c.date); let dow = d.getDay() - 1; if (dow < 0) dow = 6; g[dow][d.getHours()] += 1; });
     return g;
   }, [landed]);
   const max = useMemo(() => Math.max(1, ...grid.flat()), [grid]);
@@ -1104,9 +1026,7 @@ function StatsTime({ catches }: { catches: CatchT[] }) {
   const peakHour = byHour.indexOf(Math.max(...byHour));
   const byDay = useMemo(() => { const a = Array(7).fill(0); landed.forEach(c => { let d = new Date(c.date).getDay() - 1; if (d < 0) d = 6; a[d]++; }); return a; }, [landed]);
   const peakDay = byDay.indexOf(Math.max(...byDay));
-
   if (landed.length === 0) return <EmptyState icon={<Clock size={48} />} title="Need some catches" subtitle="Patterns emerge after a few sessions" />;
-
   return (
     <>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 20 }}>
@@ -1127,11 +1047,7 @@ function StatsTime({ catches }: { catches: CatchT[] }) {
               {row.map((v, h) => {
                 const intensity = v / max;
                 return <div key={h} title={`${DAYS[dow]} ${h}:00 — ${v} catch${v === 1 ? '' : 'es'}`}
-                  style={{
-                    aspectRatio: '1', borderRadius: 3,
-                    background: v === 0 ? 'rgba(10,24,22,0.6)' : `rgba(212,182,115, ${0.15 + intensity * 0.85})`,
-                    border: v > 0 ? `1px solid rgba(212,182,115, ${0.3 + intensity * 0.5})` : 'none',
-                  }} />;
+                  style={{ aspectRatio: '1', borderRadius: 3, background: v === 0 ? 'rgba(10,24,22,0.6)' : `rgba(212,182,115, ${0.15 + intensity * 0.85})`, border: v > 0 ? `1px solid rgba(212,182,115, ${0.3 + intensity * 0.5})` : 'none' }} />;
               })}
             </React.Fragment>
           ))}
@@ -1182,7 +1098,6 @@ function StatsBait({ catches }: { catches: CatchT[] }) {
   }, [catches, view, sortBy]);
   const totalCatches = catches.filter(c => !c.lost).length;
   if (data.length === 0) return <EmptyState icon={<BarChart3 size={48} />} title={`No ${view} data yet`} subtitle="Add bait/rig to your catches to see what's working" />;
-
   return (
     <>
       <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
@@ -1235,7 +1150,7 @@ function StatsBait({ catches }: { catches: CatchT[] }) {
   );
 }
 
-function StatsLakes({ catches, anglers, photos, getPhoto, onOpen }: { catches: CatchT[]; anglers: Angler[]; photos: Record<string, string>; getPhoto: (id: string) => Promise<string | null>; onOpen: (c: CatchT) => void }) {
+function StatsLakes({ catches, profilesById, onOpen }: { catches: CatchT[]; profilesById: Record<string, Profile>; onOpen: (c: CatchT) => void }) {
   const landed = useMemo(() => catches.filter(c => !c.lost && c.lake), [catches]);
   const lakes = useMemo(() => {
     const grouped: Record<string, { name: string; catches: CatchT[]; totalOz: number; biggest: CatchT | null }> = {};
@@ -1248,54 +1163,51 @@ function StatsLakes({ catches, anglers, photos, getPhoto, onOpen }: { catches: C
     return Object.values(grouped).sort((a, b) => (b.biggest ? totalOz(b.biggest.lbs, b.biggest.oz) : 0) - (a.biggest ? totalOz(a.biggest.lbs, a.biggest.oz) : 0));
   }, [landed]);
   if (lakes.length === 0) return <EmptyState icon={<MapPinned size={48} />} title="No lake data yet" subtitle="Add lake names to your catches to track records by venue" />;
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {lakes.map(lake => <LakeCard key={lake.name} lake={lake} anglers={anglers} photos={photos} getPhoto={getPhoto} onOpen={onOpen} />)}
-    </div>
-  );
-}
-
-function LakeCard({ lake, anglers, photos, getPhoto, onOpen }: { lake: { name: string; catches: CatchT[]; totalOz: number; biggest: CatchT | null }; anglers: Angler[]; photos: Record<string, string>; getPhoto: (id: string) => Promise<string | null>; onOpen: (c: CatchT) => void }) {
-  const top3 = [...lake.catches].sort((a, b) => totalOz(b.lbs, b.oz) - totalOz(a.lbs, a.oz)).slice(0, 3);
-  useEffect(() => { top3.forEach(c => { if (c.has_photo && !photos[c.id]) getPhoto(c.id); }); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [lake.name]);
   const rankColors = ['var(--gold)', '#B5B6A6', '#A06D3D'];
   return (
-    <div className="card" style={{ padding: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-          <MapPinned size={18} style={{ color: 'var(--gold)', flexShrink: 0 }} />
-          <h3 className="display-font" style={{ fontSize: 18, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>{lake.name}</h3>
-        </div>
-        <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>{lake.catches.length} fish</div>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {top3.map((c, i) => {
-          const a = anglers.find(x => x.id === c.angler_id);
-          return (
-            <div key={c.id} className="tap" onClick={() => onOpen(c)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 8, borderRadius: 12, background: 'rgba(10,24,22,0.5)', cursor: 'pointer' }}>
-              <div style={{
-                width: 24, height: 24, borderRadius: 8, flexShrink: 0,
-                background: `${rankColors[i]}22`, color: rankColors[i],
-                border: `1px solid ${rankColors[i]}66`,
-                fontFamily: 'Fraunces, serif', fontWeight: 600,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12,
-              }}>{i + 1}</div>
-              {c.has_photo && photos[c.id] && <img src={photos[c.id]} alt="" style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover' }} />}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="num-display" style={{ fontSize: 16, color: 'var(--text)', lineHeight: 1 }}>{formatWeight(c.lbs, c.oz)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{a?.name} · {new Date(c.date).toLocaleDateString([], { month: 'short', year: 'numeric' })}</div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {lakes.map(lake => {
+        const top3 = [...lake.catches].sort((a, b) => totalOz(b.lbs, b.oz) - totalOz(a.lbs, a.oz)).slice(0, 3);
+        return (
+          <div key={lake.name} className="card" style={{ padding: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+                <MapPinned size={18} style={{ color: 'var(--gold)', flexShrink: 0 }} />
+                <h3 className="display-font" style={{ fontSize: 18, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>{lake.name}</h3>
               </div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>{lake.catches.length} fish</div>
             </div>
-          );
-        })}
-      </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {top3.map((c, i) => {
+                const a = profilesById[c.angler_id];
+                const photoUrl = c.has_photo && a ? db.photoPublicUrl(a.id, c.id) : null;
+                return (
+                  <div key={c.id} className="tap" onClick={() => onOpen(c)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 8, borderRadius: 12, background: 'rgba(10,24,22,0.5)', cursor: 'pointer' }}>
+                    <div style={{
+                      width: 24, height: 24, borderRadius: 8, flexShrink: 0,
+                      background: `${rankColors[i]}22`, color: rankColors[i],
+                      border: `1px solid ${rankColors[i]}66`,
+                      fontFamily: 'Fraunces, serif', fontWeight: 600,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12,
+                    }}>{i + 1}</div>
+                    {photoUrl && <img src={photoUrl} alt="" style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover' }} />}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="num-display" style={{ fontSize: 16, color: 'var(--text)', lineHeight: 1 }}>{formatWeight(c.lbs, c.oz)}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{a?.display_name} · {new Date(c.date).toLocaleDateString([], { month: 'short', year: 'numeric' })}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function HeroCatch({ catchData, angler, photo, getPhoto, onClick }: { catchData: CatchT; angler: Angler | null; photo?: string; getPhoto: (id: string) => Promise<string | null>; onClick: () => void }) {
-  useEffect(() => { if (!photo && catchData.has_photo) getPhoto(catchData.id); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [catchData.id]);
+function HeroCatch({ catchData, angler, onClick }: { catchData: CatchT; angler: Profile | null; onClick: () => void }) {
+  const photoUrl = catchData.has_photo && angler ? db.photoPublicUrl(angler.id, catchData.id) : null;
   return (
     <div className="card tap fade-in" onClick={onClick} style={{ overflow: 'hidden', cursor: 'pointer', position: 'relative' }}>
       <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 2 }}>
@@ -1303,9 +1215,9 @@ function HeroCatch({ catchData, angler, photo, getPhoto, onClick }: { catchData:
           <Crown size={11} /> All-time PB
         </span>
       </div>
-      {catchData.has_photo && photo && (
+      {photoUrl && (
         <div style={{ width: '100%', aspectRatio: '5/4', position: 'relative' }}>
-          <img src={photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <img src={photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
           <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 30%, rgba(5,14,13,0.95))' }} />
           <div style={{ position: 'absolute', bottom: 18, left: 18, right: 18 }}>
             <div className="num-display" style={{ fontSize: 56, lineHeight: 0.9, color: 'var(--gold-2)', textShadow: '0 2px 16px rgba(0,0,0,0.5)' }}>
@@ -1314,35 +1226,34 @@ function HeroCatch({ catchData, angler, photo, getPhoto, onClick }: { catchData:
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, color: 'var(--text)' }}>
               {angler && <>
-                <div style={{ width: 24, height: 24, borderRadius: 8, background: angler.color, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#1A1004', fontWeight: 700, fontSize: 12 }}>{angler.name[0].toUpperCase()}</div>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>{angler.name}</span>
+                <AvatarBubble username={angler.username} displayName={angler.display_name} avatarUrl={angler.avatar_url} size={24} link={false} />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>{angler.display_name}</span>
               </>}
               <span style={{ fontSize: 13, color: 'var(--text-2)' }}>· {formatDate(catchData.date)}</span>
             </div>
           </div>
         </div>
       )}
-      {!catchData.has_photo && (
+      {!photoUrl && (
         <div style={{ padding: '40px 20px' }}>
           <div className="num-display" style={{ fontSize: 56, lineHeight: 0.9, color: 'var(--gold-2)' }}>
             {catchData.lbs}<span style={{ fontSize: 28, color: 'var(--text)' }}>lb</span>
             {catchData.oz > 0 && <> {catchData.oz}<span style={{ fontSize: 22, color: 'var(--text)' }}>oz</span></>}
           </div>
-          {angler && <div style={{ marginTop: 8, fontSize: 14, color: 'var(--text-2)' }}>{angler.name} · {formatDate(catchData.date)}</div>}
+          {angler && <div style={{ marginTop: 8, fontSize: 14, color: 'var(--text-2)' }}>{angler.display_name} · {formatDate(catchData.date)}</div>}
         </div>
       )}
     </div>
   );
 }
 
-function LeaderRow({ entry, rank, metric }: { entry: { angler: Angler; biggest: CatchT | null; count: number; totalOz: number }; rank: number; metric: 'biggest' | 'count' | 'total' }) {
+function LeaderRow({ entry, rank, metric }: { entry: { profile: Profile; biggest: CatchT | null; count: number; totalOz: number }; rank: number; metric: 'biggest' | 'count' | 'total' }) {
   const value = metric === 'biggest' ? (entry.biggest ? formatWeight(entry.biggest.lbs, entry.biggest.oz) : '—')
     : metric === 'count' ? `${entry.count}` : `${Math.floor(entry.totalOz / 16)}lb`;
-  const subtext = metric === 'biggest' ? (entry.biggest ? SPECIES.find(s => s.id === entry.biggest!.species)?.label : '')
-    : metric === 'count' ? 'fish landed' : 'banked';
+  const subtext = metric === 'biggest' ? (entry.biggest ? SPECIES.find(s => s.id === entry.biggest!.species)?.label : '') : metric === 'count' ? 'fish landed' : 'banked';
   const rankColors = ['var(--gold)', '#B5B6A6', '#A06D3D'];
   return (
-    <div className="card" style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 14 }}>
+    <Link href={`/profile/${entry.profile.username}`} className="card" style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 14, color: 'var(--text)', textDecoration: 'none' }}>
       <div style={{
         width: 36, height: 36, borderRadius: 12,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1351,15 +1262,13 @@ function LeaderRow({ entry, rank, metric }: { entry: { angler: Angler; biggest: 
         color: rank <= 3 ? rankColors[rank - 1] : 'var(--text-3)',
         fontFamily: 'Fraunces, serif', fontWeight: 600, fontSize: 18, flexShrink: 0,
       }}>{rank}</div>
-      <div style={{ width: 38, height: 38, borderRadius: 12, background: entry.angler.color, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#1A1004', fontWeight: 700, fontSize: 15, flexShrink: 0 }}>
-        {entry.angler.name[0].toUpperCase()}
-      </div>
+      <AvatarBubble username={entry.profile.username} displayName={entry.profile.display_name} avatarUrl={entry.profile.avatar_url} size={38} link={false} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 15, fontWeight: 600 }}>{entry.angler.name}</div>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>{entry.profile.display_name}</div>
         <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{subtext}</div>
       </div>
       <div className="num-display" style={{ fontSize: 22, color: 'var(--text)' }}>{value}</div>
-    </div>
+    </Link>
   );
 }
 
@@ -1373,9 +1282,8 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
 }
 
 // ============ GALLERY ============
-function Gallery({ catches, photos, getPhoto, onOpen }: { catches: CatchT[]; photos: Record<string, string>; getPhoto: (id: string) => Promise<string | null>; onOpen: (c: CatchT) => void }) {
+function Gallery({ catches, profilesById, onOpen }: { catches: CatchT[]; profilesById: Record<string, Profile>; onOpen: (c: CatchT) => void }) {
   const withPhotos = useMemo(() => catches.filter(c => c.has_photo && !c.lost).sort((a, b) => +new Date(b.date) - +new Date(a.date)), [catches]);
-  useEffect(() => { withPhotos.forEach(c => { if (!photos[c.id]) getPhoto(c.id); }); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [withPhotos.length]);
   if (withPhotos.length === 0) return (
     <div style={{ padding: '60px 20px', textAlign: 'center' }}>
       <Images size={48} style={{ color: 'var(--text-3)', opacity: 0.4, margin: '0 auto 16px' }} />
@@ -1385,32 +1293,33 @@ function Gallery({ catches, photos, getPhoto, onOpen }: { catches: CatchT[]; pho
   return (
     <div style={{ padding: '8px 8px 20px' }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
-        {withPhotos.map(c => (
-          <div key={c.id} className="tap fade-in" onClick={() => onOpen(c)} style={{ aspectRatio: '1', borderRadius: 14, overflow: 'hidden', position: 'relative', cursor: 'pointer', background: 'rgba(10,24,22,0.5)' }}>
-            {photos[c.id] ? <img src={photos[c.id]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          : <div className="skeleton" style={{ width: '100%', height: '100%' }} />}
-            <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 60%, rgba(5,14,13,0.9))' }} />
-            <div style={{ position: 'absolute', bottom: 8, left: 10, right: 10 }}>
-              <div className="num-display" style={{ fontSize: 18, color: 'var(--text)', textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}>
-                {c.lbs}<span style={{ fontSize: 12 }}>lb</span>
-                {c.oz > 0 && <> {c.oz}<span style={{ fontSize: 11 }}>oz</span></>}
+        {withPhotos.map(c => {
+          const a = profilesById[c.angler_id];
+          const photoUrl = a ? db.photoPublicUrl(a.id, c.id) : null;
+          return (
+            <div key={c.id} className="tap fade-in" onClick={() => onOpen(c)} style={{ aspectRatio: '1', borderRadius: 14, overflow: 'hidden', position: 'relative', cursor: 'pointer', background: 'rgba(10,24,22,0.5)' }}>
+              {photoUrl && <img src={photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 60%, rgba(5,14,13,0.9))' }} />
+              <div style={{ position: 'absolute', bottom: 8, left: 10, right: 10 }}>
+                <div className="num-display" style={{ fontSize: 18, color: 'var(--text)', textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}>
+                  {c.lbs}<span style={{ fontSize: 12 }}>lb</span>
+                  {c.oz > 0 && <> {c.oz}<span style={{ fontSize: 11 }}>oz</span></>}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
 }
 
 // ============ ADD CATCH MODAL ============
-function AddCatchModal({
-  anglers, me, trips, activeTrips, onClose, onSave, existing, photoExisting,
-}: {
-  anglers: Angler[]; me: { anglerId: string }; trips: Trip[]; activeTrips: Trip[];
+function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, photoExisting }: {
+  me: Profile; trips: Trip[]; activeTrips: Trip[];
   onClose: () => void;
-  onSave: (data: db.CatchInput, photo: string | null) => Promise<void>;
-  existing?: CatchT; photoExisting?: string;
+  onSave: (data: db.CatchInput, photoDataUrl: string | null) => Promise<void>;
+  existing?: CatchT; photoExisting?: string | null;
 }) {
   const [lost, setLost] = useState(existing?.lost || false);
   const [photo, setPhoto] = useState<string | null>(photoExisting || null);
@@ -1418,7 +1327,6 @@ function AddCatchModal({
   const [lbs, setLbs] = useState<string>(existing ? String(existing.lbs) : '');
   const [oz, setOz] = useState<string>(existing ? String(existing.oz) : '');
   const [species, setSpecies] = useState<string>(existing?.species || 'mirror');
-  const [angler_id, setAnglerId] = useState(existing?.angler_id || me.anglerId);
   const [date, setDate] = useState(existing?.date ? existing.date.slice(0, 16) : new Date().toISOString().slice(0, 16));
   const [trip_id, setTripId] = useState<string | null>(existing?.trip_id || activeTrips[0]?.id || null);
   const [lake, setLake] = useState(existing?.lake || '');
@@ -1430,11 +1338,16 @@ function AddCatchModal({
   const [conditions, setConditions] = useState(existing?.weather?.conditions || '');
   const [wind, setWind] = useState(existing?.weather?.wind || '');
   const [pressure, setPressure] = useState<string>(existing?.weather?.pressure != null ? String(existing.weather.pressure) : '');
+  const [visibility, setVisibility] = useState<CatchVisibility>(existing?.visibility || 'friends');
   const [showMore, setShowMore] = useState(!!(existing?.lake || existing?.swim || existing?.bait || existing?.rig || existing?.notes));
   const [showWeather, setShowWeather] = useState(!!(existing?.weather?.tempC != null || existing?.weather?.conditions));
   const [autoStatus, setAutoStatus] = useState<{ wx: 'idle' | 'fetching' | 'done' | 'failed'; sp: 'idle' | 'detecting' | 'done' | 'failed' }>({ wx: 'idle', sp: 'idle' });
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // trips this user can attach to: own trips + trips where they're a joined member.
+  // Owned trips: trips.owner_id === me.id. Joined trips already in `trips` array (RLS exposes trips that include trip_member rows for me).
+  const eligibleTrips = trips;
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -1443,12 +1356,10 @@ function AddCatchModal({
     try {
       const compressed = await compressImage(file);
       setPhoto(compressed);
-      // Auto-fetch weather + species detection in parallel.
       setAutoStatus({ wx: 'fetching', sp: 'detecting' });
       Promise.all([
         (async () => {
           try {
-            // Pick coords: GPS first if recent (memo), then geocode lake.
             let coords: { lat: number; lng: number } | null = null;
             const cached = localStorage.getItem(LOC_KEY);
             if (cached) { try { coords = JSON.parse(cached); } catch {} }
@@ -1471,25 +1382,18 @@ function AddCatchModal({
         (async () => {
           try {
             const r = await fetch('/api/detect-species', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ imageBase64: compressed }),
             });
             const j = await r.json();
             if (j?.species && SPECIES.find(s => s.id === j.species)) {
-              setSpecies(j.species);
-              setAutoStatus(s => ({ ...s, sp: 'done' }));
-            } else {
-              setAutoStatus(s => ({ ...s, sp: 'failed' }));
-            }
+              setSpecies(j.species); setAutoStatus(s => ({ ...s, sp: 'done' }));
+            } else setAutoStatus(s => ({ ...s, sp: 'failed' }));
           } catch { setAutoStatus(s => ({ ...s, sp: 'failed' })); }
         })(),
       ]);
-    } catch {
-      alert('Failed to process image');
-    } finally {
-      setPhotoLoading(false);
-    }
+    } catch { alert('Failed to process image'); }
+    finally { setPhotoLoading(false); }
   }
 
   async function handleSave() {
@@ -1498,19 +1402,15 @@ function AddCatchModal({
     try {
       const weather: Weather | null = (tempC || conditions || wind || pressure) ? {
         tempC: tempC ? parseFloat(tempC) : null,
-        conditions: conditions || null,
-        wind: wind || null,
+        conditions: conditions || null, wind: wind || null,
         pressure: pressure ? parseFloat(pressure) : null,
       } : null;
-
-      // Compute moon snapshot at catch date if we know coords.
       let moon: MoonT | null = existing?.moon || null;
       try {
         const cached = typeof window !== 'undefined' ? localStorage.getItem(LOC_KEY) : null;
         const coords = cached ? JSON.parse(cached) : null;
         if (coords?.lat != null) {
-          const dt = new Date(date);
-          const ill = getMoonIllumination(dt);
+          const ill = getMoonIllumination(new Date(date));
           const lab = getMoonPhaseLabel(ill.phase);
           moon = { phase: ill.phase, fraction: ill.fraction, label: lab.label, emoji: lab.emoji };
         }
@@ -1518,20 +1418,13 @@ function AddCatchModal({
 
       const payload: db.CatchInput = {
         ...(existing ? { id: existing.id } : {}),
-        angler_id, lost,
-        lbs: lost ? 0 : (parseInt(lbs) || 0),
-        oz: lost ? 0 : (parseInt(oz) || 0),
+        lost, lbs: lost ? 0 : (parseInt(lbs) || 0), oz: lost ? 0 : (parseInt(oz) || 0),
         species: lost ? null : species,
-        date: new Date(date).toISOString(),
-        trip_id,
-        lake: lake.trim() || null,
-        swim: swim.trim() || null,
-        bait: bait.trim() || null,
-        rig: rig.trim() || null,
-        notes: notes.trim() || null,
-        weather, moon,
-        has_photo: !lost && !!photo,
-        comments: existing?.comments || [],
+        date: new Date(date).toISOString(), trip_id,
+        lake: lake.trim() || null, swim: swim.trim() || null,
+        bait: bait.trim() || null, rig: rig.trim() || null, notes: notes.trim() || null,
+        weather, moon, has_photo: !lost && !!photo,
+        visibility, comments: existing?.comments || [],
       };
       await onSave(payload, !lost && photo && photo !== photoExisting ? photo : null);
     } finally { setSaving(false); }
@@ -1583,26 +1476,18 @@ function AddCatchModal({
               </div>
             )}
           </div>
-
-          {/* Auto-status row */}
           {(autoStatus.wx !== 'idle' || autoStatus.sp !== 'idle') && (
             <div style={{ display: 'flex', gap: 8, marginBottom: 14, fontSize: 11, color: 'var(--text-3)' }}>
-              {autoStatus.wx !== 'idle' && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <Cloud size={11} />
-                  {autoStatus.wx === 'fetching' && 'Fetching weather…'}
-                  {autoStatus.wx === 'done' && <span style={{ color: 'var(--sage)' }}>Weather added</span>}
-                  {autoStatus.wx === 'failed' && <span style={{ color: 'var(--text-3)' }}>Weather unavailable</span>}
-                </span>
-              )}
-              {autoStatus.sp !== 'idle' && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <Sparkles size={11} />
-                  {autoStatus.sp === 'detecting' && 'Identifying species…'}
-                  {autoStatus.sp === 'done' && <span style={{ color: 'var(--sage)' }}>Species detected</span>}
-                  {autoStatus.sp === 'failed' && <span>Species detection skipped</span>}
-                </span>
-              )}
+              {autoStatus.wx !== 'idle' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><Cloud size={11} />
+                {autoStatus.wx === 'fetching' && 'Fetching weather…'}
+                {autoStatus.wx === 'done' && <span style={{ color: 'var(--sage)' }}>Weather added</span>}
+                {autoStatus.wx === 'failed' && <span>Weather unavailable</span>}
+              </span>}
+              {autoStatus.sp !== 'idle' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><Sparkles size={11} />
+                {autoStatus.sp === 'detecting' && 'Identifying species…'}
+                {autoStatus.sp === 'done' && <span style={{ color: 'var(--sage)' }}>Species detected</span>}
+                {autoStatus.sp === 'failed' && <span>Species detection skipped</span>}
+              </span>}
             </div>
           )}
 
@@ -1635,29 +1520,18 @@ function AddCatchModal({
         </>
       )}
 
-      <label className="label">Angler</label>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 20, flexWrap: 'wrap' }}>
-        {anglers.map(a => (
-          <button key={a.id} onClick={() => setAnglerId(a.id)} className="tap" style={{
-            flex: '1 1 30%', padding: '10px 6px', borderRadius: 12,
-            border: `1px solid ${angler_id === a.id ? a.color : 'rgba(234,201,136,0.18)'}`,
-            background: angler_id === a.id ? `${a.color}1F` : 'rgba(10,24,22,0.5)',
-            color: angler_id === a.id ? 'var(--text)' : 'var(--text-2)',
-            fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-          }}>
-            <div style={{ width: 18, height: 18, borderRadius: 6, background: a.color, color: '#1A1004', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{a.name[0].toUpperCase()}</div>
-            {a.name}
-          </button>
-        ))}
+      {/* Visibility — replaces angler picker */}
+      <label className="label">Visibility</label>
+      <div style={{ marginBottom: 20 }}>
+        <VisibilityPicker value={visibility} onChange={setVisibility} />
       </div>
 
-      {trips.length > 0 && (
+      {eligibleTrips.length > 0 && (
         <>
           <label className="label">Trip (optional)</label>
           <div className="scrollbar-thin" style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 20, paddingBottom: 4 }}>
             <Chip active={!trip_id} onClick={() => setTripId(null)}>None</Chip>
-            {trips.map(t => (
+            {eligibleTrips.map(t => (
               <Chip key={t.id} active={trip_id === t.id} onClick={() => setTripId(t.id)}>
                 <Tent size={11} style={{ marginRight: 2 }} /> {t.name}
               </Chip>
@@ -1755,37 +1629,36 @@ function AddCatchModal({
 }
 
 // ============ CATCH DETAIL ============
-function CatchDetail({
-  catchData, photo, getPhoto, anglers, me, trips, onClose, onDelete, onUpdate, onAddComment, onDeleteComment, onOpenTrip,
-}: {
-  catchData: CatchT; photo?: string;
-  getPhoto: (id: string) => Promise<string | null>;
-  anglers: Angler[]; me: { anglerId: string }; trips: Trip[];
+function CatchDetail({ catchData, me, profilesById, trips, onClose, onDelete, onUpdate, onAddComment, onDeleteComment, onOpenTrip }: {
+  catchData: CatchT; me: Profile; profilesById: Record<string, Profile>; trips: Trip[];
   onClose: () => void; onDelete: () => void;
-  onUpdate: (data: db.CatchInput, photo: string | null) => Promise<void>;
+  onUpdate: (data: db.CatchInput, photoDataUrl: string | null) => Promise<void>;
   onAddComment: (text: string) => void; onDeleteComment: (cid: string) => void;
   onOpenTrip: (t: Trip) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [commentText, setCommentText] = useState('');
-  const angler = anglers.find(a => a.id === catchData.angler_id);
+  const angler = profilesById[catchData.angler_id] || null;
   const species = SPECIES.find(s => s.id === catchData.species);
   const trip = catchData.trip_id ? trips.find(t => t.id === catchData.trip_id) : null;
   const weather = catchData.weather;
   const moon = catchData.moon;
   const comments = catchData.comments || [];
-  useEffect(() => { if (!photo && catchData.has_photo) getPhoto(catchData.id); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [catchData.id]);
+  const photoUrl = catchData.has_photo && angler ? db.photoPublicUrl(angler.id, catchData.id) : null;
+  const [photoErr, setPhotoErr] = useState(false);
 
   if (editing) {
     return (
       <AddCatchModal
-        anglers={anglers} me={me} trips={trips} activeTrips={[]}
-        existing={catchData} photoExisting={photo}
+        me={me} trips={trips} activeTrips={[]}
+        existing={catchData} photoExisting={photoUrl}
         onClose={() => setEditing(false)}
         onSave={async (data, ph) => { await onUpdate(data, ph); setEditing(false); }}
       />
     );
   }
+  const isMyCatch = catchData.angler_id === me.id;
+
   return (
     <ModalShell title="" onClose={onClose} hideTitle>
       {catchData.lost ? (
@@ -1798,10 +1671,9 @@ function CatchDetail({
         </div>
       ) : (
         <>
-          {catchData.has_photo && (
+          {photoUrl && !photoErr && (
             <div style={{ width: '100%', aspectRatio: '4/3', borderRadius: 18, overflow: 'hidden', marginBottom: 20, background: 'rgba(10,24,22,0.5)' }}>
-              {photo ? <img src={photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> :
-                       <div className="skeleton" style={{ width: '100%', height: '100%' }} />}
+              <img src={photoUrl} alt="" onError={() => setPhotoErr(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             </div>
           )}
           <div className="num-display" style={{ fontSize: 64, lineHeight: 0.9, color: 'var(--gold-2)', marginBottom: 4 }}>
@@ -1817,13 +1689,15 @@ function CatchDetail({
       )}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
-        {angler && <>
-          <div style={{ width: 32, height: 32, borderRadius: 10, background: angler.color, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#1A1004', fontWeight: 700 }}>{angler.name[0].toUpperCase()}</div>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 600 }}>{angler.name}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{formatDate(catchData.date)}</div>
-          </div>
-        </>}
+        {angler && (
+          <Link href={`/profile/${angler.username}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 10, color: 'var(--text)', textDecoration: 'none' }}>
+            <AvatarBubble username={angler.username} displayName={angler.display_name} avatarUrl={angler.avatar_url} size={32} link={false} />
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>{angler.display_name}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{formatDate(catchData.date)}</div>
+            </div>
+          </Link>
+        )}
       </div>
 
       {trip && (
@@ -1847,9 +1721,8 @@ function CatchDetail({
         {catchData.swim && <DetailRow icon={<MapPin size={14} />} label="Swim" value={catchData.swim} />}
         {catchData.bait && <DetailRow label="Bait" value={catchData.bait} />}
         {catchData.rig && <DetailRow label="Rig" value={catchData.rig} />}
-        {!catchData.lake && !catchData.swim && !catchData.bait && !catchData.rig && (
-          <div style={{ color: 'var(--text-3)', fontSize: 13, textAlign: 'center', padding: '8px 0' }}>No additional details</div>
-        )}
+        <DetailRow icon={catchData.visibility === 'public' ? <Globe size={14} /> : catchData.visibility === 'private' ? <Lock size={14} /> : <UsersIcon size={14} />}
+          label="Visibility" value={catchData.visibility === 'public' ? 'Public' : catchData.visibility === 'private' ? 'Only me' : 'Friends'} />
       </div>
 
       {weather && (weather.tempC != null || weather.conditions || weather.wind || weather.pressure != null) && (
@@ -1892,16 +1765,14 @@ function CatchDetail({
         {comments.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>
             {comments.map(c => {
-              const ca = anglers.find(a => a.id === c.anglerId);
-              const mine = c.anglerId === me.anglerId;
+              const ca = profilesById[c.anglerId];
+              const mine = c.anglerId === me.id;
               return (
                 <div key={c.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                  <div style={{ width: 26, height: 26, borderRadius: 8, background: ca?.color || 'rgba(20,42,38,0.8)', color: '#1A1004', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    {(ca?.name || c.anglerName || '?')[0].toUpperCase()}
-                  </div>
+                  <AvatarBubble username={ca?.username} displayName={ca?.display_name || c.anglerName} avatarUrl={ca?.avatar_url} size={26} link={!!ca?.username} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 2 }}>
-                      <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{ca?.name || c.anglerName}</strong>
+                      <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{ca?.display_name || c.anglerName}</strong>
                       <span> · {new Date(c.ts).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                     <div style={{ fontSize: 14, color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.text}</div>
@@ -1921,8 +1792,7 @@ function CatchDetail({
           <input className="input" placeholder="Add a comment…" value={commentText}
             onChange={(e) => setCommentText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && commentText.trim()) { onAddComment(commentText.trim()); setCommentText(''); } }}
-            style={{ flex: 1, padding: '10px 14px', fontSize: 14 }}
-          />
+            style={{ flex: 1, padding: '10px 14px', fontSize: 14 }} />
           <button onClick={() => { if (commentText.trim()) { onAddComment(commentText.trim()); setCommentText(''); } }}
             disabled={!commentText.trim()} className="tap" style={{
               width: 44, height: 44, borderRadius: 12,
@@ -1934,10 +1804,12 @@ function CatchDetail({
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-        <button onClick={() => setEditing(true)} className="btn btn-ghost tap" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)' }}><Edit2 size={16} /> Edit</button>
-        <button onClick={onDelete} className="btn btn-ghost tap" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)', color: 'var(--danger)' }}><Trash2 size={16} /> Delete</button>
-      </div>
+      {isMyCatch && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <button onClick={() => setEditing(true)} className="btn btn-ghost tap" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)' }}><Edit2 size={16} /> Edit</button>
+          <button onClick={onDelete} className="btn btn-ghost tap" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)', color: 'var(--danger)' }}><Trash2 size={16} /> Delete</button>
+        </div>
+      )}
     </ModalShell>
   );
 }
@@ -1952,81 +1824,86 @@ function DetailRow({ icon, label, value }: { icon?: React.ReactNode; label: stri
 }
 
 // ============ SETTINGS ============
-function SettingsModal({
-  anglers, me, catches, trips, notify, onClose, onSaveAnglers, onSaveMe, onSaveNotify,
-}: {
-  anglers: Angler[]; me: { anglerId: string }; catches: CatchT[]; trips: Trip[];
-  notify: NotifyConfig | null;
+function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onSaveNotify }: {
+  me: Profile; catches: CatchT[]; trips: Trip[]; notify: NotifyConfig | null;
   onClose: () => void;
-  onSaveAnglers: (rows: Angler[]) => Promise<void>;
-  onSaveMe: (m: { anglerId: string }) => Promise<void>;
-  onSaveNotify: (n: NotifyConfig) => Promise<void>;
+  onSaveProfile: (patch: Partial<Profile>) => Promise<void>;
+  onSaveNotify: (n: { token: string | null; chat_id: string | null; enabled: boolean }) => Promise<void>;
 }) {
-  const [editingAnglers, setEditingAnglers] = useState(false);
-  const [draft, setDraft] = useState<Angler[]>([...anglers]);
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [draftDisplay, setDraftDisplay] = useState(me.display_name);
+  const [draftBio, setDraftBio] = useState(me.bio || '');
+  const [publicProfile, setPublicProfile] = useState(me.public_profile);
   const [showNotify, setShowNotify] = useState(false);
+  const [email, setEmail] = useState<string | null>(null);
+
+  useEffect(() => { (async () => { const { data: { user } } = await supabase().auth.getUser(); setEmail(user?.email || null); })(); }, []);
 
   function exportCSV() {
-    const rows = [['Date', 'Angler', 'Lost', 'Species', 'Lbs', 'Oz', 'Trip', 'Lake', 'Swim', 'Bait', 'Rig', 'TempC', 'Conditions', 'Wind', 'Pressure', 'MoonPhase', 'MoonIllum', 'Notes']];
+    const rows = [['Date', 'Angler', 'Lost', 'Species', 'Lbs', 'Oz', 'Trip', 'Lake', 'Swim', 'Bait', 'Rig', 'TempC', 'Conditions', 'Wind', 'Pressure', 'MoonPhase', 'MoonIllum', 'Visibility', 'Notes']];
     catches.forEach(c => {
-      const a = anglers.find(x => x.id === c.angler_id);
       const t = c.trip_id ? trips.find(x => x.id === c.trip_id) : null;
-      const w = c.weather || {} as Weather;
-      const m = c.moon || {} as MoonT;
+      const w = c.weather || ({} as Weather);
+      const m = c.moon || ({} as MoonT);
       rows.push([
-        c.date, a?.name || '', c.lost ? 'yes' : '', c.species || '', String(c.lbs || ''), String(c.oz || ''),
+        c.date, me.display_name, c.lost ? 'yes' : '', c.species || '', String(c.lbs || ''), String(c.oz || ''),
         t?.name || '', c.lake || '', c.swim || '', c.bait || '', c.rig || '',
         String(w.tempC ?? ''), w.conditions || '', w.wind || '', String(w.pressure ?? ''),
         m.label || '', m.fraction != null ? Math.round(m.fraction * 100) + '%' : '',
-        (c.notes || '').replace(/\n/g, ' '),
+        c.visibility, (c.notes || '').replace(/\n/g, ' '),
       ]);
     });
     const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
-    link.download = `carp-log-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
+    link.href = url; link.download = `carp-log-${new Date().toISOString().slice(0, 10)}.csv`; link.click();
+  }
+
+  async function signOut() {
+    await fetch('/auth/sign-out', { method: 'POST' });
+    router.replace('/auth/sign-in');
   }
 
   return (
     <ModalShell title="Settings" onClose={onClose}>
-      <div className="label">You are</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
-        {anglers.map(a => (
-          <button key={a.id} onClick={() => onSaveMe({ anglerId: a.id })} className="tap" style={{
-            padding: 12, borderRadius: 14,
-            background: me.anglerId === a.id ? 'rgba(212,182,115,0.10)' : 'rgba(10,24,22,0.5)',
-            border: `1px solid ${me.anglerId === a.id ? 'var(--gold)' : 'rgba(234,201,136,0.14)'}`,
-            display: 'flex', alignItems: 'center', gap: 12,
-            cursor: 'pointer', fontFamily: 'inherit', color: 'var(--text)', textAlign: 'left',
-            backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-          }}>
-            <div style={{ width: 32, height: 32, borderRadius: 10, background: a.color, color: '#1A1004', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{a.name[0].toUpperCase()}</div>
-            <span style={{ flex: 1, fontWeight: 500 }}>{a.name}</span>
-            {me.anglerId === a.id && <Check size={18} style={{ color: 'var(--gold)' }} />}
-          </button>
-        ))}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', marginBottom: 18 }}>
+        <AvatarBubble username={me.username} displayName={me.display_name} avatarUrl={me.avatar_url} size={48} link={false} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>{me.display_name}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>@{me.username}</div>
+          {email && <div style={{ fontSize: 11, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{email}</div>}
+        </div>
       </div>
 
-      <div className="label">Crew</div>
-      {!editingAnglers ? (
-        <button onClick={() => setEditingAnglers(true)} className="tap" style={{ width: '100%', padding: 14, borderRadius: 14, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, marginBottom: 24 }}>
-          <span>Edit angler names</span>
+      <div className="label">Profile</div>
+      {!editing ? (
+        <button onClick={() => setEditing(true)} className="tap" style={{ width: '100%', padding: 14, borderRadius: 14, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, marginBottom: 24 }}>
+          <span>Edit display name & bio</span>
           <ChevronRight size={16} />
         </button>
       ) : (
         <div style={{ marginBottom: 24 }}>
-          {draft.map((a, i) => (
-            <div key={a.id} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
-              <div style={{ width: 36, height: 36, borderRadius: 12, background: a.color, color: '#1A1004', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{a.name[0]?.toUpperCase() || '?'}</div>
-              <input className="input" value={a.name} onChange={(e) => { const n = [...draft]; n[i] = { ...n[i], name: e.target.value }; setDraft(n); }} />
-            </div>
-          ))}
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <button className="btn btn-ghost" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)' }} onClick={() => { setDraft([...anglers]); setEditingAnglers(false); }}>Cancel</button>
-            <button className="btn btn-primary" style={{ flex: 1 }} onClick={async () => { await onSaveAnglers(draft); setEditingAnglers(false); }}>Save</button>
+          <label className="label">Display name</label>
+          <input className="input" value={draftDisplay} maxLength={40} onChange={(e) => setDraftDisplay(e.target.value)} style={{ marginBottom: 12 }} />
+          <label className="label">Bio</label>
+          <textarea className="input" rows={3} maxLength={200} placeholder="A line about you" value={draftBio} onChange={(e) => setDraftBio(e.target.value)}
+            style={{ marginBottom: 6, resize: 'vertical', fontFamily: 'inherit' }} />
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 12 }}>{draftBio.length}/200</div>
+          <label className="tap" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderRadius: 12, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', marginBottom: 12, cursor: 'pointer' }}>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>Public profile</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12, color: publicProfile ? 'var(--sage)' : 'var(--text-3)' }}>
+              <input type="checkbox" checked={publicProfile} onChange={(e) => setPublicProfile(e.target.checked)} style={{ accentColor: 'var(--gold)' }} />
+              {publicProfile ? 'Anyone can see' : 'Friends only'}
+            </span>
+          </label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-ghost" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)' }} onClick={() => { setDraftDisplay(me.display_name); setDraftBio(me.bio || ''); setPublicProfile(me.public_profile); setEditing(false); }}>Cancel</button>
+            <button className="btn btn-primary" style={{ flex: 1 }}
+              onClick={async () => { await onSaveProfile({ display_name: draftDisplay.trim().slice(0, 40), bio: draftBio.trim() || null, public_profile: publicProfile }); setEditing(false); }}>
+              Save
+            </button>
           </div>
         </div>
       )}
@@ -2045,26 +1922,30 @@ function SettingsModal({
         </span>
         <ChevronRight size={16} style={{ transform: showNotify ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
       </button>
-      {showNotify && (
-        <div className="fade-in" style={{ marginBottom: 24 }}>
-          <TelegramSetup notify={notify} onSaveNotify={onSaveNotify} />
-        </div>
-      )}
+      {showNotify && <div className="fade-in" style={{ marginBottom: 24 }}><TelegramSetup notify={notify} onSaveNotify={onSaveNotify} /></div>}
 
       <div className="label">Data</div>
       <button onClick={exportCSV} className="tap" style={{ width: '100%', padding: 14, borderRadius: 14, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
-        <Download size={16} />
-        Export catches as CSV
+        <Download size={16} /> Export catches as CSV
+      </button>
+
+      <div className="label" style={{ marginTop: 24 }}>Account</div>
+      <button onClick={signOut} className="tap" style={{
+        width: '100%', padding: 14, borderRadius: 14, background: 'rgba(220,107,88,0.08)',
+        border: '1px solid rgba(220,107,88,0.3)', color: 'var(--danger)',
+        display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
+      }}>
+        <LogOut size={16} /> Sign out
       </button>
 
       <div style={{ marginTop: 24, padding: '16px 0', borderTop: '1px solid rgba(234,201,136,0.1)', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
-        {catches.length} catches · {trips.length} trips logged across the crew
+        {catches.length} catches · {trips.length} trips
       </div>
     </ModalShell>
   );
 }
 
-function TelegramSetup({ notify, onSaveNotify }: { notify: NotifyConfig | null; onSaveNotify: (n: NotifyConfig) => Promise<void> }) {
+function TelegramSetup({ notify, onSaveNotify }: { notify: NotifyConfig | null; onSaveNotify: (n: { token: string | null; chat_id: string | null; enabled: boolean }) => Promise<void> }) {
   const [token, setToken] = useState(notify?.token || '');
   const [chatId, setChatId] = useState(notify?.chat_id || '');
   const [enabled, setEnabled] = useState(notify?.enabled || false);
@@ -2080,9 +1961,8 @@ function TelegramSetup({ notify, onSaveNotify }: { notify: NotifyConfig | null; 
     setTesting(true); setTestResult(null);
     try {
       const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, text: '🎣 <b>Carp Log</b> connected! Ready to ping the group with every catch.', parse_mode: 'HTML' }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: '🎣 <b>Carp Log</b> connected! Ready to ping with every catch.', parse_mode: 'HTML' }),
       });
       const data = await r.json();
       if (data.ok) { setTestResult({ ok: true, msg: 'Test message sent — check your group chat' }); await save(true); }
@@ -2094,14 +1974,14 @@ function TelegramSetup({ notify, onSaveNotify }: { notify: NotifyConfig | null; 
   return (
     <div className="card" style={{ padding: 14 }}>
       <p style={{ fontSize: 12, color: 'var(--text-3)', margin: '0 0 14px', lineHeight: 1.5 }}>
-        Pings the group chat every time anyone banks (or loses) a fish. One person sets it up, all 3 get the alerts.
+        Pings your group chat every time you bank (or lose) a fish. Each angler configures their own bot.
       </p>
       <details style={{ marginBottom: 14 }}>
         <summary style={{ fontSize: 12, color: 'var(--gold-2)', cursor: 'pointer', fontWeight: 600, marginBottom: 8 }}>How to set up (tap)</summary>
         <ol style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6, paddingLeft: 18, margin: '8px 0 0' }}>
-          <li>Open Telegram, search <strong>@BotFather</strong>, send <code>/newbot</code>, follow prompts. Copy the bot token.</li>
+          <li>Open Telegram, search <strong>@BotFather</strong>, send <code>/newbot</code>. Copy the bot token.</li>
           <li>Create a group chat with your mates, add the bot to it.</li>
-          <li>Send any message in the group, then visit <code>api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> in a browser to find the <code>chat.id</code> (negative for groups).</li>
+          <li>Send any message in the group, then visit <code>api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> to find the <code>chat.id</code> (negative for groups).</li>
           <li>Paste both below and tap Test.</li>
         </ol>
       </details>
@@ -2120,9 +2000,9 @@ function TelegramSetup({ notify, onSaveNotify }: { notify: NotifyConfig | null; 
         </button>
         {enabled && (
           <button onClick={() => save(false)} className="btn tap" style={{
-            padding: '12px 16px', borderRadius: 12,
-            background: 'transparent', border: '1px solid rgba(234,201,136,0.18)',
-            color: 'var(--text-3)', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            padding: '12px 16px', borderRadius: 12, background: 'transparent',
+            border: '1px solid rgba(234,201,136,0.18)', color: 'var(--text-3)',
+            fontSize: 13, fontWeight: 600, cursor: 'pointer',
           }}>Disable</button>
         )}
       </div>
@@ -2146,10 +2026,8 @@ function ModalShell({ title, onClose, hideTitle, children }: { title?: string; o
       <div className="slide-up" onClick={(e) => e.stopPropagation()} style={{
         width: '100%', maxWidth: 480, maxHeight: '92vh',
         background: 'rgba(10, 24, 22, 0.92)',
-        backdropFilter: 'blur(40px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-        borderRadius: '28px 28px 0 0',
-        border: '1px solid rgba(234,201,136,0.14)', borderBottom: 'none',
+        backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+        borderRadius: '28px 28px 0 0', border: '1px solid rgba(234,201,136,0.14)', borderBottom: 'none',
         overflowY: 'auto', position: 'relative', padding: '20px 20px 40px',
         boxShadow: '0 -10px 40px rgba(0,0,0,0.45)',
       }}>
@@ -2200,10 +2078,8 @@ function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 't
       position: 'fixed', bottom: 16, left: 16, right: 16,
       maxWidth: 448, margin: '0 auto',
       background: 'rgba(28, 60, 54, 0.55)',
-      backdropFilter: 'blur(40px) saturate(180%)',
-      WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-      border: '1px solid rgba(234,201,136,0.16)',
-      borderRadius: 28,
+      backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+      border: '1px solid rgba(234,201,136,0.16)', borderRadius: 28,
       padding: '10px 8px', zIndex: 40,
       display: 'flex', justifyContent: 'space-around',
       boxShadow: '0 12px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.18)',
