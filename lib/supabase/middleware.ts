@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-const PUBLIC_PATHS = ['/auth/sign-in', '/auth/callback', '/auth/sign-out', '/api/detect-species', '/api/username-check'];
+const PUBLIC_PATHS = ['/auth/sign-in', '/auth/callback', '/auth/sign-out', '/api/detect-species', '/api/username-check', '/api/push/fanout'];
 
 function isPublicPath(p: string) {
   if (PUBLIC_PATHS.some(s => p === s || p.startsWith(s + '/'))) return true;
