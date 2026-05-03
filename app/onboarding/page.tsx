@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Fish, ChevronRight, Loader2 } from 'lucide-react';
+import { Fish, ChevronRight, Loader2, AlertCircle } from 'lucide-react';
 import UsernameInput from '@/components/UsernameInput';
 import AvatarBubble from '@/components/AvatarBubble';
 import { supabase } from '@/lib/supabase/client';
@@ -17,34 +17,86 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     (async () => {
-      const { data: { user } } = await supabase().auth.getUser();
-      if (!user) { router.replace('/auth/sign-in'); return; }
+      console.log('[onboarding] checking session');
+      const { data: { user }, error } = await supabase().auth.getUser();
+      if (error) console.error('[onboarding] getUser error', error);
+      if (!user) {
+        console.warn('[onboarding] no user, redirecting to sign-in');
+        window.location.assign('/auth/sign-in');
+        return;
+      }
       const meta = (user.user_metadata || {}) as any;
+      console.log('[onboarding] session ok', { userId: user.id, email: user.email });
       setUser({ id: user.id, email: user.email, avatar: meta.avatar_url || meta.picture || null, fullName: meta.full_name || meta.name || '' });
       setDisplayName(meta.full_name || meta.name || '');
       const seedUsername = (meta.full_name || meta.name || (user.email || '').split('@')[0] || '')
         .toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 20).replace(/^_+|_+$/g, '');
       if (seedUsername.length >= 3) setUsername(seedUsername);
     })();
-  }, [router]);
+  }, []);
 
   async function submit() {
+    console.log('[onboarding] submit clicked', { availability, displayName: displayName.length });
     setErr(null);
-    if (availability !== 'available') { setErr('Pick an available username'); return; }
+
+    if (availability !== 'available') {
+      console.warn('[onboarding] username not available', availability);
+      setErr(availability === 'taken' ? 'That username is taken. Pick a different one.' : 'Pick a valid available username.');
+      return;
+    }
     if (!displayName.trim()) { setErr('Enter a display name'); return; }
+    if (!user) { setErr('Session lost. Please sign in again.'); return; }
+
     setSaving(true);
     try {
-      const { error } = await supabase().from('profiles').insert({
-        id: user!.id,
+      // Re-verify session right before insert. This catches the iOS case
+      // where the cookie was evicted between page load and submit.
+      console.log('[onboarding] re-checking session before insert');
+      const { data: { user: currentUser }, error: sessErr } = await supabase().auth.getUser();
+      if (sessErr || !currentUser) {
+        console.error('[onboarding] session lost', sessErr);
+        setErr('Sign-in session expired. Reloading…');
+        setTimeout(() => window.location.assign('/auth/sign-in'), 1500);
+        return;
+      }
+      console.log('[onboarding] session ok, inserting profile', { userId: currentUser.id });
+
+      const payload = {
+        id: currentUser.id,
         username: username.trim().toLowerCase(),
         display_name: displayName.trim().slice(0, 40),
-        avatar_url: user!.avatar || null,
+        avatar_url: user.avatar || null,
         public_profile: false,
-      });
-      if (error) throw error;
-      router.replace('/');
+      };
+      console.log('[onboarding] insert payload', payload);
+
+      const { data, error } = await supabase().from('profiles').insert(payload).select().single();
+      console.log('[onboarding] insert returned', { data, error });
+
+      if (error) {
+        // RLS / unique constraint / network error — surface verbatim.
+        const friendly =
+          error.code === '23505' ? 'That username was just taken. Try another.' :
+          error.code === '42501' ? 'Permission denied creating profile. Sign out and back in.' :
+          (error.message || 'Failed to create profile');
+        setErr(friendly + ` (code: ${error.code || 'unknown'})`);
+        setSaving(false);
+        return;
+      }
+
+      if (!data) {
+        setErr('Profile insert returned no data. Try again.');
+        setSaving(false);
+        return;
+      }
+
+      console.log('[onboarding] success, hard-navigating to /');
+      // Use window.location.assign for a HARD navigation. router.replace
+      // sometimes silently no-ops on iOS Safari after a state change.
+      window.location.assign('/');
     } catch (e: any) {
-      setErr(e?.message || 'Failed to create profile');
+      console.error('[onboarding] caught exception', e);
+      setErr(`Unexpected error: ${e?.message || String(e)}`);
       setSaving(false);
     }
   }
@@ -85,14 +137,30 @@ export default function OnboardingPage() {
           <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-3)' }}>{displayName.length}/40</div>
         </div>
 
-        {err && <div style={{ marginTop: 16, padding: 10, borderRadius: 10, background: 'rgba(220,107,88,0.12)', border: '1px solid rgba(220,107,88,0.3)', color: 'var(--danger)', fontSize: 13 }}>{err}</div>}
+        {err && (
+          <div role="alert" style={{
+            marginTop: 18, padding: 14, borderRadius: 12,
+            background: 'rgba(220,107,88,0.14)',
+            border: '1px solid rgba(220,107,88,0.45)',
+            color: 'var(--danger)', fontSize: 13, lineHeight: 1.5,
+            display: 'flex', alignItems: 'flex-start', gap: 10,
+          }}>
+            <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{err}</div>
+          </div>
+        )}
 
-        <button className="btn btn-primary" disabled={saving || availability !== 'available' || !displayName.trim()}
+        <button className="btn btn-primary"
+          disabled={saving || availability !== 'available' || !displayName.trim()}
           onClick={submit}
           style={{ width: '100%', marginTop: 26, fontSize: 16, padding: '16px' }}>
           {saving ? <Loader2 size={18} className="spin" /> : <ChevronRight size={18} />}
-          Start tracking
+          {saving ? 'Creating profile…' : 'Start tracking'}
         </button>
+
+        <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-3)', textAlign: 'center' }}>
+          If this gets stuck, <a href="/auth/sign-out" style={{ color: 'var(--gold-2)' }}>sign out</a> and try again in Safari (not the home-screen app).
+        </div>
       </div>
     </div>
   );

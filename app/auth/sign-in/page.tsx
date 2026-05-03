@@ -1,7 +1,7 @@
 'use client';
-import { useState, Suspense } from 'react';
+import { useState, Suspense, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Fish } from 'lucide-react';
+import { AlertCircle, Fish } from 'lucide-react';
 import { supabase } from '@/lib/supabase/client';
 
 function GoogleLogo() {
@@ -18,16 +18,40 @@ function GoogleLogo() {
 function SignInBody() {
   const params = useSearchParams();
   const next = params.get('next') || '/';
+  const errorParam = params.get('error');
   const [busy, setBusy] = useState(false);
+  const [pwa, setPwa] = useState(false);
+  const [err, setErr] = useState<string | null>(errorParam);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const standalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone === true;
+    setPwa(standalone);
+    console.log('[sign-in] env', { standalone, ua: navigator.userAgent.slice(0, 80) });
+  }, []);
 
   async function signIn() {
-    setBusy(true);
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
-    const { error } = await supabase().auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo, queryParams: { prompt: 'select_account' } },
-    });
-    if (error) { alert(error.message); setBusy(false); }
+    setBusy(true); setErr(null);
+    try {
+      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
+      console.log('[sign-in] starting OAuth, redirectTo=', redirectTo);
+      const { error } = await supabase().auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo,
+          queryParams: { prompt: 'select_account', access_type: 'offline' },
+        },
+      });
+      if (error) {
+        console.error('[sign-in] OAuth error', error);
+        setErr(error.message);
+        setBusy(false);
+      }
+    } catch (e: any) {
+      console.error('[sign-in] threw', e);
+      setErr(e?.message || 'Sign-in failed');
+      setBusy(false);
+    }
   }
 
   return (
@@ -40,18 +64,42 @@ function SignInBody() {
         <p style={{ color: 'var(--text-2)', fontSize: 15, margin: '0 0 36px', lineHeight: 1.5 }}>
           Track every fish, every trip. Connect with your crew.
         </p>
+
+        {err && (
+          <div role="alert" style={{
+            margin: '0 auto 20px', maxWidth: 360,
+            padding: 12, borderRadius: 12, textAlign: 'left',
+            background: 'rgba(220,107,88,0.14)', border: '1px solid rgba(220,107,88,0.45)',
+            color: 'var(--danger)', fontSize: 13,
+            display: 'flex', alignItems: 'flex-start', gap: 10,
+          }}>
+            <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{err}</div>
+          </div>
+        )}
+
         <button onClick={signIn} disabled={busy} className="tap" style={{
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 12,
-          width: '100%', maxWidth: 360,
-          padding: '16px 24px',
+          width: '100%', maxWidth: 360, padding: '16px 24px',
           background: '#FFFFFF', color: '#1A1004',
           border: 'none', borderRadius: 14,
           fontFamily: 'inherit', fontSize: 16, fontWeight: 600,
           cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1,
           boxShadow: '0 6px 18px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.6)',
         }}>
-          <GoogleLogo /> Continue with Google
+          <GoogleLogo /> {busy ? 'Opening Google…' : 'Continue with Google'}
         </button>
+
+        {pwa && (
+          <div style={{
+            marginTop: 24, padding: 12, borderRadius: 12, maxWidth: 360, margin: '24px auto 0',
+            background: 'rgba(212,182,115,0.08)', border: '1px solid rgba(234,201,136,0.25)',
+            color: 'var(--text-2)', fontSize: 12, lineHeight: 1.5, textAlign: 'left',
+          }}>
+            <strong style={{ color: 'var(--gold-2)' }}>Tip:</strong> iOS sometimes loses the sign-in cookie when launching from the home screen. If sign-in doesn't stick, sign in once in Safari first, then re-open this app from the home screen.
+          </div>
+        )}
+
         <p style={{ color: 'var(--text-3)', fontSize: 12, marginTop: 32, lineHeight: 1.5 }}>
           By continuing you agree to share your name, email and avatar with the crew.
         </p>
