@@ -25,8 +25,14 @@ import PushSettings from './PushSettings';
 import type { TripSwimRoll } from '@/lib/types';
 import { Dices } from 'lucide-react';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { hasSupabase, supabase } from '@/lib/supabase/client';
 import * as db from '@/lib/db';
+import {
+  useMe, useCatches, useTrips, useMyNotifyConfig, useUnreadCount,
+  useProfilesByIds, useCommentCounts, prefetchTrip, prefetchLake,
+} from '@/lib/queries';
+import { QK } from '@/lib/queryKeys';
 import type {
   Profile, Catch as CatchT, Comment, Moon as MoonT, NotifyConfig, Trip, TripMember, Weather, CatchVisibility, TripVisibility,
 } from '@/lib/types';
@@ -58,14 +64,42 @@ const LOC_KEY = 'carp_log_loc_v1';
 export default function CarpApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [loading, setLoading] = useState(true);
-  const [me, setMe] = useState<Profile | null>(null);
-  const [catches, setCatches] = useState<CatchT[]>([]);
-  const [trips, setTrips] = useState<Trip[]>([]);
-  const [profilesById, setProfilesById] = useState<Record<string, Profile>>({});
-  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
-  const [notify, setNotify] = useState<NotifyConfig | null>(null);
-  const [unread, setUnread] = useState<number>(0);
+  const qc = useQueryClient();
+
+  // ───── data layer (TanStack Query — cached, deduped, revalidated) ─────
+  const meQuery       = useMe();
+  const catchesQuery  = useCatches();
+  const tripsQuery    = useTrips();
+  const notifyQuery   = useMyNotifyConfig();
+  const unreadQuery   = useUnreadCount();
+
+  const me      = meQuery.data || null;
+  const catches = catchesQuery.data || [];
+  const trips   = tripsQuery.data || [];
+  const notify  = notifyQuery.data || null;
+  const unread  = unreadQuery.data || 0;
+
+  // Derive the union of profile ids referenced by catches+trips+comments+me,
+  // then batch-fetch them as a single keyed cache entry.
+  const profileIds = useMemo(() => {
+    const s = new Set<string>();
+    if (me) s.add(me.id);
+    catches.forEach(c => {
+      s.add(c.angler_id);
+      (c.comments || []).forEach(cm => cm.anglerId && s.add(cm.anglerId));
+    });
+    trips.forEach(t => s.add(t.owner_id));
+    return Array.from(s);
+  }, [me, catches, trips]);
+  const profilesQuery = useProfilesByIds(profileIds);
+  const profilesById = profilesQuery.data || {};
+
+  // Comment counts derived from currently-loaded catches.
+  const catchIds = useMemo(() => catches.map(c => c.id), [catches]);
+  const commentCountsQuery = useCommentCounts(catchIds);
+  const commentCounts = commentCountsQuery.data || {};
+
+  // ───── ephemeral UI state (kept as useState — these are not server data) ─────
   const [view, setView] = useState<'feed' | 'trips' | 'stats' | 'gallery'>('feed');
   const [showAdd, setShowAdd] = useState(false);
   const [detailCatch, setDetailCatch] = useState<CatchT | null>(null);
@@ -76,57 +110,14 @@ export default function CarpApp() {
   const [editTrip, setEditTrip] = useState<Trip | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
 
-  const refreshProfilesFor = useCallback(async (rows: { angler_id?: string; owner_id?: string; comments?: Comment[] }[]) => {
-    const ids = new Set<string>();
-    rows.forEach(r => {
-      if ('angler_id' in r && r.angler_id) ids.add(r.angler_id);
-      if ('owner_id' in r && r.owner_id) ids.add(r.owner_id);
-      if (Array.isArray(r.comments)) r.comments.forEach(c => c.anglerId && ids.add(c.anglerId));
-    });
-    const need = Array.from(ids).filter(id => !profilesById[id]);
-    if (need.length === 0) return;
-    const fetched = await db.listProfilesByIds(need);
-    setProfilesById(prev => {
-      const out = { ...prev };
-      fetched.forEach(p => { out[p.id] = p; });
-      return out;
-    });
-  }, [profilesById]);
-
+  // Auth gate: if /me has resolved to null, send to sign-in.
   useEffect(() => {
     if (!hasSupabase) {
       setSetupError('Supabase env vars are missing. Configure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.');
-      setLoading(false); return;
+      return;
     }
-    (async () => {
-      try {
-        const meProfile = await db.getMe();
-        if (!meProfile) { router.replace('/auth/sign-in'); return; }
-        setMe(meProfile);
-        const [cs, ts, n, u] = await Promise.all([
-          db.listCatches(), db.listTrips(), db.getMyNotify(), db.unreadCount(),
-        ]);
-        setCatches(cs); setTrips(ts); setNotify(n); setUnread(u);
-        const ids = new Set<string>();
-        cs.forEach(c => { ids.add(c.angler_id); (c.comments || []).forEach(cm => cm.anglerId && ids.add(cm.anglerId)); });
-        ts.forEach(t => ids.add(t.owner_id));
-        ids.add(meProfile.id);
-        const arr = Array.from(ids);
-        if (arr.length) {
-          const profs = await db.listProfilesByIds(arr);
-          const map: Record<string, Profile> = {};
-          profs.forEach(p => { map[p.id] = p; });
-          map[meProfile.id] = meProfile;
-          setProfilesById(map);
-        }
-        // Comment counts for the feed badges (one-shot batch query).
-        const counts = await db.countCatchComments(cs.map(c => c.id)).catch(() => ({}));
-        setCommentCounts(counts);
-      } catch (e: any) {
-        setSetupError(e?.message || 'Failed to load data');
-      } finally { setLoading(false); }
-    })();
-  }, [router]);
+    if (meQuery.isFetched && !me) router.replace('/auth/sign-in');
+  }, [meQuery.isFetched, me, router]);
 
   // Open a catch by ?catch=<id> query param (deep link from /profile).
   // Optional ?back=/profile/foo: closing the modal navigates back there.
@@ -146,34 +137,48 @@ export default function CarpApp() {
     }
   }, [searchParams, catches]);
 
-  // Realtime subscriptions: catches, trips, notifications.
+  // ───── realtime → cache merge (no full refetches) ─────
+  // INSERT: prepend / append to cache via setQueryData (instant UI update).
+  // UPDATE: map the changed row in-place.
+  // DELETE: filter out, OR invalidate so a fetch reconciles. Both are cheap.
   useEffect(() => {
     if (!hasSupabase || !me) return;
     const ch = supabase()
       .channel('carp-log-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'catches' }, async () => {
-        try {
-          const cs = await db.listCatches();
-          setCatches(cs);
-          await refreshProfilesFor(cs);
-        } catch {}
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'catches' }, (payload) => {
+        const row = payload.new as CatchT;
+        qc.setQueryData<CatchT[]>(QK.catches.all, (old) => {
+          if (!old) return [row];
+          if (old.find(c => c.id === row.id)) return old;
+          return [row, ...old];
+        });
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'trips' }, async () => {
-        try { const ts = await db.listTrips(); setTrips(ts); await refreshProfilesFor(ts); } catch {}
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'catches' }, (payload) => {
+        const row = payload.new as CatchT;
+        qc.setQueryData<CatchT[]>(QK.catches.all, (old) => old?.map(c => c.id === row.id ? row : c));
       })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${me.id}` }, async () => {
-        setUnread(await db.unreadCount());
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'catches' }, (payload) => {
+        const old_id = (payload.old as { id?: string }).id;
+        if (!old_id) return;
+        qc.setQueryData<CatchT[]>(QK.catches.all, (old) => old?.filter(c => c.id !== old_id));
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'catch_comments' }, async (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trips' }, () => {
+        qc.invalidateQueries({ queryKey: QK.trips.all });
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${me.id}` }, () => {
+        qc.invalidateQueries({ queryKey: QK.notifications.unread });
+        qc.invalidateQueries({ queryKey: QK.notifications.list });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'catch_comments' }, (payload) => {
         const row = (payload.new || payload.old) as { catch_id?: string };
         if (!row?.catch_id) return;
-        // recompute count for this one catch
-        const counts = await db.countCatchComments([row.catch_id]).catch(() => ({} as Record<string, number>));
-        setCommentCounts(prev => ({ ...prev, [row.catch_id!]: counts[row.catch_id!] || 0 }));
+        // Only the count for this one catch needs to refresh; the comment list
+        // for an open catch detail re-syncs via its own per-catch subscription.
+        qc.invalidateQueries({ queryKey: ['comments', 'counts'] });
       })
       .subscribe();
     return () => { supabase().removeChannel(ch); };
-  }, [me, refreshProfilesFor]);
+  }, [me, qc]);
 
   const meAngler = me;
   const activeTrips = useMemo(() => trips.filter(t => {
@@ -186,6 +191,9 @@ export default function CarpApp() {
     if (photoDataUrl) {
       try { await db.uploadPhotoFromDataUrl(saved.id, photoDataUrl); } catch (e) { console.warn('photo upload failed', e); }
     }
+    // Realtime usually beats us to the cache, but invalidate for safety so
+    // edits and photo-uploads always reconcile.
+    qc.invalidateQueries({ queryKey: QK.catches.all });
     if (isNew) {
       // 1) Personal Telegram alert if user has notify enabled
       if (notify?.enabled) {
@@ -214,11 +222,18 @@ export default function CarpApp() {
 
   async function deleteCatchHandler(id: string) {
     await db.deleteCatch(id);
+    qc.invalidateQueries({ queryKey: QK.catches.all });
   }
 
-  async function deleteTripHandler(id: string) { await db.deleteTrip(id); }
+  async function deleteTripHandler(id: string) {
+    await db.deleteTrip(id);
+    qc.invalidateQueries({ queryKey: QK.trips.all });
+    // Catches lose their trip_id, so refresh the catches cache too.
+    qc.invalidateQueries({ queryKey: QK.catches.all });
+  }
   async function saveNotifyHandler(n: { token: string | null; chat_id: string | null; enabled: boolean }) {
-    await db.saveMyNotify(n); setNotify(await db.getMyNotify());
+    await db.saveMyNotify(n);
+    qc.invalidateQueries({ queryKey: QK.notifyConfig });
   }
 
   if (setupError) return (
@@ -228,7 +243,10 @@ export default function CarpApp() {
     </div></div>
   );
 
-  if (loading || !me) return (
+  // First-load spinner: only when nothing is in cache yet. Subsequent visits
+  // render cached data immediately and fade in any new data via background refetch.
+  const initialLoading = (meQuery.isLoading && !me) || (catchesQuery.isLoading && catches.length === 0);
+  if (initialLoading || !me) return (
     <div className="app-root"><div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
       <Fish size={48} style={{ color: 'var(--gold)' }} />
       <Loader2 size={20} className="spin" style={{ color: 'var(--text-3)' }} />
@@ -320,7 +338,7 @@ export default function CarpApp() {
         <SettingsModal
           me={me} catches={catches} trips={trips} notify={notify}
           onClose={() => setShowSettings(false)}
-          onSaveProfile={async (patch) => { const updated = await db.updateProfile(patch); if (updated) setMe(updated); }}
+          onSaveProfile={async (patch) => { await db.updateProfile(patch); qc.invalidateQueries({ queryKey: QK.profiles.me }); }}
           onSaveNotify={saveNotifyHandler}
         />
       )}
@@ -639,6 +657,7 @@ function TripsView({ me, trips, catches, profilesById, onOpenTrip, onAddTrip }: 
   me: Profile; trips: Trip[]; catches: CatchT[]; profilesById: Record<string, Profile>;
   onOpenTrip: (t: Trip) => void; onAddTrip: () => void;
 }) {
+  const qc = useQueryClient();
   const sorted = useMemo(() => [...trips].sort((a, b) => +new Date(b.start_date) - +new Date(a.start_date)), [trips]);
   const tripStats = (id: string) => {
     const tc = catches.filter(c => c.trip_id === id);
@@ -666,7 +685,11 @@ function TripsView({ me, trips, catches, profilesById, onOpenTrip, onAddTrip }: 
             const active = isActive(t);
             const owner = profilesById[t.owner_id];
             return (
-              <div key={t.id} className="card tap fade-in" onClick={() => onOpenTrip(t)} style={{ padding: 16, cursor: 'pointer' }}>
+              <div key={t.id} className="card tap fade-in"
+                onClick={() => onOpenTrip(t)}
+                onTouchStart={() => prefetchTrip(qc, t.id)}
+                onMouseEnter={() => prefetchTrip(qc, t.id)}
+                style={{ padding: 16, cursor: 'pointer' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {active && <span style={{ width: 7, height: 7, borderRadius: 999, background: 'var(--sage)', boxShadow: '0 0 8px var(--sage)' }} />}
@@ -1618,6 +1641,7 @@ function StatsBait({ catches }: { catches: CatchT[] }) {
 }
 
 function StatsLakes({ catches, profilesById, onOpen, onOpenLake }: { catches: CatchT[]; profilesById: Record<string, Profile>; onOpen: (c: CatchT) => void; onOpenLake: (lakeName: string) => void }) {
+  const qc = useQueryClient();
   const landed = useMemo(() => catches.filter(c => !c.lost && c.lake), [catches]);
   const lakes = useMemo(() => {
     const grouped: Record<string, { name: string; catches: CatchT[]; totalOz: number; biggest: CatchT | null }> = {};
@@ -1637,7 +1661,10 @@ function StatsLakes({ catches, profilesById, onOpen, onOpenLake }: { catches: Ca
         const top3 = [...lake.catches].sort((a, b) => totalOz(b.lbs, b.oz) - totalOz(a.lbs, a.oz)).slice(0, 3);
         return (
           <div key={lake.name} className="card" style={{ padding: 16 }}>
-            <button onClick={() => onOpenLake(lake.name)} className="tap" style={{
+            <button onClick={() => onOpenLake(lake.name)}
+              onTouchStart={async () => { const l = await db.getLakeByName(lake.name); if (l) prefetchLake(qc, l.id); }}
+              onMouseEnter={async () => { const l = await db.getLakeByName(lake.name); if (l) prefetchLake(qc, l.id); }}
+              className="tap" style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 8,
               background: 'transparent', border: 'none', padding: 0, width: '100%',
               color: 'var(--text)', fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer',
