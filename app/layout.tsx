@@ -1,6 +1,7 @@
 import './globals.css';
 import type { Metadata, Viewport } from 'next';
 import AnimatedBackground from '@/components/AnimatedBackground';
+import ServiceWorkerRegister from '@/components/ServiceWorkerRegister';
 
 export const metadata: Metadata = {
   title: 'Carp Log',
@@ -45,7 +46,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-startup-image" media="(device-width: 428px) and (device-height: 926px)" href="/splash/iphone13promax.png" />
         <link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 812px)" href="/splash/iphonex.png" />
       </head>
-      <body>{children}</body>
+      <body>
+        <ServiceWorkerRegister />
+        <AnimatedBackground />
+        {children}
+      </body>
     </html>
   );
 }
