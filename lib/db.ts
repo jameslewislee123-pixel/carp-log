@@ -2,7 +2,7 @@
 import { supabase } from './supabase/client';
 import type {
   AppNotification, Catch, CatchVisibility, Comment, Friendship, Moon, NotifyConfig,
-  Profile, Trip, TripMember, TripVisibility, Weather,
+  Profile, Trip, TripActivity, TripMember, TripMessage, TripStake, TripVisibility, Weather,
 } from './types';
 
 // ============ PROFILES ============
@@ -93,6 +93,8 @@ export async function upsertTrip(t: Partial<Trip> & { name: string; start_date: 
     name: t.name, location: t.location ?? null,
     start_date: t.start_date, end_date: t.end_date, notes: t.notes ?? null,
     visibility: t.visibility || 'invited_only',
+    wager_enabled: !!t.wager_enabled,
+    wager_description: t.wager_description ?? null,
   };
   if (t.id) {
     const { data, error } = await supabase().from('trips').update(payload).eq('id', t.id).select().single();
@@ -100,6 +102,18 @@ export async function upsertTrip(t: Partial<Trip> & { name: string; start_date: 
   }
   const { data, error } = await supabase().from('trips').insert(payload).select().single();
   if (error) throw error; return data as Trip;
+}
+
+// Create a trip and (atomically-ish) invite a list of anglers in a single user gesture.
+export async function createTripWithInvites(
+  t: Partial<Trip> & { name: string; start_date: string; end_date: string; visibility?: TripVisibility },
+  inviteIds: string[],
+): Promise<Trip> {
+  const trip = await upsertTrip(t);
+  if (inviteIds.length > 0) {
+    await inviteToTrip(trip.id, inviteIds);
+  }
+  return trip;
 }
 export async function deleteTrip(id: string): Promise<void> {
   const { error } = await supabase().from('trips').delete().eq('id', id);
@@ -160,6 +174,8 @@ export type CatchInput = {
   has_photo: boolean;
   weather: Weather | null;
   moon: Moon | null;
+  latitude?: number | null;
+  longitude?: number | null;
   visibility: CatchVisibility;
   comments?: Comment[];
 };
@@ -234,6 +250,52 @@ export async function saveMyNotify(n: { token: string | null; chat_id: string | 
   if (!user) throw new Error('Not signed in');
   const { error } = await supabase().from('notify_config').upsert({ angler_id: user.id, ...n }, { onConflict: 'angler_id' });
   if (error) throw error;
+}
+
+// ============ TRIP MESSAGES (chat) ============
+export async function listTripMessages(tripId: string, limit = 200): Promise<TripMessage[]> {
+  const { data } = await supabase().from('trip_messages').select('*')
+    .eq('trip_id', tripId).order('created_at', { ascending: true }).limit(limit);
+  return (data || []) as TripMessage[];
+}
+export async function sendTripMessage(tripId: string, text: string): Promise<TripMessage> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { data, error } = await supabase().from('trip_messages')
+    .insert({ trip_id: tripId, angler_id: user.id, text }).select().single();
+  if (error) throw error;
+  return data as TripMessage;
+}
+export async function deleteTripMessage(id: string): Promise<void> {
+  const { error } = await supabase().from('trip_messages').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// ============ TRIP STAKES (per-member wager pledge) ============
+export async function listTripStakes(tripId: string): Promise<TripStake[]> {
+  const { data } = await supabase().from('trip_stakes').select('*').eq('trip_id', tripId);
+  return (data || []) as TripStake[];
+}
+export async function setMyTripStake(tripId: string, stakeText: string): Promise<TripStake> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { data, error } = await supabase().from('trip_stakes')
+    .upsert({ trip_id: tripId, angler_id: user.id, stake_text: stakeText }, { onConflict: 'trip_id,angler_id' })
+    .select().single();
+  if (error) throw error;
+  return data as TripStake;
+}
+export async function deleteMyTripStake(tripId: string): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return;
+  await supabase().from('trip_stakes').delete().eq('trip_id', tripId).eq('angler_id', user.id);
+}
+
+// ============ TRIP ACTIVITY ============
+export async function listTripActivity(tripId: string, limit = 50): Promise<TripActivity[]> {
+  const { data } = await supabase().from('trip_activity').select('*')
+    .eq('trip_id', tripId).order('created_at', { ascending: false }).limit(limit);
+  return (data || []) as TripActivity[];
 }
 
 // ============ NOTIFICATIONS ============

@@ -7,7 +7,14 @@ import {
   Edit2, Trash2, ChevronRight, Loader2, Download, ArrowLeft, Sparkles, Crown,
   Cloud, Wind, Thermometer, MessageCircle, Bell, Send, Anchor, BarChart3,
   Clock, Tent, MapPinned, Star, Globe, Users as UsersIcon, Lock, LogOut, UserPlus, Mail,
+  Activity as ActivityIcon, Map as MapIcon, MessageSquare,
 } from 'lucide-react';
+import InvitePicker from './InvitePicker';
+import TripChat from './TripChat';
+import TripActivityFeed from './TripActivity';
+import TripMap from './TripMap';
+import TripLeaderboard from './TripLeaderboard';
+import TripStatusPill from './TripStatusPill';
 
 import { hasSupabase, supabase } from '@/lib/supabase/client';
 import * as db from '@/lib/db';
@@ -186,9 +193,6 @@ export default function CarpApp() {
     await db.setComments(catchId, next);
     if (detailCatch?.id === catchId) setDetailCatch(d => d ? { ...d, comments: next } : d);
   }
-  async function saveTripHandler(input: Partial<Trip> & { name: string; start_date: string; end_date: string; visibility?: TripVisibility }) {
-    await db.upsertTrip(input);
-  }
   async function deleteTripHandler(id: string) { await db.deleteTrip(id); }
   async function saveNotifyHandler(n: { token: string | null; chat_id: string | null; enabled: boolean }) {
     await db.saveMyNotify(n); setNotify(await db.getMyNotify());
@@ -271,9 +275,16 @@ export default function CarpApp() {
       )}
       {showAddTrip && (
         <AddTripModal
-          existing={editTrip}
+          existing={editTrip} me={me}
           onClose={() => { setShowAddTrip(false); setEditTrip(null); }}
-          onSave={async (data) => { await saveTripHandler(data); setShowAddTrip(false); setEditTrip(null); }}
+          onSave={async (data, inviteIds) => {
+            if (editTrip) {
+              await db.upsertTrip({ ...data, id: editTrip.id });
+            } else {
+              await db.createTripWithInvites(data, inviteIds);
+            }
+            setShowAddTrip(false); setEditTrip(null);
+          }}
         />
       )}
       {showSettings && (
@@ -616,26 +627,41 @@ function MiniStat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
+type TripTab = 'overview' | 'catches' | 'map' | 'chat' | 'activity';
+
 function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete, onOpenCatch }: {
   me: Profile; trip: Trip; catches: CatchT[]; profilesById: Record<string, Profile>;
   onClose: () => void; onEdit: () => void; onDelete: () => void; onOpenCatch: (c: CatchT) => void;
 }) {
+  const [tab, setTab] = useState<TripTab>('overview');
   const [members, setMembers] = useState<TripMember[]>([]);
   const [memberProfiles, setMemberProfiles] = useState<Record<string, Profile>>(profilesById);
+  const [stakes, setStakes] = useState<import('@/lib/types').TripStake[]>([]);
+  const [myStakeDraft, setMyStakeDraft] = useState('');
   const [showInvite, setShowInvite] = useState(false);
+  const [activityPreview, setActivityPreview] = useState<import('@/lib/types').TripActivity[]>([]);
   const isOwner = trip.owner_id === me.id;
+
+  async function refreshMembers() {
+    const m = await db.listTripMembers(trip.id);
+    setMembers(m);
+    const need = m.map(x => x.angler_id).filter(id => !memberProfiles[id]);
+    if (need.length > 0) {
+      const profs = await db.listProfilesByIds(need);
+      setMemberProfiles(prev => { const out = { ...prev }; profs.forEach(p => out[p.id] = p); return out; });
+    }
+  }
+  async function refreshStakes() {
+    const s = await db.listTripStakes(trip.id);
+    setStakes(s);
+    const mine = s.find(x => x.angler_id === me.id);
+    setMyStakeDraft(mine?.stake_text || '');
+  }
+
   useEffect(() => {
-    (async () => {
-      const m = await db.listTripMembers(trip.id);
-      setMembers(m);
-      const need = m.map(x => x.angler_id).filter(id => !memberProfiles[id]);
-      if (need.length > 0) {
-        const profs = await db.listProfilesByIds(need);
-        setMemberProfiles(prev => { const out = { ...prev }; profs.forEach(p => out[p.id] = p); return out; });
-      }
-    })();
-  /* eslint-disable-next-line */
-  }, [trip.id]);
+    refreshMembers(); refreshStakes();
+    db.listTripActivity(trip.id, 5).then(setActivityPreview);
+  /* eslint-disable-next-line */ }, [trip.id]);
 
   const tripCatches = useMemo(() => catches.filter(c => c.trip_id === trip.id).sort((a, b) => +new Date(b.date) - +new Date(a.date)), [catches, trip.id]);
   const landed = tripCatches.filter(c => !c.lost);
@@ -643,115 +669,204 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
   const biggest = landed.reduce<CatchT | null>((m, c) => !m || totalOz(c.lbs, c.oz) > totalOz(m.lbs, m.oz) ? c : m, null);
   const totalWeightOz = landed.reduce((s, c) => s + totalOz(c.lbs, c.oz), 0);
   const joinedMembers = members.filter(m => m.status === 'joined');
-  const perAngler = useMemo(() => joinedMembers.map(jm => {
-    const ac = landed.filter(c => c.angler_id === jm.angler_id);
-    const big = ac.reduce<CatchT | null>((m, c) => !m || totalOz(c.lbs, c.oz) > totalOz(m.lbs, m.oz) ? c : m, null);
-    return {
-      profile: memberProfiles[jm.angler_id], member: jm,
-      count: ac.length, biggest: big, totalOz: ac.reduce((s, c) => s + totalOz(c.lbs, c.oz), 0),
-    };
-  }).filter(p => p.profile).sort((a, b) => b.count - a.count), [joinedMembers, landed, memberProfiles]);
+  const myStake = stakes.find(s => s.angler_id === me.id);
+
+  const tabs: { id: TripTab; label: string; icon: any }[] = [
+    { id: 'overview', label: 'Overview', icon: Trophy },
+    { id: 'catches',  label: 'Catches',  icon: Fish },
+    { id: 'map',      label: 'Map',      icon: MapIcon },
+    { id: 'chat',     label: 'Chat',     icon: MessageSquare },
+    { id: 'activity', label: 'Activity', icon: ActivityIcon },
+  ];
 
   return (
     <ModalShell hideTitle onClose={onClose}>
-      <div style={{ marginBottom: 8 }}>
-        <div style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--gold-2)', fontWeight: 700, marginBottom: 4 }}>Trip</div>
-        <h2 className="display-font" style={{ fontSize: 30, margin: 0, fontWeight: 500, lineHeight: 1.05 }}>{trip.name}</h2>
+      <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--gold-2)', fontWeight: 700 }}>Trip</div>
+        <TripStatusPill trip={trip} />
       </div>
-      <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <h2 className="display-font" style={{ fontSize: 30, margin: 0, fontWeight: 500, lineHeight: 1.05, marginBottom: 6 }}>{trip.name}</h2>
+      <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><Calendar size={12} /> {formatDateRange(trip.start_date, trip.end_date)}</span>
         {trip.location && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>· <MapPin size={12} />{trip.location}</span>}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 16 }}>
-        <StatCard label="Caught" value={landed.length} />
-        <StatCard label="Biggest" value={biggest ? formatWeight(biggest.lbs, biggest.oz) : '—'} />
-        <StatCard label="Total" value={totalWeightOz ? `${Math.floor(totalWeightOz / 16)}lb` : '—'} />
-      </div>
 
-      {/* Members */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <div className="label" style={{ marginBottom: 0 }}>Members ({joinedMembers.length})</div>
-        {isOwner && (
-          <button onClick={() => setShowInvite(true)} className="tap" style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '6px 10px', borderRadius: 999, border: '1px solid var(--gold)',
-            background: 'rgba(212,182,115,0.12)', color: 'var(--gold-2)',
-            fontFamily: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-          }}>
-            <UserPlus size={12} /> Invite angler
-          </button>
-        )}
-      </div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        {joinedMembers.map(m => {
-          const p = memberProfiles[m.angler_id];
-          if (!p) return null;
+      {/* Tab bar */}
+      <div className="scrollbar-thin" style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 16, paddingBottom: 4 }}>
+        {tabs.map(t => {
+          const Icon = t.icon;
+          const active = tab === t.id;
           return (
-            <Link key={m.id} href={`/profile/${p.username}`} style={{
-              display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 10px 6px 6px',
-              borderRadius: 999, border: '1px solid rgba(234,201,136,0.18)',
-              background: 'rgba(10,24,22,0.5)', color: 'var(--text)', textDecoration: 'none',
-              fontSize: 12, fontWeight: 600,
+            <button key={t.id} onClick={() => setTab(t.id)} className="tap" style={{
+              flexShrink: 0, padding: '8px 14px', borderRadius: 999,
+              border: `1px solid ${active ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
+              background: active ? 'rgba(212,182,115,0.15)' : 'rgba(10,24,22,0.45)',
+              color: active ? 'var(--gold-2)' : 'var(--text-2)',
+              fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
             }}>
-              <AvatarBubble username={p.username} displayName={p.display_name} avatarUrl={p.avatar_url} size={22} link={false} />
-              {p.display_name}{m.role === 'owner' && <span style={{ color: 'var(--gold-2)', fontSize: 10, fontWeight: 700 }}>·OWNER</span>}
-            </Link>
+              <Icon size={13} /> {t.label}
+            </button>
           );
         })}
       </div>
 
-      {lost.length > 0 && (
-        <div style={{ background: 'rgba(220,107,88,0.08)', border: '1px solid rgba(220,107,88,0.25)', borderRadius: 12, padding: 10, marginBottom: 16, fontSize: 13, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Anchor size={14} style={{ color: 'var(--danger)' }} />
-          {lost.length} {lost.length === 1 ? 'fish' : 'fish'} lost
-        </div>
-      )}
-      {trip.notes && (
-        <div className="card" style={{ padding: 14, marginBottom: 16 }}>
-          <div className="label">Notes</div>
-          <p style={{ fontSize: 14, color: 'var(--text)', margin: 0, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{trip.notes}</p>
-        </div>
-      )}
-      {perAngler.some(p => p.count > 0) && (
+      {tab === 'overview' && (
         <>
-          <div className="label">Crew breakdown</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
-            {perAngler.filter(p => p.count > 0).map(p => (
-              <div key={p.profile.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12 }}>
-                <AvatarBubble username={p.profile.username} displayName={p.profile.display_name} avatarUrl={p.profile.avatar_url} size={32} link={false} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>{p.profile.display_name}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{p.count} fish · biggest {p.biggest ? formatWeight(p.biggest.lbs, p.biggest.oz) : '—'}</div>
-                </div>
-                <div className="num-display" style={{ fontSize: 18, color: 'var(--text)' }}>{Math.floor(p.totalOz / 16)}<span style={{ fontSize: 12, color: 'var(--text-3)' }}>lb</span></div>
+          {trip.wager_enabled && (
+            <div className="fade-in" style={{
+              marginBottom: 16, padding: 14, borderRadius: 18,
+              background: 'linear-gradient(135deg, rgba(234,201,136,0.18), rgba(212,182,115,0.06))',
+              border: '1px solid rgba(234,201,136,0.4)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <Trophy size={16} style={{ color: 'var(--gold-2)' }} />
+                <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--gold-2)', fontWeight: 700 }}>Wager</div>
               </div>
-            ))}
+              {trip.wager_description && <p style={{ fontSize: 14, color: 'var(--text)', margin: '0 0 12px', lineHeight: 1.4 }}>{trip.wager_description}</p>}
+              <label className="label">Your stake</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input className="input" placeholder="e.g. First round at the airport"
+                  value={myStakeDraft} onChange={(e) => setMyStakeDraft(e.target.value)}
+                  maxLength={200} style={{ flex: 1, fontSize: 13, padding: '10px 14px' }} />
+                <button onClick={async () => {
+                  const t = myStakeDraft.trim();
+                  if (!t) {
+                    if (myStake) { await db.deleteMyTripStake(trip.id); }
+                  } else {
+                    await db.setMyTripStake(trip.id, t);
+                  }
+                  await refreshStakes();
+                }} className="tap" style={{
+                  padding: '10px 14px', borderRadius: 12,
+                  background: myStakeDraft.trim() === (myStake?.stake_text || '') ? 'rgba(20,42,38,0.7)' : 'var(--gold)',
+                  color: myStakeDraft.trim() === (myStake?.stake_text || '') ? 'var(--text-3)' : '#1A1004',
+                  border: 'none', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                }}>{myStake ? 'Update' : 'Pledge'}</button>
+              </div>
+              {stakes.filter(s => s.angler_id !== me.id).length > 0 && (
+                <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {stakes.filter(s => s.angler_id !== me.id).map(s => {
+                    const p = memberProfiles[s.angler_id];
+                    return (
+                      <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-2)' }}>
+                        <AvatarBubble username={p?.username} displayName={p?.display_name} avatarUrl={p?.avatar_url} size={20} link={false} />
+                        <strong style={{ fontWeight: 600 }}>{p?.display_name || 'Someone'}:</strong> <span style={{ color: 'var(--text)' }}>{s.stake_text}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 16 }}>
+            <StatCard label="Caught" value={landed.length} />
+            <StatCard label="Biggest" value={biggest ? formatWeight(biggest.lbs, biggest.oz) : '—'} />
+            <StatCard label="Total" value={totalWeightOz ? `${Math.floor(totalWeightOz / 16)}lb` : '—'} />
           </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div className="label" style={{ marginBottom: 0 }}>Members ({joinedMembers.length})</div>
+            {isOwner && (
+              <button onClick={() => setShowInvite(true)} className="tap" style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '6px 10px', borderRadius: 999, border: '1px solid var(--gold)',
+                background: 'rgba(212,182,115,0.12)', color: 'var(--gold-2)',
+                fontFamily: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}><UserPlus size={12} /> Invite angler</button>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+            {joinedMembers.map(m => {
+              const p = memberProfiles[m.angler_id];
+              if (!p) return null;
+              return (
+                <Link key={m.id} href={`/profile/${p.username}`} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 10px 6px 6px',
+                  borderRadius: 999, border: '1px solid rgba(234,201,136,0.18)',
+                  background: 'rgba(10,24,22,0.5)', color: 'var(--text)', textDecoration: 'none',
+                  fontSize: 12, fontWeight: 600,
+                }}>
+                  <AvatarBubble username={p.username} displayName={p.display_name} avatarUrl={p.avatar_url} size={22} link={false} />
+                  {p.display_name}{m.role === 'owner' && <span style={{ color: 'var(--gold-2)', fontSize: 10, fontWeight: 700 }}>·OWNER</span>}
+                </Link>
+              );
+            })}
+          </div>
+
+          {/* Leaderboard */}
+          <div className="label">Leaderboard</div>
+          <div style={{ marginBottom: 20 }}>
+            <TripLeaderboard tripCatches={tripCatches} members={members} profilesById={memberProfiles} wagerEnabled={trip.wager_enabled} />
+          </div>
+
+          {/* Recent activity preview */}
+          {activityPreview.length > 0 && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div className="label" style={{ marginBottom: 0 }}>Recent activity</div>
+                <button onClick={() => setTab('activity')} className="tap" style={{ background: 'transparent', border: 'none', color: 'var(--gold-2)', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>See all</button>
+              </div>
+              <div style={{ marginTop: 8, marginBottom: 16 }}>
+                <TripActivityFeed tripId={trip.id} profilesById={memberProfiles} />
+              </div>
+            </>
+          )}
+
+          {lost.length > 0 && (
+            <div style={{ background: 'rgba(220,107,88,0.08)', border: '1px solid rgba(220,107,88,0.25)', borderRadius: 12, padding: 10, marginBottom: 16, fontSize: 13, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Anchor size={14} style={{ color: 'var(--danger)' }} />
+              {lost.length} {lost.length === 1 ? 'fish' : 'fish'} lost
+            </div>
+          )}
+          {trip.notes && (
+            <div className="card" style={{ padding: 14, marginBottom: 16 }}>
+              <div className="label">Notes</div>
+              <p style={{ fontSize: 14, color: 'var(--text)', margin: 0, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{trip.notes}</p>
+            </div>
+          )}
+
+          {isOwner && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+              <button onClick={onEdit} className="btn btn-ghost tap" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)' }}><Edit2 size={16} /> Edit</button>
+              <button onClick={onDelete} className="btn btn-ghost tap" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)', color: 'var(--danger)' }}><Trash2 size={16} /> Delete</button>
+            </div>
+          )}
         </>
       )}
-      {tripCatches.length > 0 && (
-        <>
-          <div className="label">Catch list</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
+
+      {tab === 'catches' && (
+        tripCatches.length === 0 ? (
+          <p style={{ color: 'var(--text-3)', fontSize: 13, textAlign: 'center', padding: '40px 0' }}>No catches yet</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {tripCatches.map(c => (
               <CatchCard key={c.id} catchData={c}
                 angler={memberProfiles[c.angler_id] || profilesById[c.angler_id] || null}
                 trip={null} onClick={() => onOpenCatch(c)} />
             ))}
           </div>
-        </>
+        )
       )}
-      {isOwner && (
-        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-          <button onClick={onEdit} className="btn btn-ghost tap" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)' }}><Edit2 size={16} /> Edit</button>
-          <button onClick={onDelete} className="btn btn-ghost tap" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)', color: 'var(--danger)' }}><Trash2 size={16} /> Delete</button>
-        </div>
+
+      {tab === 'map' && (
+        <TripMap trip={trip} catches={tripCatches} profilesById={memberProfiles} onOpenCatch={onOpenCatch} />
+      )}
+
+      {tab === 'chat' && (
+        <TripChat tripId={trip.id} me={me} profilesById={memberProfiles} ownerId={trip.owner_id} />
+      )}
+
+      {tab === 'activity' && (
+        <TripActivityFeed tripId={trip.id} profilesById={memberProfiles} />
       )}
 
       {showInvite && (
         <InviteAnglerModal me={me} tripId={trip.id} existingMemberIds={members.map(m => m.angler_id)}
           onClose={() => setShowInvite(false)}
-          onInvited={async () => { setShowInvite(false); setMembers(await db.listTripMembers(trip.id)); }}
+          onInvited={async () => { setShowInvite(false); await refreshMembers(); }}
         />
       )}
     </ModalShell>
@@ -761,66 +876,34 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
 function InviteAnglerModal({ me, tripId, existingMemberIds, onClose, onInvited }: {
   me: Profile; tripId: string; existingMemberIds: string[]; onClose: () => void; onInvited: () => void;
 }) {
-  const [friends, setFriends] = useState<Profile[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Profile[]>([]);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    (async () => {
-      const fs = await db.listAcceptedFriends(me.id);
-      setFriends(fs.filter(f => !existingMemberIds.includes(f.id)));
-    })();
-  }, [me.id, existingMemberIds]);
-  function toggle(id: string) {
-    setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  }
   async function submit() {
-    if (selected.size === 0) return;
+    if (selected.length === 0) return;
     setBusy(true);
     try {
-      await db.inviteToTrip(tripId, Array.from(selected));
+      await db.inviteToTrip(tripId, selected.map(p => p.id));
       onInvited();
     } catch (e: any) { alert(e?.message || 'Failed to invite'); }
     finally { setBusy(false); }
   }
   return (
     <ModalShell title="Invite anglers" onClose={onClose}>
-      {friends.length === 0 ? (
-        <EmptyState icon={<UsersIcon size={40} />} title="No friends to invite" subtitle="Add friends from the friends tab first" />
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-          {friends.map(f => {
-            const on = selected.has(f.id);
-            return (
-              <button key={f.id} onClick={() => toggle(f.id)} className="tap" style={{
-                display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14,
-                background: on ? 'rgba(212,182,115,0.10)' : 'rgba(10,24,22,0.5)',
-                border: `1px solid ${on ? 'var(--gold)' : 'rgba(234,201,136,0.14)'}`,
-                color: 'var(--text)', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
-              }}>
-                <AvatarBubble username={f.username} displayName={f.display_name} avatarUrl={f.avatar_url} size={36} link={false} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>{f.display_name}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-3)' }}>@{f.username}</div>
-                </div>
-                {on && <Check size={18} style={{ color: 'var(--gold)' }} />}
-              </button>
-            );
-          })}
-        </div>
-      )}
-      <button className="btn btn-primary" onClick={submit} disabled={busy || selected.size === 0}
-        style={{ width: '100%', fontSize: 16, padding: 16 }}>
+      <InvitePicker meId={me.id} excludeIds={existingMemberIds} selected={selected} onChange={setSelected} />
+      <button className="btn btn-primary" onClick={submit} disabled={busy || selected.length === 0}
+        style={{ width: '100%', fontSize: 16, padding: 16, marginTop: 16 }}>
         {busy ? <Loader2 size={18} className="spin" /> : <Send size={18} />}
-        Send {selected.size} invite{selected.size === 1 ? '' : 's'}
+        Send {selected.length} invite{selected.length === 1 ? '' : 's'}
       </button>
     </ModalShell>
   );
 }
 
-function AddTripModal({ existing, onClose, onSave }: {
+function AddTripModal({ existing, me, onClose, onSave }: {
   existing: Trip | null;
+  me: Profile;
   onClose: () => void;
-  onSave: (data: Partial<Trip> & { name: string; start_date: string; end_date: string; visibility: TripVisibility }) => Promise<void>;
+  onSave: (data: Partial<Trip> & { name: string; start_date: string; end_date: string; visibility: TripVisibility }, inviteIds: string[]) => Promise<void>;
 }) {
   const [name, setName] = useState(existing?.name || '');
   const [location, setLocation] = useState(existing?.location || '');
@@ -828,6 +911,11 @@ function AddTripModal({ existing, onClose, onSave }: {
   const [endDate, setEndDate]     = useState(existing?.end_date   ? isoToLocalDateInput(existing.end_date)   : tomorrowLocalDateInput());
   const [notes, setNotes] = useState(existing?.notes || '');
   const [visibility, setVisibility] = useState<TripVisibility>(existing?.visibility || 'invited_only');
+  const [wagerEnabled, setWagerEnabled] = useState(existing?.wager_enabled || false);
+  const [wagerDescription, setWagerDescription] = useState(existing?.wager_description || '');
+  const [showInvite, setShowInvite] = useState(!existing);
+  const [showWager, setShowWager] = useState(!!existing?.wager_enabled);
+  const [invitees, setInvitees] = useState<Profile[]>([]);
   const [saving, setSaving] = useState(false);
 
   async function save() {
@@ -842,7 +930,9 @@ function AddTripModal({ existing, onClose, onSave }: {
         end_date: new Date(endDate + 'T23:59:59').toISOString(),
         notes: notes.trim() || null,
         visibility,
-      });
+        wager_enabled: wagerEnabled,
+        wager_description: wagerEnabled ? (wagerDescription.trim() || null) : null,
+      }, invitees.map(p => p.id));
     } finally { setSaving(false); }
   }
 
@@ -886,10 +976,64 @@ function AddTripModal({ existing, onClose, onSave }: {
         })}
       </div>
       <label className="label">Notes</label>
-      <textarea className="input" rows={3} placeholder="Lake conditions, expectations, plan…" value={notes} onChange={(e) => setNotes(e.target.value)} style={{ marginBottom: 20, resize: 'vertical', fontFamily: 'inherit' }} />
-      <button className="btn btn-primary" onClick={save} disabled={saving} style={{ width: '100%', fontSize: 16, padding: 16 }}>
+      <textarea className="input" rows={3} placeholder="Lake conditions, expectations, plan…" value={notes} onChange={(e) => setNotes(e.target.value)} style={{ marginBottom: 16, resize: 'vertical', fontFamily: 'inherit' }} />
+
+      {/* Invite anglers (creation only) */}
+      {!existing && (
+        <>
+          <button onClick={() => setShowInvite(s => !s)} className="tap" style={{
+            width: '100%', padding: '14px 16px', borderRadius: 14,
+            background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.14)',
+            color: 'var(--text-2)', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10,
+          }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><UserPlus size={15} /> Invite anglers{invitees.length > 0 ? ` (${invitees.length})` : ''}</span>
+            <ChevronRight size={16} style={{ transform: showInvite ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
+          </button>
+          {showInvite && (
+            <div className="fade-in" style={{ marginBottom: 14, padding: 14, borderRadius: 14, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)' }}>
+              <InvitePicker meId={me.id} excludeIds={[me.id]} selected={invitees} onChange={setInvitees} />
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Wager */}
+      <button onClick={() => setShowWager(s => !s)} className="tap" style={{
+        width: '100%', padding: '14px 16px', borderRadius: 14,
+        background: 'rgba(10,24,22,0.55)',
+        border: `1px solid ${wagerEnabled ? 'var(--gold)' : 'rgba(234,201,136,0.14)'}`,
+        color: 'var(--text-2)', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10,
+      }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <Trophy size={15} style={{ color: wagerEnabled ? 'var(--gold-2)' : 'var(--text-3)' }} />
+          {wagerEnabled ? 'Wager on' : 'Set up a wager (optional)'}
+        </span>
+        <ChevronRight size={16} style={{ transform: showWager ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
+      </button>
+      {showWager && (
+        <div className="fade-in" style={{ marginBottom: 14, padding: 14, borderRadius: 14, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)' }}>
+          <label className="tap" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 10, borderRadius: 12, background: 'rgba(10,24,22,0.5)', marginBottom: 10, cursor: 'pointer' }}>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>Enable wager</span>
+            <input type="checkbox" checked={wagerEnabled} onChange={(e) => setWagerEnabled(e.target.checked)} style={{ accentColor: 'var(--gold)' }} />
+          </label>
+          {wagerEnabled && (
+            <>
+              <label className="label">Rules / what's at stake</label>
+              <textarea className="input" rows={2} maxLength={200}
+                placeholder="e.g. Biggest fish wins first round at the airport"
+                value={wagerDescription} onChange={(e) => setWagerDescription(e.target.value)}
+                style={{ resize: 'vertical', fontFamily: 'inherit' }} />
+              <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-3)' }}>{wagerDescription.length}/200 · each member can pledge their own stake on the trip page</div>
+            </>
+          )}
+        </div>
+      )}
+
+      <button className="btn btn-primary" onClick={save} disabled={saving} style={{ width: '100%', fontSize: 16, padding: 16, marginTop: 6 }}>
         {saving ? <Loader2 size={18} className="spin" /> : <Check size={18} />}
-        {existing ? 'Save changes' : 'Create trip'}
+        {existing ? 'Save changes' : invitees.length > 0 ? `Create trip & invite ${invitees.length}` : 'Create trip'}
       </button>
     </ModalShell>
   );
@@ -1341,6 +1485,9 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
   const [showMore, setShowMore] = useState(!!(existing?.lake || existing?.swim || existing?.bait || existing?.rig || existing?.notes));
   const [showWeather, setShowWeather] = useState(!!(existing?.weather?.tempC != null || existing?.weather?.conditions));
   const [autoStatus, setAutoStatus] = useState<{ wx: 'idle' | 'fetching' | 'done' | 'failed'; sp: 'idle' | 'detecting' | 'done' | 'failed' }>({ wx: 'idle', sp: 'idle' });
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
+    existing?.latitude != null && existing?.longitude != null ? { lat: existing.latitude, lng: existing.longitude } : null
+  );
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -1359,16 +1506,17 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
       Promise.all([
         (async () => {
           try {
-            let coords: { lat: number; lng: number } | null = null;
+            let c: { lat: number; lng: number } | null = null;
             const cached = localStorage.getItem(LOC_KEY);
-            if (cached) { try { coords = JSON.parse(cached); } catch {} }
-            if (!coords) {
+            if (cached) { try { c = JSON.parse(cached); } catch {} }
+            if (!c) {
               const gps = await getCurrentLocation();
-              if (gps) { coords = gps; localStorage.setItem(LOC_KEY, JSON.stringify(gps)); }
+              if (gps) { c = gps; localStorage.setItem(LOC_KEY, JSON.stringify(gps)); }
             }
-            if (!coords && lake.trim()) coords = await geocodeLake(lake);
-            if (!coords) { setAutoStatus(s => ({ ...s, wx: 'failed' })); return; }
-            const w = await fetchWeatherFor(new Date(date), coords.lat, coords.lng);
+            if (!c && lake.trim()) c = await geocodeLake(lake);
+            if (!c) { setAutoStatus(s => ({ ...s, wx: 'failed' })); return; }
+            setCoords(c);
+            const w = await fetchWeatherFor(new Date(date), c.lat, c.lng);
             if (!w) { setAutoStatus(s => ({ ...s, wx: 'failed' })); return; }
             if (w.tempC != null) setTempC(String(w.tempC));
             if (w.pressure != null) setPressure(String(w.pressure));
@@ -1415,6 +1563,16 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
         }
       } catch {}
 
+      // Resolve coordinates: explicit state, else cached location, else null.
+      let lat: number | null = coords?.lat ?? null;
+      let lng: number | null = coords?.lng ?? null;
+      if (lat == null || lng == null) {
+        try {
+          const cached = typeof window !== 'undefined' ? localStorage.getItem(LOC_KEY) : null;
+          if (cached) { const c = JSON.parse(cached); if (c?.lat != null) { lat = c.lat; lng = c.lng; } }
+        } catch {}
+      }
+
       const payload: db.CatchInput = {
         ...(existing ? { id: existing.id } : {}),
         lost, lbs: lost ? 0 : (parseInt(lbs) || 0), oz: lost ? 0 : (parseInt(oz) || 0),
@@ -1422,7 +1580,9 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
         date: new Date(date).toISOString(), trip_id,
         lake: lake.trim() || null, swim: swim.trim() || null,
         bait: bait.trim() || null, rig: rig.trim() || null, notes: notes.trim() || null,
-        weather, moon, has_photo: !lost && !!photo,
+        weather, moon,
+        latitude: lat, longitude: lng,
+        has_photo: !lost && !!photo,
         visibility, comments: existing?.comments || [],
       };
       await onSave(payload, !lost && photo && photo !== photoExisting ? photo : null);

@@ -32,8 +32,47 @@ export type Trip = {
   end_date: string;
   notes: string | null;
   visibility: TripVisibility;
+  wager_enabled: boolean;
+  wager_description: string | null;
   created_at?: string;
   updated_at?: string;
+};
+
+export type TripStatus = 'upcoming' | 'active' | 'completed';
+export function tripStatus(t: Pick<Trip, 'start_date' | 'end_date'>): TripStatus {
+  const now = Date.now();
+  const s = new Date(t.start_date).getTime();
+  const e = new Date(t.end_date).getTime();
+  if (now < s) return 'upcoming';
+  if (now <= e + 86400000) return 'active';
+  return 'completed';
+}
+
+export type TripMessage = {
+  id: string;
+  trip_id: string;
+  angler_id: string;
+  text: string;
+  created_at: string;
+};
+
+export type TripStake = {
+  id: string;
+  trip_id: string;
+  angler_id: string;
+  stake_text: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type TripActivityType = 'joined' | 'caught' | 'lost_fish' | 'commented' | 'joined_chat' | 'set_wager' | 'became_leader';
+export type TripActivity = {
+  id: string;
+  trip_id: string;
+  angler_id: string;
+  type: TripActivityType;
+  payload: Record<string, any>;
+  created_at: string;
 };
 
 export type MemberRole = 'owner' | 'contributor';
@@ -89,6 +128,8 @@ export type Catch = {
   has_photo: boolean;
   weather: Weather | null;
   moon: Moon | null;
+  latitude: number | null;
+  longitude: number | null;
   visibility: CatchVisibility;
   comments: Comment[];
   created_at?: string;
@@ -103,7 +144,7 @@ export type NotifyConfig = {
   enabled: boolean;
 };
 
-export type NotificationType = 'friend_request' | 'friend_accepted' | 'trip_invite' | 'comment_on_catch';
+export type NotificationType = 'friend_request' | 'friend_accepted' | 'trip_invite' | 'comment_on_catch' | 'trip_new_catch' | 'trip_new_member' | 'trip_chat_mention';
 export type AppNotification = {
   id: string;
   recipient_id: string;

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bell, Check, Loader2, Tent, UserPlus, X } from 'lucide-react';
+import { AtSign, Bell, Check, Fish, Loader2, Tent, UserPlus, X } from 'lucide-react';
 import * as db from '@/lib/db';
 import type { AppNotification, Profile, Trip, TripMember } from '@/lib/types';
 import { PageHeader } from '@/components/AppFrame';
@@ -124,6 +124,52 @@ export default function NotificationsPage() {
                         await db.deleteNotification(notif.id); load();
                       }}>Decline</ActionBtn>
                     </div>
+                  </NotifCard>
+                );
+              }
+              if (notif.type === 'trip_new_catch') {
+                const lbs = notif.payload?.lbs ?? 0;
+                const oz = notif.payload?.oz ?? 0;
+                return (
+                  <NotifCard key={notif.id} icon={<Fish size={16} style={{ color: 'var(--gold-2)' }} />}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: 'var(--text)' }}>
+                        {actor ? <><strong>{actor.display_name}</strong> banked </> : 'New catch '}
+                        <strong>{lbs}lb{oz ? ` ${oz}oz` : ''}</strong>{trip ? <> on <strong>{trip.name}</strong></> : null}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
+                    </div>
+                    <ActionBtn onClick={() => { db.deleteNotification(notif.id); load(); }}><X size={12} /></ActionBtn>
+                  </NotifCard>
+                );
+              }
+              if (notif.type === 'trip_new_member') {
+                return (
+                  <NotifCard key={notif.id} icon={<UserPlus size={16} style={{ color: 'var(--sage)' }} />}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: 'var(--text)' }}>
+                        {actor ? <><strong>{actor.display_name}</strong> joined </> : 'New member on '}
+                        <strong>{trip?.name || 'your trip'}</strong>
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
+                    </div>
+                    <ActionBtn onClick={() => { db.deleteNotification(notif.id); load(); }}><X size={12} /></ActionBtn>
+                  </NotifCard>
+                );
+              }
+              if (notif.type === 'trip_chat_mention') {
+                return (
+                  <NotifCard key={notif.id} icon={<AtSign size={16} style={{ color: 'var(--gold-2)' }} />}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: 'var(--text)' }}>
+                        {actor ? <><strong>{actor.display_name}</strong> mentioned you{trip ? <> in <strong>{trip.name}</strong></> : ''}</> : 'You were mentioned'}
+                      </div>
+                      {notif.payload?.preview && (
+                        <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{notif.payload.preview}"</div>
+                      )}
+                      <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
+                    </div>
+                    <ActionBtn onClick={() => { db.deleteNotification(notif.id); load(); }}><X size={12} /></ActionBtn>
                   </NotifCard>
                 );
               }

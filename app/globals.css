@@ -168,6 +168,25 @@ body {
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { animation: spin 1s linear infinite; }
 
+@keyframes pulse-gold {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%      { opacity: 0.45; transform: scale(0.6); }
+}
+
+/* Leaflet dark-tile fixes */
+.leaflet-container { background: #050E0D; outline: none; }
+.leaflet-popup-content-wrapper, .leaflet-popup-tip {
+  background: rgba(10, 24, 22, 0.95);
+  color: var(--text);
+  border: 1px solid rgba(234,201,136,0.18);
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+}
+.leaflet-popup-content { margin: 12px 14px; font-family: 'Manrope', sans-serif; }
+.leaflet-popup-close-button { color: var(--text-3) !important; }
+.leaflet-control-attribution { background: rgba(5,14,13,0.8) !important; color: var(--text-3) !important; }
+.leaflet-control-attribution a { color: var(--gold-2) !important; }
+
 /* iOS sheet handle */
 .sheet-handle {
   position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
