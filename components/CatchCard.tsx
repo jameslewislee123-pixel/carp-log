@@ -2,9 +2,11 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { Anchor, MapPin, MessageCircle, Tent } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { Catch, Profile, Trip } from '@/lib/types';
 import { formatDate } from '@/lib/util';
 import { photoPublicUrl } from '@/lib/db';
+import { prefetchProfile, prefetchCatchesForAngler } from '@/lib/queries';
 import AvatarBubble from './AvatarBubble';
 
 const SPECIES = [
@@ -44,6 +46,7 @@ export default function CatchCard({
   const commentCount = typeof commentCountProp === 'number' ? commentCountProp : 0;
   const [photoErr, setPhotoErr] = useState(false);
   const photoUrl = catchData.has_photo && angler ? photoPublicUrl(angler.id, catchData.id) : null;
+  const qc = useQueryClient();
 
   if (catchData.lost) {
     return (
@@ -55,7 +58,10 @@ export default function CatchCard({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, marginBottom: 2 }}>
             {angler && (
-              <Link href={`/profile/${angler.username}`} onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text)', textDecoration: 'none' }}>
+              <Link href={`/profile/${angler.username}`} onClick={(e) => e.stopPropagation()}
+                onTouchStart={() => { prefetchProfile(qc, angler.username); prefetchCatchesForAngler(qc, angler.id); }}
+                onMouseEnter={() => { prefetchProfile(qc, angler.username); prefetchCatchesForAngler(qc, angler.id); }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text)', textDecoration: 'none' }}>
                 <AvatarBubble username={angler.username} displayName={angler.display_name} avatarUrl={angler.avatar_url} size={20} link={false} fontWeight={700} />
                 <strong style={{ fontWeight: 600 }}>{angler.display_name}</strong>
               </Link>

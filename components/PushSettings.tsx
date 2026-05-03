@@ -322,9 +322,17 @@ export default function PushSettings() {
       )}
 
       {prefs?.push_master && (
+        <CollapsiblePrefs
+          prefs={prefs}
+          types={TYPES}
+          busyKey={typeof busy === 'string' && busy !== 'master' ? busy : null}
+          onToggle={toggleType}
+        />
+      )}
+      {false && prefs?.push_master && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 8, borderTop: '1px solid rgba(234,201,136,0.12)' }}>
           {TYPES.map(t => {
-            const on = !!prefs.enabled[t.key];
+            const on = !!prefs?.enabled[t.key];
             return (
               <button key={t.key} onClick={() => toggleType(t.key)} disabled={busy === t.key}
                 className="tap" style={{
@@ -355,6 +363,67 @@ export default function PushSettings() {
       )}
 
       <Diagnostics diag={diag} expanded={showDiag} onToggle={() => { setShowDiag(v => !v); refreshDiag(); }} />
+    </div>
+  );
+}
+
+function CollapsiblePrefs({ prefs, types, busyKey, onToggle }: {
+  prefs: db.NotifPrefRow;
+  types: { key: string; label: string; help: string }[];
+  busyKey: string | null;
+  onToggle: (key: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const enabledCount = types.filter(t => prefs.enabled[t.key]).length;
+  return (
+    <div style={{ paddingTop: 8, borderTop: '1px solid rgba(234,201,136,0.12)' }}>
+      <button onClick={() => setOpen(o => !o)} className="tap" style={{
+        width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 4px',
+        background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+        color: 'var(--text)', textAlign: 'left',
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-3)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Notification preferences</div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{enabledCount} of {types.length} enabled</div>
+        </div>
+        <ChevronRight size={14} style={{ color: 'var(--text-3)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
+      </button>
+      <div style={{
+        overflow: 'hidden',
+        maxHeight: open ? 1000 : 0,
+        transition: 'max-height 0.3s var(--spring)',
+      }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 4 }}>
+          {types.map(t => {
+            const on = !!prefs.enabled[t.key];
+            return (
+              <button key={t.key} onClick={() => onToggle(t.key)} disabled={busyKey === t.key}
+                className="tap" style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px',
+                  background: 'transparent', border: 'none', borderBottom: '1px solid rgba(234,201,136,0.06)',
+                  color: 'var(--text)', fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer',
+                }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{t.help}</div>
+                </div>
+                <span style={{
+                  width: 38, height: 22, borderRadius: 999, position: 'relative',
+                  background: on ? 'var(--gold)' : 'rgba(20,42,38,0.7)',
+                  border: `1px solid ${on ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
+                  transition: 'background 0.18s',
+                }}>
+                  <span style={{
+                    position: 'absolute', top: 1, left: on ? 17 : 1,
+                    width: 18, height: 18, borderRadius: 999, background: '#FFF',
+                    transition: 'left 0.18s var(--spring)',
+                  }} />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

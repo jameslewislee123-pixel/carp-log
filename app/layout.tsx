@@ -2,6 +2,7 @@ import './globals.css';
 import type { Metadata, Viewport } from 'next';
 import AnimatedBackground from '@/components/AnimatedBackground';
 import ServiceWorkerRegister from '@/components/ServiceWorkerRegister';
+import Providers from './providers';
 
 export const metadata: Metadata = {
   title: 'Carp Log',
@@ -49,7 +50,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ServiceWorkerRegister />
         <AnimatedBackground />
-        {children}
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

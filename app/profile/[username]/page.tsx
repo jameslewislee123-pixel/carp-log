@@ -3,45 +3,44 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { Calendar, Loader2, Trophy, UserPlus, Users, Check, Clock } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import * as db from '@/lib/db';
-import type { Profile, Catch, Friendship } from '@/lib/types';
+import type { Catch, Profile, Friendship } from '@/lib/types';
 import { formatWeight, totalOz } from '@/lib/util';
 import { PageHeader } from '@/components/AppFrame';
 import AvatarBubble from '@/components/AvatarBubble';
 import { SPECIES } from '@/components/CatchCard';
 import { photoPublicUrl } from '@/lib/db';
+import { useProfileByUsername, useCatchesForAngler, useFriendships } from '@/lib/queries';
+import { QK } from '@/lib/queryKeys';
 
 export default function ProfilePage() {
   const { username } = useParams<{ username: string }>();
-  const [me, setMe] = useState<Profile | null>(null);
-  const [profile, setProfile] = useState<Profile | null | 'missing'>(null);
-  const [catches, setCatches] = useState<Catch[]>([]);
-  const [friendship, setFriendship] = useState<Friendship | null>(null);
+  // `me` is one-shot (cached separately by TanStack Query for cross-page reuse).
+  const meQuery = useQuery({ queryKey: QK.profiles.me, queryFn: db.getMe, staleTime: 5 * 60_000 });
+  const profileQuery = useProfileByUsername(username);
+  const catchesQuery = useCatchesForAngler(profileQuery.data?.id);
+  const friendshipsQuery = useFriendships();
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const [m, p] = await Promise.all([db.getMe(), db.getProfileByUsername(username)]);
-      if (cancelled) return;
-      setMe(m);
-      if (!p) { setProfile('missing'); return; }
-      setProfile(p);
-      const [cs, fs] = await Promise.all([db.listCatchesForAngler(p.id), db.listFriendships()]);
-      if (cancelled) return;
-      setCatches(cs);
-      if (m) {
-        const f = fs.find(x => (x.requester_id === m.id && x.addressee_id === p.id) || (x.requester_id === p.id && x.addressee_id === m.id));
-        setFriendship(f || null);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [username]);
+  const me: Profile | null = meQuery.data || null;
+  const profile = profileQuery.data;
+  const profileMissing = profileQuery.isFetched && !profile;
+  const catches = catchesQuery.data || [];
 
-  if (profile === null) return (
+  const friendship = useMemo<Friendship | null>(() => {
+    if (!me || !profile || !friendshipsQuery.data) return null;
+    return friendshipsQuery.data.find(x =>
+      (x.requester_id === me.id && x.addressee_id === profile.id) ||
+      (x.requester_id === profile.id && x.addressee_id === me.id)
+    ) || null;
+  }, [me, profile, friendshipsQuery.data]);
+
+  // First-load skeleton: wait until profileQuery has settled at least once.
+  if (profileQuery.isLoading && !profile) return (
     <div className="app-root"><div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Loader2 size={20} className="spin" style={{ color: 'var(--text-3)' }} /></div></div>
   );
-  if (profile === 'missing') return (
+  if (profileMissing || !profile) return (
     <div className="app-root">
       <PageHeader title="Not found" back />
       <div style={{ padding: '60px 20px', textAlign: 'center' }}>
@@ -63,13 +62,12 @@ export default function ProfilePage() {
   })();
 
   async function addFriend() {
-    if (!profile || profile === 'missing') return;
+    if (!profile) return;
     setBusy(true);
     try {
       await db.requestFriend(profile.id);
-      const fs = await db.listFriendships();
-      const f = fs.find(x => x.addressee_id === profile.id || x.requester_id === profile.id);
-      setFriendship(f || null);
+      // Cache invalidate — the friendships query refetches itself in the background.
+      friendshipsQuery.refetch();
     } catch (e: any) { alert(e?.message || 'Failed'); }
     finally { setBusy(false); }
   }

@@ -2753,49 +2753,65 @@ function ModalShell({ title, onClose, hideTitle, children }: { title?: string; o
     >
       <motion.div
         onClick={(e) => e.stopPropagation()}
-        drag="y"
-        dragConstraints={{ top: 0, bottom: 0 }}
-        dragElastic={{ top: 0, bottom: 0.6 }}
-        dragMomentum={false}
         style={{ y,
           width: '100%', maxWidth: 480, maxHeight: '92vh',
           background: 'rgba(10, 24, 22, 0.92)',
           backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
           borderRadius: '28px 28px 0 0', border: '1px solid rgba(234,201,136,0.14)', borderBottom: 'none',
-          overflowY: 'auto', overflowX: 'hidden',
           position: 'relative',
-          padding: '20px 20px max(40px, env(safe-area-inset-bottom))',
           boxShadow: '0 -10px 40px rgba(0,0,0,0.45)',
-          touchAction: 'pan-y',
-          overscrollBehavior: 'contain',
+          display: 'flex', flexDirection: 'column', minHeight: 0,
         }}
         initial={{ y: '100%' }}
         animate={{ y: 0 }}
         exit={{ y: '100%' }}
         transition={{ type: 'spring', stiffness: 260, damping: 30 }}
-        onDragEnd={(_, info) => {
-          if (info.offset.y > 150 || info.velocity.y > 500) {
-            // Animate down then close.
-            animate(y, 700, { duration: 0.18, onComplete: onClose });
-          } else {
-            animate(y, 0, { type: 'spring', stiffness: 320, damping: 28 });
-          }
-        }}
       >
-        <div className="sheet-handle" />
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: hideTitle ? 8 : 16, position: 'sticky', top: 0, paddingTop: 8, paddingBottom: 8, zIndex: 10, background: 'transparent' }}>
-          {!hideTitle && <h2 className="display-font" style={{ fontSize: 22, margin: 0, fontWeight: 500 }}>{title}</h2>}
-          {hideTitle ? (
-            <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6, padding: 4, fontFamily: 'inherit', fontSize: 14, cursor: 'pointer' }}>
-              <ArrowLeft size={18} /> Back
-            </button>
-          ) : (
-            <button onClick={onClose} style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 12, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-2)' }}>
-              <X size={18} />
-            </button>
-          )}
+        {/* DRAG HANDLE — only the top 36px is draggable. Body below scrolls natively. */}
+        <motion.div
+          drag="y"
+          dragConstraints={{ top: 0, bottom: 0 }}
+          dragElastic={{ top: 0, bottom: 1 }}
+          dragMomentum={false}
+          onDragEnd={(_, info) => {
+            if (info.offset.y > 100 || info.velocity.y > 500) {
+              animate(y, 700, { duration: 0.18, onComplete: onClose });
+            } else {
+              animate(y, 0, { type: 'spring', stiffness: 320, damping: 28 });
+            }
+          }}
+          style={{
+            position: 'relative', height: 36, flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'grab', touchAction: 'none',
+          }}
+          aria-label="Drag down to dismiss"
+        >
+          <div style={{ width: 44, height: 5, borderRadius: 999, background: 'rgba(255,255,255,0.22)' }} />
+        </motion.div>
+
+        {/* SCROLLABLE BODY — native scroll, framer-motion drag is not on this layer. */}
+        <div style={{
+          flex: 1, minHeight: 0,
+          overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain',
+          touchAction: 'pan-y',
+          WebkitOverflowScrolling: 'touch' as any,
+          padding: '0 20px max(40px, env(safe-area-inset-bottom))',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: hideTitle ? 8 : 16, paddingTop: 4, paddingBottom: 8 }}>
+            {!hideTitle && <h2 className="display-font" style={{ fontSize: 22, margin: 0, fontWeight: 500 }}>{title}</h2>}
+            {hideTitle ? (
+              <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6, padding: 4, fontFamily: 'inherit', fontSize: 14, cursor: 'pointer' }}>
+                <ArrowLeft size={18} /> Back
+              </button>
+            ) : (
+              <button onClick={onClose} style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 12, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-2)' }}>
+                <X size={18} />
+              </button>
+            )}
+          </div>
+          {children}
         </div>
-        {children}
       </motion.div>
     </motion.div>
   );
