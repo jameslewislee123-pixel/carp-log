@@ -5,7 +5,7 @@ import { fetchExtendedForecast, weatherCodeEmoji, weatherCodeLabel, type Forecas
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-export default function WeatherForecastCard({ coords }: { coords: { lat: number; lng: number } | null }) {
+export default function WeatherForecastCard({ coords, compact }: { coords: { lat: number; lng: number } | null; compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<ForecastBundle | null>(null);
 
@@ -73,6 +73,7 @@ export default function WeatherForecastCard({ coords }: { coords: { lat: number;
   if (!data) {
     return (
       <div style={{
+        height: compact ? '100%' : 'auto',
         padding: 14, borderRadius: 22, minHeight: 92,
         background: 'rgba(28,60,54,0.55)', border: '1px solid rgba(234,201,136,0.14)',
         backdropFilter: 'blur(28px) saturate(180%)', WebkitBackdropFilter: 'blur(28px) saturate(180%)',
@@ -84,10 +85,10 @@ export default function WeatherForecastCard({ coords }: { coords: { lat: number;
   }
 
   const c = data.current;
-  const today = data.daily.time[0] || new Date();
+  const showExpansion = open && !compact;
 
   return (
-    <div onClick={() => setOpen(o => !o)} className="fade-in card" style={{ padding: 14, cursor: 'pointer' }}>
+    <div onClick={() => !compact && setOpen(o => !o)} className="fade-in card" style={{ height: compact ? '100%' : 'auto', padding: 14, cursor: compact ? 'default' : 'pointer' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div style={{ fontSize: 36, lineHeight: 1 }}>{c.code != null ? weatherCodeEmoji(c.code, c.isDay) : '☁️'}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -99,10 +100,10 @@ export default function WeatherForecastCard({ coords }: { coords: { lat: number;
             Feels like {c.apparent != null ? `${c.apparent}°C` : '—'}{c.windDir ? ` · Wind ${c.windDir}${c.windSpeed != null ? ` ${c.windSpeed}km/h` : ''}` : ''}
           </div>
         </div>
-        <ChevronRight size={16} style={{ color: 'var(--text-3)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
+        {!compact && <ChevronRight size={16} style={{ color: 'var(--text-3)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />}
       </div>
 
-      {open && (
+      {showExpansion && (
         <div className="fade-in" style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(234,201,136,0.18)' }}>
           {/* Current detail row */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginBottom: 14 }}>

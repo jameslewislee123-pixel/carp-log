@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Crown, Trophy } from 'lucide-react';
+import { ChevronRight, Crown, Trophy } from 'lucide-react';
 import type { Catch, Profile, TripMember } from '@/lib/types';
 import { formatWeight, totalOz } from '@/lib/util';
 import AvatarBubble from './AvatarBubble';
@@ -10,11 +10,12 @@ const SPECIES_LABEL: Record<string, string> = {
   common: 'Common', mirror: 'Mirror', leather: 'Leather', ghost: 'Ghost', koi: 'Koi', other: 'Other',
 };
 
-export default function TripLeaderboard({ tripCatches, members, profilesById, wagerEnabled }: {
+export default function TripLeaderboard({ tripCatches, members, profilesById, wagerEnabled, onOpenCatch }: {
   tripCatches: Catch[];
   members: TripMember[];
   profilesById: Record<string, Profile>;
   wagerEnabled: boolean;
+  onOpenCatch?: (c: Catch) => void;
 }) {
   const [metric, setMetric] = useState<'biggest' | 'count' | 'total'>('biggest');
   const landed = tripCatches.filter(c => !c.lost);
@@ -69,6 +70,7 @@ export default function TripLeaderboard({ tripCatches, members, profilesById, wa
             ? (entry.biggest && entry.biggest.species ? SPECIES_LABEL[entry.biggest.species] || 'Caught' : (noCatches ? 'No catches yet' : 'banked'))
             : (noCatches ? 'No catches yet' : 'this trip');
           const showCrown = wagerEnabled && rank === 1 && entry.biggest;
+          const tappable = metric === 'biggest' && entry.biggest && onOpenCatch;
           const inner = (
             <div className="card" style={{
               padding: 12, display: 'flex', alignItems: 'center', gap: 12,
@@ -95,8 +97,17 @@ export default function TripLeaderboard({ tripCatches, members, profilesById, wa
                 <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{subtext}</div>
               </div>
               <div className="num-display" style={{ fontSize: 20, color: 'var(--text)' }}>{value}</div>
+              {tappable && <ChevronRight size={14} style={{ color: 'var(--text-3)', marginLeft: -4 }} />}
             </div>
           );
+          if (tappable) {
+            return (
+              <button key={entry.profile?.id || i} onClick={() => onOpenCatch!(entry.biggest!)}
+                style={{ background: 'transparent', border: 'none', padding: 0, width: '100%', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}>
+                {inner}
+              </button>
+            );
+          }
           return entry.profile?.username ? (
             <Link key={entry.profile.id} href={`/profile/${entry.profile.username}`} style={{ textDecoration: 'none' }}>{inner}</Link>
           ) : <div key={i}>{inner}</div>;

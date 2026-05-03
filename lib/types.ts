@@ -131,6 +131,7 @@ export type Catch = {
   moon: Moon | null;
   latitude: number | null;
   longitude: number | null;
+  lake_id: string | null;
   visibility: CatchVisibility;
   comments: Comment[];
   created_at?: string;
@@ -145,7 +146,24 @@ export type NotifyConfig = {
   enabled: boolean;
 };
 
-export type NotificationType = 'friend_request' | 'friend_accepted' | 'trip_invite' | 'comment_on_catch' | 'trip_new_catch' | 'trip_new_member' | 'trip_chat_mention';
+export type NotificationType = 'friend_request' | 'friend_accepted' | 'trip_invite' | 'comment_on_catch' | 'trip_new_catch' | 'trip_new_member' | 'trip_chat_mention' | 'trip_chat';
+
+// Comments are now a dedicated table. The legacy `Comment` type (jsonb shape)
+// stays for back-compat — the in-DB array used to look like this.
+export type CatchComment = {
+  id: string;
+  catch_id: string;
+  angler_id: string;
+  text: string;
+  created_at: string;
+};
+
+export type CommentLike = {
+  id: string;
+  comment_id: string;
+  angler_id: string;
+  created_at: string;
+};
 
 export type SwimRollResult = { angler_id: string; value: number };
 export type TripSwimRoll = {

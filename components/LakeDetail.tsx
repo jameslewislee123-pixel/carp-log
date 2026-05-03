@@ -72,6 +72,8 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
   }, [lakeCatches]);
 
   const visibleAnnos = filter === 'all' ? annos : annos.filter(a => a.type === filter);
+  const myCatchesHere = lakeCatches.filter(c => c.angler_id === me.id).length;
+  const canAnnotate = myCatchesHere > 0;
 
   return (
     <div style={{
@@ -125,16 +127,26 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
         )}
 
         <div style={{ display: 'flex', gap: 6, marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button onClick={() => setDropMode(d => !d)} className="tap" style={{
-            padding: '10px 14px', borderRadius: 999,
-            border: `1px solid ${dropMode ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
-            background: dropMode ? 'rgba(212,182,115,0.15)' : 'rgba(10,24,22,0.5)',
-            color: dropMode ? 'var(--gold-2)' : 'var(--text-2)',
-            fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}>
-            <Plus size={12} /> {dropMode ? 'Tap map to place…' : 'Add annotation'}
-          </button>
+          {canAnnotate ? (
+            <button onClick={() => setDropMode(d => !d)} className="tap" style={{
+              padding: '10px 14px', borderRadius: 999,
+              border: `1px solid ${dropMode ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
+              background: dropMode ? 'rgba(212,182,115,0.15)' : 'rgba(10,24,22,0.5)',
+              color: dropMode ? 'var(--gold-2)' : 'var(--text-2)',
+              fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}>
+              <Plus size={12} /> {dropMode ? 'Tap map to place…' : 'Add annotation'}
+            </button>
+          ) : (
+            <div style={{
+              padding: '10px 14px', borderRadius: 12, background: 'rgba(10,24,22,0.5)',
+              border: '1px dashed rgba(234,201,136,0.18)', color: 'var(--text-3)',
+              fontSize: 12, lineHeight: 1.4,
+            }}>
+              You haven't fished here yet. Annotations are visible to anglers who have.
+            </div>
+          )}
         </div>
 
         {/* filter chips */}

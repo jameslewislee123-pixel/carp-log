@@ -125,12 +125,19 @@ export default function TripChat({ tripId, me, profilesById, ownerId }: {
                 }}>
                   {renderWithMentions(m.text)}
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 2, textAlign: mine ? 'right' : 'left', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                  {relTime(m.created_at)}
+                <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 2, textAlign: mine ? 'right' : 'left', display: 'inline-flex', gap: 8, alignItems: 'center', justifyContent: mine ? 'flex-end' : 'flex-start', width: '100%' }}>
+                  <span>{relTime(m.created_at)}</span>
                   {canDelete && (
-                    <button onClick={() => { if (confirm('Delete message?')) db.deleteTripMessage(m.id); }}
-                      style={{ background: 'transparent', border: 'none', color: 'var(--text-3)', padding: 0, cursor: 'pointer', display: 'inline-flex' }}>
-                      <Trash2 size={10} />
+                    <button
+                      onClick={() => { if (confirm('Delete this message?')) db.deleteTripMessage(m.id).catch((e) => alert(e?.message || 'Failed to delete')); }}
+                      aria-label="Delete message"
+                      style={{
+                        background: 'rgba(220,107,88,0.1)', border: '1px solid rgba(220,107,88,0.25)',
+                        color: 'var(--danger)', padding: '3px 8px', borderRadius: 999, cursor: 'pointer',
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                        fontFamily: 'inherit', fontSize: 10, fontWeight: 600,
+                      }}>
+                      <Trash2 size={11} /> Delete
                     </button>
                   )}
                 </div>

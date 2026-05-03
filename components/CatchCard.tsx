@@ -1,9 +1,9 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Anchor, Globe, Lock, MapPin, MessageCircle, Tent, Users } from 'lucide-react';
 import type { Catch, Profile, Trip } from '@/lib/types';
-import { formatDate, formatWeight } from '@/lib/util';
+import { formatDate } from '@/lib/util';
 import { photoPublicUrl } from '@/lib/db';
 import AvatarBubble from './AvatarBubble';
 
@@ -22,20 +22,39 @@ function VisibilityIcon({ v }: { v: Catch['visibility'] }) {
   return <Users size={11} style={{ color: 'var(--gold-2)' }} />;
 }
 
-export default function CatchCard({ catchData, angler, trip, onClick }: {
+function PBPeel() {
+  return (
+    <span title="Personal best" style={{
+      position: 'absolute', top: 8, right: 8, zIndex: 3,
+      padding: '4px 10px', borderRadius: 999,
+      background: 'linear-gradient(180deg, #EAC988, #C9A961)',
+      color: '#1A1004', fontFamily: 'Fraunces, serif', fontWeight: 700, fontSize: 11,
+      letterSpacing: '0.08em',
+      boxShadow: '0 4px 12px rgba(212,182,115,0.45), inset 0 1px 0 rgba(255,255,255,0.55)',
+      border: '1px solid rgba(255,255,255,0.35)',
+    }}>PB</span>
+  );
+}
+
+export default function CatchCard({
+  catchData, angler, trip, onClick, commentCount: commentCountProp, pb,
+}: {
   catchData: Catch;
   angler: Profile | null;
   trip: Trip | null;
   onClick?: () => void;
+  commentCount?: number;
+  pb?: boolean;
 }) {
   const species = SPECIES.find(s => s.id === catchData.species);
-  const commentCount = (catchData.comments || []).length;
+  const commentCount = typeof commentCountProp === 'number' ? commentCountProp : 0;
   const [photoErr, setPhotoErr] = useState(false);
   const photoUrl = catchData.has_photo && angler ? photoPublicUrl(angler.id, catchData.id) : null;
 
   if (catchData.lost) {
     return (
-      <div className="card tap fade-in" onClick={onClick} style={{ padding: 14, cursor: 'pointer', borderColor: 'rgba(220,107,88,0.32)', display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div className="card tap fade-in" onClick={onClick} style={{ position: 'relative', padding: 14, cursor: 'pointer', borderColor: 'rgba(220,107,88,0.32)', display: 'flex', alignItems: 'center', gap: 12 }}>
+        {pb && <PBPeel />}
         <div style={{ width: 40, height: 40, borderRadius: 12, background: 'rgba(220,107,88,0.15)', border: '1px solid rgba(220,107,88,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <Anchor size={18} style={{ color: 'var(--danger)' }} />
         </div>
@@ -62,7 +81,8 @@ export default function CatchCard({ catchData, angler, trip, onClick }: {
   }
 
   return (
-    <div className="card tap fade-in" onClick={onClick} style={{ overflow: 'hidden', cursor: 'pointer' }}>
+    <div className="card tap fade-in" onClick={onClick} style={{ position: 'relative', overflow: 'hidden', cursor: 'pointer' }}>
+      {pb && <PBPeel />}
       {catchData.has_photo && photoUrl && !photoErr && (
         <div style={{ width: '100%', aspectRatio: '4/3', background: 'rgba(10,24,22,0.5)', position: 'relative', overflow: 'hidden', borderRadius: '22px 22px 0 0' }}>
           <img src={photoUrl} alt="" loading="lazy" onError={() => setPhotoErr(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -116,6 +136,21 @@ export default function CatchCard({ catchData, angler, trip, onClick }: {
       </div>
     </div>
   );
+}
+
+// Compute a map { angler_id -> id of their PB catch }. PB = heaviest non-lost catch.
+export function computePBMap(catches: Catch[]): Record<string, string> {
+  const best: Record<string, { id: string; oz: number }> = {};
+  for (const c of catches) {
+    if (c.lost) continue;
+    const oz = (c.lbs || 0) * 16 + (c.oz || 0);
+    if (oz <= 0) continue;
+    const cur = best[c.angler_id];
+    if (!cur || oz > cur.oz) best[c.angler_id] = { id: c.id, oz };
+  }
+  const out: Record<string, string> = {};
+  for (const k in best) out[k] = best[k].id;
+  return out;
 }
 
 export { SPECIES };

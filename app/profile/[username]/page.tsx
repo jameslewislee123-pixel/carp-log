@@ -143,7 +143,7 @@ export default function ProfilePage() {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
             {catches.map(c => (
-              <Link key={c.id} href={`/?catch=${c.id}`} className="tap"
+              <Link key={c.id} href={`/?catch=${c.id}&back=${encodeURIComponent(`/profile/${profile.username}`)}`} className="tap"
                 style={{ aspectRatio: '1', borderRadius: 14, overflow: 'hidden', position: 'relative', background: 'rgba(10,24,22,0.5)', display: 'block', cursor: 'pointer' }}>
                 {c.has_photo && (
                   <img src={photoPublicUrl(profile.id, c.id)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />

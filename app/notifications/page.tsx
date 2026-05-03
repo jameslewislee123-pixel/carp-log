@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AtSign, Bell, Check, Fish, Loader2, Tent, UserPlus, X } from 'lucide-react';
+import { AtSign, Bell, Check, Fish, Loader2, MessageCircle, Tent, UserPlus, X } from 'lucide-react';
 import * as db from '@/lib/db';
 import type { AppNotification, Profile, Trip, TripMember } from '@/lib/types';
 import { PageHeader } from '@/components/AppFrame';
@@ -151,6 +151,22 @@ export default function NotificationsPage() {
                         {actor ? <><strong>{actor.display_name}</strong> joined </> : 'New member on '}
                         <strong>{trip?.name || 'your trip'}</strong>
                       </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
+                    </div>
+                    <ActionBtn onClick={() => { db.deleteNotification(notif.id); load(); }}><X size={12} /></ActionBtn>
+                  </NotifCard>
+                );
+              }
+              if (notif.type === 'trip_chat') {
+                return (
+                  <NotifCard key={notif.id} icon={<MessageCircle size={16} style={{ color: 'var(--text-2)' }} />}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: 'var(--text)' }}>
+                        {actor ? <><strong>{actor.display_name}</strong></> : 'New message'} {trip ? <>in <strong>{trip.name}</strong></> : null}
+                      </div>
+                      {notif.payload?.snippet && (
+                        <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{notif.payload.snippet}"</div>
+                      )}
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
                     </div>
                     <ActionBtn onClick={() => { db.deleteNotification(notif.id); load(); }}><X size={12} /></ActionBtn>

@@ -1,9 +1,10 @@
 'use client';
 import { supabase } from './supabase/client';
 import type {
-  AppNotification, Catch, CatchVisibility, Comment, Friendship, GearItem, GearType,
-  Lake, LakeAnnotation, LakeAnnotationType, Moon, NotifyConfig, Profile, SwimRollResult,
-  Trip, TripActivity, TripMember, TripMessage, TripStake, TripSwimRoll, TripVisibility, Weather,
+  AppNotification, Catch, CatchComment, CatchVisibility, Comment, CommentLike,
+  Friendship, GearItem, GearType, Lake, LakeAnnotation, LakeAnnotationType, Moon,
+  NotifyConfig, Profile, SwimRollResult, Trip, TripActivity, TripMember, TripMessage,
+  TripStake, TripSwimRoll, TripVisibility, Weather,
 } from './types';
 
 // ============ PROFILES ============
@@ -200,9 +201,55 @@ export async function deleteCatch(id: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function setComments(catchId: string, comments: Comment[]): Promise<void> {
-  const { error } = await supabase().from('catches').update({ comments }).eq('id', catchId);
+// Legacy: comments used to live in a jsonb column. New code uses
+// listCatchComments / addCatchComment / deleteCatchComment instead.
+
+// ============ COMMENTS (dedicated table) ============
+export async function listCatchComments(catchId: string): Promise<CatchComment[]> {
+  const { data, error } = await supabase().from('catch_comments').select('*')
+    .eq('catch_id', catchId).order('created_at', { ascending: true });
   if (error) throw error;
+  return (data || []) as CatchComment[];
+}
+export async function addCatchComment(catchId: string, text: string): Promise<CatchComment> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { data, error } = await supabase().from('catch_comments')
+    .insert({ catch_id: catchId, angler_id: user.id, text }).select().single();
+  if (error) throw error;
+  return data as CatchComment;
+}
+export async function deleteCatchComment(id: string): Promise<void> {
+  const { error } = await supabase().from('catch_comments').delete().eq('id', id);
+  if (error) throw error;
+}
+export async function countCatchComments(catchIds: string[]): Promise<Record<string, number>> {
+  if (catchIds.length === 0) return {};
+  const { data, error } = await supabase().from('catch_comments')
+    .select('catch_id').in('catch_id', catchIds);
+  if (error) return {};
+  const out: Record<string, number> = {};
+  (data || []).forEach((row: any) => { out[row.catch_id] = (out[row.catch_id] || 0) + 1; });
+  return out;
+}
+
+// ============ COMMENT LIKES ============
+export async function listCommentLikes(commentIds: string[]): Promise<CommentLike[]> {
+  if (commentIds.length === 0) return [];
+  const { data } = await supabase().from('comment_likes').select('*').in('comment_id', commentIds);
+  return (data || []) as CommentLike[];
+}
+export async function likeComment(commentId: string): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  await supabase().from('comment_likes')
+    .insert({ comment_id: commentId, angler_id: user.id });
+}
+export async function unlikeComment(commentId: string): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return;
+  await supabase().from('comment_likes')
+    .delete().eq('comment_id', commentId).eq('angler_id', user.id);
 }
 
 // ============ PHOTOS (Supabase Storage) ============

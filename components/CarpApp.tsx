@@ -7,7 +7,7 @@ import {
   Edit2, Trash2, ChevronRight, Loader2, Download, ArrowLeft, Sparkles, Crown,
   Cloud, Wind, Thermometer, MessageCircle, Bell, Send, Anchor, BarChart3,
   Clock, Tent, MapPinned, Star, Globe, Users as UsersIcon, Lock, LogOut, UserPlus, Mail,
-  Activity as ActivityIcon, Map as MapIcon, MessageSquare,
+  Activity as ActivityIcon, Map as MapIcon, MessageSquare, ThumbsUp,
 } from 'lucide-react';
 import InvitePicker from './InvitePicker';
 import TripChat from './TripChat';
@@ -38,8 +38,7 @@ import {
 } from '@/lib/suncalc';
 import { fetchWeatherFor, geocodeLake, getCurrentLocation } from '@/lib/weather';
 import AvatarBubble from './AvatarBubble';
-import VisibilityPicker from './VisibilityPicker';
-import CatchCard, { SPECIES } from './CatchCard';
+import CatchCard, { SPECIES, computePBMap } from './CatchCard';
 
 const ANGLER_COLORS = ['#C9A961', '#7BA888', '#D8826B', '#9A8FBF', '#7AA8C4'];
 const WEATHER_CONDITIONS = [
@@ -62,6 +61,7 @@ export default function CarpApp() {
   const [catches, setCatches] = useState<CatchT[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [profilesById, setProfilesById] = useState<Record<string, Profile>>({});
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
   const [notify, setNotify] = useState<NotifyConfig | null>(null);
   const [unread, setUnread] = useState<number>(0);
   const [view, setView] = useState<'feed' | 'trips' | 'stats' | 'gallery'>('feed');
@@ -117,21 +117,29 @@ export default function CarpApp() {
           map[meProfile.id] = meProfile;
           setProfilesById(map);
         }
+        // Comment counts for the feed badges (one-shot batch query).
+        const counts = await db.countCatchComments(cs.map(c => c.id)).catch(() => ({}));
+        setCommentCounts(counts);
       } catch (e: any) {
         setSetupError(e?.message || 'Failed to load data');
       } finally { setLoading(false); }
     })();
   }, [router]);
 
-  // Open a catch by ?catch=<id> query param (deep link from /profile)
+  // Open a catch by ?catch=<id> query param (deep link from /profile).
+  // Optional ?back=/profile/foo: closing the modal navigates back there.
+  const [catchBackTo, setCatchBackTo] = useState<string | null>(null);
   useEffect(() => {
     const id = searchParams?.get('catch');
     if (!id || catches.length === 0) return;
     const c = catches.find(x => x.id === id);
     if (c) {
       setDetailCatch(c);
+      const back = searchParams?.get('back');
+      if (back && back.startsWith('/')) setCatchBackTo(back);
       const u = new URL(window.location.href);
       u.searchParams.delete('catch');
+      u.searchParams.delete('back');
       window.history.replaceState({}, '', u.toString());
     }
   }, [searchParams, catches]);
@@ -153,6 +161,13 @@ export default function CarpApp() {
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${me.id}` }, async () => {
         setUnread(await db.unreadCount());
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'catch_comments' }, async (payload) => {
+        const row = (payload.new || payload.old) as { catch_id?: string };
+        if (!row?.catch_id) return;
+        // recompute count for this one catch
+        const counts = await db.countCatchComments([row.catch_id]).catch(() => ({} as Record<string, number>));
+        setCommentCounts(prev => ({ ...prev, [row.catch_id!]: counts[row.catch_id!] || 0 }));
       })
       .subscribe();
     return () => { supabase().removeChannel(ch); };
@@ -199,22 +214,6 @@ export default function CarpApp() {
     await db.deleteCatch(id);
   }
 
-  async function addComment(catchId: string, text: string) {
-    if (!me) return;
-    const cur = catches.find(c => c.id === catchId);
-    const next: Comment[] = [...(cur?.comments || []), {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-      anglerId: me.id, anglerName: me.display_name, text, ts: Date.now(),
-    }];
-    await db.setComments(catchId, next);
-    if (detailCatch?.id === catchId) setDetailCatch(d => d ? { ...d, comments: next } : d);
-  }
-  async function deleteComment(catchId: string, commentId: string) {
-    const cur = catches.find(c => c.id === catchId);
-    const next = (cur?.comments || []).filter(x => x.id !== commentId);
-    await db.setComments(catchId, next);
-    if (detailCatch?.id === catchId) setDetailCatch(d => d ? { ...d, comments: next } : d);
-  }
   async function deleteTripHandler(id: string) { await db.deleteTrip(id); }
   async function saveNotifyHandler(n: { token: string | null; chat_id: string | null; enabled: boolean }) {
     await db.saveMyNotify(n); setNotify(await db.getMyNotify());
@@ -242,6 +241,7 @@ export default function CarpApp() {
         {view === 'feed' && (
           <Feed
             me={me} catches={catches} trips={trips} profilesById={profilesById}
+            commentCounts={commentCounts}
             onOpen={setDetailCatch} onOpenTrip={setDetailTrip}
           />
         )}
@@ -256,7 +256,7 @@ export default function CarpApp() {
           <Stats catches={catches} profilesById={profilesById} me={me} onOpen={setDetailCatch} onOpenLake={(name) => setDetailLakeName(name)} />
         )}
         {view === 'gallery' && (
-          <Gallery catches={catches} profilesById={profilesById} onOpen={setDetailCatch} />
+          <Gallery catches={catches.filter(c => c.angler_id === me.id)} profilesById={profilesById} onOpen={setDetailCatch} />
         )}
       </div>
 
@@ -273,14 +273,15 @@ export default function CarpApp() {
       {detailCatch && (
         <CatchDetail
           catchData={detailCatch} me={me} profilesById={profilesById} trips={trips}
-          onClose={() => setDetailCatch(null)}
+          onClose={() => {
+            setDetailCatch(null);
+            if (catchBackTo) { const dest = catchBackTo; setCatchBackTo(null); router.push(dest); }
+          }}
           onDelete={async () => { if (confirm('Delete this catch?')) { await deleteCatchHandler(detailCatch.id); setDetailCatch(null); } }}
           onUpdate={async (data, photo) => {
             const saved = await saveCatch({ ...data, id: detailCatch.id }, photo, false);
             setDetailCatch(saved);
           }}
-          onAddComment={(text) => addComment(detailCatch.id, text)}
-          onDeleteComment={(cid) => deleteComment(detailCatch.id, cid)}
           onOpenTrip={(t) => { setDetailCatch(null); setDetailTrip(t); }}
         />
       )}
@@ -374,11 +375,13 @@ function Header({ me, unread, onSettings, view }: { me: Profile | null; unread: 
 }
 
 // ============ FEED ============
-function Feed({ me, catches, trips, profilesById, onOpen, onOpenTrip }: {
+function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenTrip }: {
   me: Profile;
   catches: CatchT[]; trips: Trip[]; profilesById: Record<string, Profile>;
+  commentCounts: Record<string, number>;
   onOpen: (c: CatchT) => void; onOpenTrip: (t: Trip) => void;
 }) {
+  const pbByAngler = useMemo(() => computePBMap(catches), [catches]);
   const [filter, setFilter] = useState<'all' | 'mine' | string>('all');
   const filtered = useMemo(() => {
     const sorted = [...catches].sort((a, b) => +new Date(b.date) - +new Date(a.date));
@@ -421,6 +424,8 @@ function Feed({ me, catches, trips, profilesById, onOpen, onOpenTrip }: {
             <CatchCard key={c.id} catchData={c}
               angler={profilesById[c.angler_id] || null}
               trip={c.trip_id ? trips.find(t => t.id === c.trip_id) || null : null}
+              commentCount={commentCounts[c.id] || 0}
+              pb={pbByAngler[c.angler_id] === c.id}
               onClick={() => onOpen(c)} />
           ))}
         </div>
@@ -470,10 +475,9 @@ function ForecastCarousel({ catches }: { catches: CatchT[] }) {
           gridAutoColumns: '100%',
           overflowX: 'auto', scrollSnapType: 'x mandatory',
           touchAction: 'pan-x pan-y',
-          paddingBottom: 4,
         }}>
-        <div style={{ scrollSnapAlign: 'center' }}><BiteForecastCard coords={coords} /></div>
-        <div style={{ scrollSnapAlign: 'center' }}><WeatherForecastCard coords={coords} /></div>
+        <div style={{ scrollSnapAlign: 'center', height: 92 }}><BiteForecastCard coords={coords} compact /></div>
+        <div style={{ scrollSnapAlign: 'center', height: 92 }}><WeatherForecastCard coords={coords} compact /></div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginTop: 6 }}>
         {[0, 1].map(i => (
@@ -488,7 +492,7 @@ function ForecastCarousel({ catches }: { catches: CatchT[] }) {
   );
 }
 
-function BiteForecastCard({ coords }: { coords: { lat: number; lng: number } | null }) {
+function BiteForecastCard({ coords, compact }: { coords: { lat: number; lng: number } | null; compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const data = useMemo(() => {
     if (!coords) return null;
@@ -501,15 +505,21 @@ function BiteForecastCard({ coords }: { coords: { lat: number; lng: number } | n
     const upcoming = windows.filter(w => w.start.getTime() > now.getTime()).slice(0, 1)[0] || null;
     return { ill, phaseInfo, rating, windows, cur, upcoming };
   }, [coords]);
-  if (!data) return null;
+  if (!data) return (
+    <div style={{ height: '100%', padding: 14, borderRadius: 22, border: '1px solid rgba(234,201,136,0.18)', background: 'rgba(28,60,54,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <span style={{ color: 'var(--text-3)', fontSize: 12 }}>Loading bite forecast…</span>
+    </div>
+  );
   const { phaseInfo, ill, rating, windows, cur, upcoming } = data;
+  const showExpansion = open && !compact;
   return (
-    <div onClick={() => setOpen(o => !o)} className="fade-in" style={{
-      marginBottom: 14, padding: 14, borderRadius: 22,
+    <div onClick={() => !compact && setOpen(o => !o)} className="fade-in" style={{
+      height: compact ? '100%' : 'auto',
+      padding: 14, borderRadius: 22,
       background: 'linear-gradient(135deg, rgba(234,201,136,0.18), rgba(212,182,115,0.06))',
       border: '1px solid rgba(234, 201, 136, 0.35)',
       backdropFilter: 'blur(28px) saturate(180%)', WebkitBackdropFilter: 'blur(28px) saturate(180%)',
-      cursor: 'pointer', position: 'relative', overflow: 'hidden',
+      cursor: compact ? 'default' : 'pointer', position: 'relative', overflow: 'hidden',
       boxShadow: '0 10px 30px -10px rgba(212,182,115,0.25)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -525,9 +535,9 @@ function BiteForecastCard({ coords }: { coords: { lat: number; lng: number } | n
               style={{ color: i < rating.stars ? 'var(--gold-2)' : 'var(--text-3)' }} />
           ))}
         </div>
-        <ChevronRight size={16} style={{ color: 'var(--text-3)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
+        {!compact && <ChevronRight size={16} style={{ color: 'var(--text-3)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />}
       </div>
-      {open && (
+      {showExpansion && (
         <div className="fade-in" style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(234,201,136,0.2)' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
             <div style={{ padding: 10, borderRadius: 12, background: 'rgba(10,24,22,0.5)' }}>
@@ -905,28 +915,64 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
               }}><UserPlus size={12} /> Invite angler</button>
             )}
           </div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-            {joinedMembers.map(m => {
-              const p = memberProfiles[m.angler_id];
-              if (!p) return null;
-              return (
-                <Link key={m.id} href={`/profile/${p.username}`} style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 10px 6px 6px',
-                  borderRadius: 999, border: '1px solid rgba(234,201,136,0.18)',
-                  background: 'rgba(10,24,22,0.5)', color: 'var(--text)', textDecoration: 'none',
-                  fontSize: 12, fontWeight: 600,
-                }}>
-                  <AvatarBubble username={p.username} displayName={p.display_name} avatarUrl={p.avatar_url} size={22} link={false} />
-                  {p.display_name}{m.role === 'owner' && <span style={{ color: 'var(--gold-2)', fontSize: 10, fontWeight: 700 }}>·OWNER</span>}
-                </Link>
-              );
-            })}
-          </div>
+          {(() => {
+            // After a roll, order members by roll value desc and label "1st pick" / "2nd pick" / …
+            const rollResults = latestRoll?.results || [];
+            const rollIndex: Record<string, number> = {};
+            rollResults.forEach((r, idx) => { rollIndex[r.angler_id] = idx; });
+            const orderedMembers = latestRoll
+              ? [...joinedMembers].sort((a, b) => {
+                  const ai = rollIndex[a.angler_id]; const bi = rollIndex[b.angler_id];
+                  if (ai == null && bi == null) return 0;
+                  if (ai == null) return 1;
+                  if (bi == null) return -1;
+                  return ai - bi;
+                })
+              : [...joinedMembers].sort((a, b) =>
+                  (a.role === 'owner' ? 0 : 1) - (b.role === 'owner' ? 0 : 1)
+                  || +new Date(a.created_at || 0) - +new Date(b.created_at || 0)
+                );
+            const ordSuffix = (n: number) => {
+              const v = n % 100;
+              if (v >= 11 && v <= 13) return 'th';
+              const last = n % 10;
+              return last === 1 ? 'st' : last === 2 ? 'nd' : last === 3 ? 'rd' : 'th';
+            };
+            return (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+                {orderedMembers.map(m => {
+                  const p = memberProfiles[m.angler_id];
+                  if (!p) return null;
+                  let label: React.ReactNode = null;
+                  if (latestRoll) {
+                    const idx = rollIndex[m.angler_id];
+                    if (idx != null) {
+                      const pick = idx + 1;
+                      label = <span style={{ color: 'var(--gold-2)', fontSize: 10, fontWeight: 700 }}>·{pick}{ordSuffix(pick)} pick</span>;
+                    }
+                  } else if (m.role === 'owner') {
+                    label = <span style={{ color: 'var(--gold-2)', fontSize: 10, fontWeight: 700 }}>·OWNER</span>;
+                  }
+                  return (
+                    <Link key={m.id} href={`/profile/${p.username}`} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 10px 6px 6px',
+                      borderRadius: 999, border: '1px solid rgba(234,201,136,0.18)',
+                      background: 'rgba(10,24,22,0.5)', color: 'var(--text)', textDecoration: 'none',
+                      fontSize: 12, fontWeight: 600,
+                    }}>
+                      <AvatarBubble username={p.username} displayName={p.display_name} avatarUrl={p.avatar_url} size={22} link={false} />
+                      {p.display_name}{label}
+                    </Link>
+                  );
+                })}
+              </div>
+            );
+          })()}
 
           {/* Leaderboard */}
           <div className="label">Leaderboard</div>
           <div style={{ marginBottom: 20 }}>
-            <TripLeaderboard tripCatches={tripCatches} members={members} profilesById={memberProfiles} wagerEnabled={trip.wager_enabled} />
+            <TripLeaderboard tripCatches={tripCatches} members={members} profilesById={memberProfiles} wagerEnabled={trip.wager_enabled} onOpenCatch={onOpenCatch} />
           </div>
 
           {/* Recent activity preview */}
@@ -1192,13 +1238,14 @@ function Stats({ catches, profilesById, me, onOpen, onOpenLake }: {
   catches: CatchT[]; profilesById: Record<string, Profile>; me: Profile;
   onOpen: (c: CatchT) => void; onOpenLake: (lakeName: string) => void;
 }) {
-  const [tab, setTab] = useState<'crew' | 'time' | 'bait' | 'lakes'>('crew');
+  const [tab, setTab] = useState<'personal' | 'crew' | 'time' | 'bait' | 'lakes'>('personal');
   if (catches.length === 0) return <div style={{ padding: '40px 20px' }}><EmptyState /></div>;
   const tabs = [
-    { id: 'crew' as const, label: 'Crew', icon: Trophy },
-    { id: 'time' as const, label: 'Time', icon: Clock },
-    { id: 'bait' as const, label: 'Bait', icon: BarChart3 },
-    { id: 'lakes' as const, label: 'Lakes', icon: MapPinned },
+    { id: 'personal' as const, label: 'Personal', icon: Sparkles },
+    { id: 'crew' as const,     label: 'Crew',     icon: Trophy },
+    { id: 'time' as const,     label: 'Time',     icon: Clock },
+    { id: 'bait' as const,     label: 'Bait',     icon: BarChart3 },
+    { id: 'lakes' as const,    label: 'Lakes',    icon: MapPinned },
   ];
   return (
     <div style={{ padding: '8px 20px' }}>
@@ -1220,10 +1267,136 @@ function Stats({ catches, profilesById, me, onOpen, onOpenLake }: {
           );
         })}
       </div>
+      {tab === 'personal' && <StatsPersonal catches={catches} profilesById={profilesById} me={me} onOpen={onOpen} />}
       {tab === 'crew' && <StatsCrew catches={catches} profilesById={profilesById} me={me} onOpen={onOpen} />}
       {tab === 'time' && <StatsTime catches={catches} />}
       {tab === 'bait' && <StatsBait catches={catches} />}
       {tab === 'lakes' && <StatsLakes catches={catches} profilesById={profilesById} onOpen={onOpen} onOpenLake={onOpenLake} />}
+    </div>
+  );
+}
+
+function StatsPersonal({ catches, profilesById, me, onOpen }: { catches: CatchT[]; profilesById: Record<string, Profile>; me: Profile; onOpen: (c: CatchT) => void }) {
+  const mine = useMemo(() => catches.filter(c => c.angler_id === me.id), [catches, me.id]);
+  const landed = mine.filter(c => !c.lost);
+  const lost = mine.filter(c => c.lost);
+  const biggest = landed.reduce<CatchT | null>((m, c) => !m || totalOz(c.lbs, c.oz) > totalOz(m.lbs, m.oz) ? c : m, null);
+  const totalOzAll = landed.reduce((s, c) => s + totalOz(c.lbs, c.oz), 0);
+  const bySpecies = SPECIES.map(sp => ({ ...sp, count: landed.filter(c => c.species === sp.id).length })).filter(sp => sp.count > 0);
+
+  // Monthly trend for the last 12 months (newest at right).
+  const months = useMemo(() => {
+    const now = new Date();
+    const buckets: { key: string; label: string; count: number }[] = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      buckets.push({
+        key: `${d.getFullYear()}-${d.getMonth()}`,
+        label: d.toLocaleString('default', { month: 'short' }),
+        count: 0,
+      });
+    }
+    landed.forEach(c => {
+      const d = new Date(c.date);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      const b = buckets.find(x => x.key === key);
+      if (b) b.count++;
+    });
+    return buckets;
+  }, [landed]);
+  const monthMax = Math.max(1, ...months.map(m => m.count));
+
+  // Top bait, rig, lake (count-based).
+  function topOf(field: 'bait' | 'rig' | 'lake') {
+    const counts: Record<string, number> = {};
+    landed.forEach(c => {
+      const v = (c[field] || '').trim();
+      if (v) counts[v] = (counts[v] || 0) + 1;
+    });
+    const arr = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    return arr[0]?.[0] || '—';
+  }
+  const topBait = topOf('bait');
+  const topRig  = topOf('rig');
+  const topLake = topOf('lake');
+
+  if (mine.length === 0) {
+    return <EmptyState icon={<Fish size={48} />} title="No catches yet" subtitle="Bank your first one to fill out your stats" />;
+  }
+
+  return (
+    <>
+      {biggest && (
+        <HeroCatch
+          catchData={biggest}
+          angler={profilesById[biggest.angler_id] || me}
+          onClick={() => onOpen(biggest)}
+        />
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginTop: 22, marginBottom: 22 }}>
+        <StatCard label="Catches" value={landed.length} />
+        <StatCard label="Total weight" value={`${Math.floor(totalOzAll / 16)}lb`} />
+        <StatCard label="Biggest" value={biggest ? formatWeight(biggest.lbs, biggest.oz) : '—'} />
+        <StatCard label="Lost" value={lost.length} />
+      </div>
+
+      {bySpecies.length > 0 && (
+        <>
+          <h3 className="display-font" style={{ fontSize: 18, fontWeight: 500, margin: '8px 0 12px' }}>By species</h3>
+          <div className="card" style={{ padding: 14, marginBottom: 22 }}>
+            {bySpecies.map(sp => {
+              const pct = (sp.count / landed.length) * 100;
+              return (
+                <div key={sp.id} style={{ marginBottom: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 13 }}>
+                    <span style={{ fontWeight: 600 }}>{sp.label}</span>
+                    <span style={{ color: 'var(--text-3)' }}>{sp.count} · {pct.toFixed(0)}%</span>
+                  </div>
+                  <div style={{ height: 5, background: 'rgba(10,24,22,0.6)', borderRadius: 3, overflow: 'hidden' }}>
+                    <div style={{ width: `${pct}%`, height: '100%', background: sp.hue, borderRadius: 3 }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      <h3 className="display-font" style={{ fontSize: 18, fontWeight: 500, margin: '8px 0 12px' }}>Last 12 months</h3>
+      <div className="card" style={{ padding: 14, marginBottom: 22 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', height: 90, gap: 4 }}>
+          {months.map(m => {
+            const pct = (m.count / monthMax) * 100;
+            return (
+              <div key={m.key} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+                <div style={{ width: '100%', height: `${pct}%`, background: m.count > 0 ? 'linear-gradient(180deg, var(--gold-2), var(--gold))' : 'rgba(10,24,22,0.4)', borderRadius: '3px 3px 0 0', minHeight: m.count > 0 ? 4 : 0 }} />
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', marginTop: 6, gap: 4 }}>
+          {months.map(m => (
+            <div key={m.key} style={{ flex: 1, fontSize: 9, color: 'var(--text-3)', textAlign: 'center', fontWeight: 600 }}>{m.label[0]}</div>
+          ))}
+        </div>
+      </div>
+
+      <h3 className="display-font" style={{ fontSize: 18, fontWeight: 500, margin: '8px 0 12px' }}>Most productive</h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <PersonalRow label="Top bait" value={topBait} />
+        <PersonalRow label="Top rig"  value={topRig} />
+        <PersonalRow label="Top lake" value={topLake} />
+      </div>
+    </>
+  );
+}
+
+function PersonalRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="card" style={{ padding: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600 }}>{label}</div>
+      <div style={{ fontFamily: 'Fraunces, serif', fontSize: 16, color: 'var(--gold-2)' }}>{value}</div>
     </div>
   );
 }
@@ -1472,6 +1645,9 @@ function StatsLakes({ catches, profilesById, onOpen, onOpenLake }: { catches: Ca
                 <h3 className="display-font" style={{ fontSize: 18, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>{lake.name}</h3>
               </div>
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <span className="pill" style={{ background: 'rgba(212,182,115,0.15)', color: 'var(--gold-2)', border: '1px solid rgba(234,201,136,0.4)' }}>
+                  📍 Map
+                </span>
                 <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>{lake.catches.length} fish</div>
                 <ChevronRight size={14} style={{ color: 'var(--text-3)' }} />
               </div>
@@ -1836,12 +2012,6 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
         </>
       )}
 
-      {/* Visibility — replaces angler picker */}
-      <label className="label">Visibility</label>
-      <div style={{ marginBottom: 20 }}>
-        <VisibilityPicker value={visibility} onChange={setVisibility} />
-      </div>
-
       {eligibleTrips.length > 0 && (
         <>
           <label className="label">Trip (optional)</label>
@@ -1947,23 +2117,83 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
 }
 
 // ============ CATCH DETAIL ============
-function CatchDetail({ catchData, me, profilesById, trips, onClose, onDelete, onUpdate, onAddComment, onDeleteComment, onOpenTrip }: {
+function CatchDetail({ catchData, me, profilesById, trips, onClose, onDelete, onUpdate, onOpenTrip }: {
   catchData: CatchT; me: Profile; profilesById: Record<string, Profile>; trips: Trip[];
   onClose: () => void; onDelete: () => void;
   onUpdate: (data: db.CatchInput, photoDataUrl: string | null) => Promise<void>;
-  onAddComment: (text: string) => void; onDeleteComment: (cid: string) => void;
   onOpenTrip: (t: Trip) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [commentText, setCommentText] = useState('');
+  const [comments, setComments] = useState<import('@/lib/types').CatchComment[]>([]);
+  const [likes, setLikes] = useState<import('@/lib/types').CommentLike[]>([]);
+  const [commentProfiles, setCommentProfiles] = useState<Record<string, Profile>>(profilesById);
+  const [commentErr, setCommentErr] = useState<string | null>(null);
+  const [posting, setPosting] = useState(false);
   const angler = profilesById[catchData.angler_id] || null;
   const species = SPECIES.find(s => s.id === catchData.species);
   const trip = catchData.trip_id ? trips.find(t => t.id === catchData.trip_id) : null;
   const weather = catchData.weather;
   const moon = catchData.moon;
-  const comments = catchData.comments || [];
   const photoUrl = catchData.has_photo && angler ? db.photoPublicUrl(angler.id, catchData.id) : null;
   const [photoErr, setPhotoErr] = useState(false);
+
+  async function refreshComments() {
+    try {
+      const cs = await db.listCatchComments(catchData.id);
+      setComments(cs);
+      const need = Array.from(new Set(cs.map(c => c.angler_id))).filter(id => !commentProfiles[id]);
+      if (need.length > 0) {
+        const ps = await db.listProfilesByIds(need);
+        setCommentProfiles(prev => { const out = { ...prev }; ps.forEach(p => out[p.id] = p); return out; });
+      }
+      const ids = cs.map(c => c.id);
+      if (ids.length) setLikes(await db.listCommentLikes(ids));
+      else setLikes([]);
+    } catch (e: any) {
+      setCommentErr(e?.message || 'Failed to load comments');
+    }
+  }
+  useEffect(() => { refreshComments(); /* eslint-disable-next-line */ }, [catchData.id]);
+
+  // Realtime subscription: any comment / like change for this catch.
+  useEffect(() => {
+    const ch = supabase()
+      .channel(`catch-${catchData.id}-comments`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'catch_comments', filter: `catch_id=eq.${catchData.id}` }, () => refreshComments())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'comment_likes' }, () => refreshComments())
+      .subscribe();
+    return () => { supabase().removeChannel(ch); };
+  /* eslint-disable-next-line */ }, [catchData.id]);
+
+  async function submitComment() {
+    const t = commentText.trim();
+    if (!t || posting) return;
+    setPosting(true); setCommentErr(null);
+    try {
+      await db.addCatchComment(catchData.id, t);
+      setCommentText('');
+      // realtime will fire, but optimistically refresh now too in case the channel hasn't connected yet
+      refreshComments();
+    } catch (e: any) {
+      setCommentErr(e?.message || 'Failed to post comment');
+    } finally { setPosting(false); }
+  }
+  async function removeComment(id: string) {
+    if (!confirm('Delete comment?')) return;
+    try { await db.deleteCatchComment(id); refreshComments(); }
+    catch (e: any) { setCommentErr(e?.message || 'Failed to delete'); }
+  }
+  async function toggleLike(commentId: string) {
+    const liked = likes.some(l => l.comment_id === commentId && l.angler_id === me.id);
+    try {
+      if (liked) await db.unlikeComment(commentId);
+      else await db.likeComment(commentId);
+      refreshComments();
+    } catch (e: any) {
+      setCommentErr(e?.message || 'Failed');
+    }
+  }
 
   if (editing) {
     return (
@@ -2083,20 +2313,32 @@ function CatchDetail({ catchData, me, profilesById, trips, onClose, onDelete, on
         {comments.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>
             {comments.map(c => {
-              const ca = profilesById[c.anglerId];
-              const mine = c.anglerId === me.id;
+              const ca = commentProfiles[c.angler_id];
+              const mine = c.angler_id === me.id;
+              const myLike = likes.some(l => l.comment_id === c.id && l.angler_id === me.id);
+              const likeCount = likes.filter(l => l.comment_id === c.id).length;
               return (
                 <div key={c.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                  <AvatarBubble username={ca?.username} displayName={ca?.display_name || c.anglerName} avatarUrl={ca?.avatar_url} size={26} link={!!ca?.username} />
+                  <AvatarBubble username={ca?.username} displayName={ca?.display_name} avatarUrl={ca?.avatar_url} size={26} link={!!ca?.username} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 2 }}>
-                      <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{ca?.display_name || c.anglerName}</strong>
-                      <span> · {new Date(c.ts).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                      <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{ca?.display_name || 'Unknown'}</strong>
+                      <span> · {new Date(c.created_at).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                     <div style={{ fontSize: 14, color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.text}</div>
+                    <div style={{ marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <button onClick={() => toggleLike(c.id)} aria-label={myLike ? 'Unlike' : 'Like'} style={{
+                        background: 'transparent', border: 'none', color: myLike ? 'var(--gold-2)' : 'var(--text-3)',
+                        cursor: 'pointer', padding: 2, display: 'inline-flex', alignItems: 'center', gap: 4,
+                        fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+                      }}>
+                        <ThumbsUp size={12} fill={myLike ? 'var(--gold-2)' : 'transparent'} />
+                        {likeCount > 0 && <span>{likeCount}</span>}
+                      </button>
+                    </div>
                   </div>
                   {mine && (
-                    <button onClick={() => { if (confirm('Delete comment?')) onDeleteComment(c.id); }}
+                    <button onClick={() => removeComment(c.id)} aria-label="Delete comment"
                       style={{ background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer', padding: 4 }}>
                       <Trash2 size={12} />
                     </button>
@@ -2106,19 +2348,25 @@ function CatchDetail({ catchData, me, profilesById, trips, onClose, onDelete, on
             })}
           </div>
         )}
+        {commentErr && (
+          <div role="alert" style={{
+            marginBottom: 10, padding: 10, borderRadius: 10, fontSize: 12,
+            background: 'rgba(220,107,88,0.14)', border: '1px solid rgba(220,107,88,0.4)', color: 'var(--danger)',
+          }}>{commentErr}</div>
+        )}
         <div style={{ display: 'flex', gap: 8 }}>
           <input className="input" placeholder="Add a comment…" value={commentText}
             onChange={(e) => setCommentText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && commentText.trim()) { onAddComment(commentText.trim()); setCommentText(''); } }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitComment(); } }}
             style={{ flex: 1, padding: '10px 14px', fontSize: 14 }} />
-          <button onClick={() => { if (commentText.trim()) { onAddComment(commentText.trim()); setCommentText(''); } }}
-            disabled={!commentText.trim()} className="tap" style={{
+          <button onClick={submitComment}
+            disabled={!commentText.trim() || posting} className="tap" style={{
               width: 44, height: 44, borderRadius: 12,
-              background: commentText.trim() ? 'var(--gold)' : 'rgba(20,42,38,0.7)',
-              color: commentText.trim() ? '#1A1004' : 'var(--text-3)',
-              border: 'none', cursor: commentText.trim() ? 'pointer' : 'not-allowed',
+              background: commentText.trim() && !posting ? 'var(--gold)' : 'rgba(20,42,38,0.7)',
+              color: commentText.trim() && !posting ? '#1A1004' : 'var(--text-3)',
+              border: 'none', cursor: commentText.trim() && !posting ? 'pointer' : 'not-allowed',
               display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-            }}><Send size={16} /></button>
+            }}>{posting ? <Loader2 size={14} className="spin" /> : <Send size={16} />}</button>
         </div>
       </div>
 
