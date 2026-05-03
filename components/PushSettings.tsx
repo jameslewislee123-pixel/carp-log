@@ -53,6 +53,11 @@ type Diag = {
   swRegCount: number;
   swScope: string | null;
   swRegError: string | null;
+  swState: string;
+  controllerPresent: 'yes' | 'no';
+  controllerScriptURL: string;
+  activeScriptURL: string;
+  activeState: string;
   vapidLen: number;
   standalone: boolean;
   ua: string;
@@ -81,6 +86,11 @@ export default function PushSettings() {
       swRegCount: 0,
       swScope: null,
       swRegError: typeof window !== 'undefined' ? (window as any).__swRegError ?? null : null,
+      swState: 'none',
+      controllerPresent: 'no',
+      controllerScriptURL: '—',
+      activeScriptURL: '—',
+      activeState: '—',
       vapidLen: VAPID_PUBLIC.length,
       standalone: detectStandalone(),
       ua: typeof navigator !== 'undefined' ? navigator.userAgent : '',
@@ -90,8 +100,6 @@ export default function PushSettings() {
     };
     if (d.hasServiceWorker) {
       try {
-        // Try to register manually too — this surfaces parse / scope errors
-        // that the silent auto-register would otherwise swallow.
         try {
           const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
           d.swRegError = null;
@@ -104,15 +112,23 @@ export default function PushSettings() {
         d.swRegCount = regs.length;
         if (regs.length > 0) {
           d.swRegistered = true;
-          const main = regs.find(r => r.active) || regs[0];
-          d.swScope = main?.scope || d.swScope || null;
-          if (main) {
+          const reg = await navigator.serviceWorker.getRegistration() || regs.find(r => r.active) || regs[0];
+          d.swScope = reg?.scope || d.swScope || null;
+          d.swState = reg?.installing ? 'installing'
+                    : reg?.waiting ? 'waiting'
+                    : reg?.active ? 'active'
+                    : 'none';
+          d.activeScriptURL = reg?.active?.scriptURL || '—';
+          d.activeState = reg?.active?.state || '—';
+          if (reg) {
             try {
-              const sub = await main.pushManager.getSubscription();
+              const sub = await reg.pushManager.getSubscription();
               d.hasExistingSubscription = sub ? 'true' : 'false';
             } catch { d.hasExistingSubscription = 'unknown'; }
           }
         }
+        d.controllerPresent = navigator.serviceWorker.controller ? 'yes' : 'no';
+        d.controllerScriptURL = navigator.serviceWorker.controller?.scriptURL || '—';
       } catch (e: any) { d.swRegError = e?.message || String(e); }
     }
     // Probe the SW asset URLs without redirects so we know if middleware is intercepting.
@@ -367,7 +383,12 @@ typeof navigator.serviceWorker : ${diag.hasServiceWorker ? 'object' : 'undefined
 ServiceWorker registered    : ${diag.swRegistered}
 ServiceWorker regs count    : ${diag.swRegCount}
 SW scope                    : ${diag.swScope || '—'}
+SW state                    : ${diag.swState}
 SW registration error       : ${diag.swRegError || '(none)'}
+Active SW scriptURL         : ${diag.activeScriptURL}
+Active SW state             : ${diag.activeState}
+SW controller present       : ${diag.controllerPresent}
+SW controller scriptURL     : ${diag.controllerScriptURL}
 SW file fetch /sw.js        : ${diag.swJsStatus}
 SW file fetch /push-sw.js   : ${diag.pushSwJsStatus}
 Push subscription exists    : ${diag.hasExistingSubscription}

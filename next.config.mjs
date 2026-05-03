@@ -6,9 +6,12 @@ const withPWA = withPWAInit({
   dest: 'public',
   register: true,
   skipWaiting: true,
+  clientsClaim: true, // critical — new SW takes control of open clients on activate
   disable: isDev,
   // Adds our push/notificationclick handlers to the generated sw.js.
-  importScripts: ['/push-sw.js'],
+  // Bump the cache-buster query when push-sw.js changes so workbox sees a
+  // byte-different sw.js and triggers a fresh install.
+  importScripts: ['/push-sw.js?v=2'],
   runtimeCaching: [
     {
       urlPattern: /^https:\/\/[^/]+\.supabase\.co\/realtime\/.*$/i,

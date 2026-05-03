@@ -3,6 +3,13 @@
 //
 // We intentionally don't use any caching API or workbox features here —
 // next-pwa already handles those.
+//
+// Belt-and-braces: take over the page on activate so a freshly-installed SW
+// immediately controls open clients instead of sitting in "waiting" state.
+// next-pwa's clientsClaim:true also does this; doing it again here is
+// idempotent and protects us if next-pwa config drifts.
+self.addEventListener('install', () => { self.skipWaiting(); });
+self.addEventListener('activate', (event) => { event.waitUntil(self.clients.claim()); });
 
 self.addEventListener('push', (event) => {
   if (!event.data) return;
