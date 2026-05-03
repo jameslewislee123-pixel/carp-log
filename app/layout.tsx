@@ -1,5 +1,6 @@
 import './globals.css';
 import type { Metadata, Viewport } from 'next';
+import AnimatedBackground from '@/components/AnimatedBackground';
 
 export const metadata: Metadata = {
   title: 'Carp Log',

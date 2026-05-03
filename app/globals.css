@@ -37,13 +37,68 @@ body {
   font-family: 'Manrope', system-ui, sans-serif;
   color: var(--text);
   min-height: 100vh;
-  /* Gradient mesh wallpaper */
+  /* Static base layer (always present) */
   background:
-    radial-gradient(circle at 85% 8%,  rgba(228, 192, 122, 0.18), transparent 38%),
-    radial-gradient(circle at 12% 48%, rgba(141, 191, 157, 0.12), transparent 42%),
     radial-gradient(circle at 78% 92%, rgba(221, 142, 118, 0.14), transparent 40%),
     linear-gradient(180deg, #08120F 0%, #050E0D 60%, #030A09 100%);
   background-attachment: fixed;
+  position: relative;
+}
+
+/* Animated background layers — drifting aurora + ripples + particles.
+   All layered with pointer-events: none, sit behind app content (z-index < 1). */
+.bg-aurora {
+  position: fixed; inset: -10vw; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(circle 50vw at var(--ax, 85%) var(--ay, 8%),  rgba(228, 192, 122, 0.22), transparent 55%),
+    radial-gradient(circle 60vw at var(--bx, 12%) var(--by, 48%), rgba(141, 191, 157, 0.16), transparent 55%);
+  animation: aurora-drift 90s ease-in-out infinite alternate;
+  will-change: transform, background-position;
+}
+@keyframes aurora-drift {
+  0%   { --ax: 85%; --ay: 8%;  --bx: 12%; --by: 48%; transform: translate3d(0,0,0); }
+  50%  { --ax: 30%; --ay: 18%; --bx: 80%; --by: 70%; transform: translate3d(2vw, -1vw, 0); }
+  100% { --ax: 70%; --ay: 30%; --bx: 25%; --by: 65%; transform: translate3d(-2vw, 1vw, 0); }
+}
+
+.bg-ripples {
+  position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; opacity: 0.55;
+}
+.bg-ripples span {
+  position: absolute; left: var(--rx, 50%); top: var(--ry, 50%);
+  width: 6px; height: 6px; border-radius: 50%;
+  border: 1px solid rgba(212, 182, 115, 0.25);
+  transform: translate(-50%, -50%);
+  animation: ripple var(--dur, 8s) ease-out infinite;
+  animation-delay: var(--delay, 0s);
+}
+@keyframes ripple {
+  0%   { width: 6px; height: 6px; opacity: 0.6; border-width: 1px; }
+  100% { width: 320px; height: 320px; opacity: 0; border-width: 0.5px; }
+}
+
+.bg-particles {
+  position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;
+}
+.bg-particles span {
+  position: absolute; left: var(--px, 50%); bottom: -10px;
+  width: var(--pw, 1px); height: var(--pw, 1px); border-radius: 50%;
+  background: var(--pc, rgba(212,182,115,0.5));
+  animation: particle-rise var(--pd, 30s) linear infinite;
+  animation-delay: var(--pdl, 0s);
+  opacity: 0;
+}
+@keyframes particle-rise {
+  0%   { transform: translate3d(0, 0, 0);       opacity: 0; }
+  10%  {                                          opacity: var(--po, 0.55); }
+  90%  {                                          opacity: var(--po, 0.55); }
+  100% { transform: translate3d(var(--ptx, 1vw), -110vh, 0); opacity: 0; }
+}
+
+/* prefers-reduced-motion: kill all animations */
+@media (prefers-reduced-motion: reduce) {
+  .bg-aurora, .bg-ripples span, .bg-particles span { animation: none !important; }
+  .bg-ripples, .bg-particles { display: none; }
 }
 
 .app-root {

@@ -1,23 +1,38 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
-import { ChevronRight, Cloud, Wind, Thermometer, Droplets, ArrowDown, ArrowUp } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, Cloud, Wind, Thermometer, Droplets, ArrowDown, ArrowUp, Search, X, Crosshair } from 'lucide-react';
 import { fetchExtendedForecast, weatherCodeEmoji, weatherCodeLabel, type ForecastBundle } from '@/lib/weather';
+
+const WX_LOC_KEY = 'carp_log_weather_override_v1';
+type WxLoc = { lat: number; lng: number; name: string };
+function readWxOverride(): WxLoc | null {
+  if (typeof window === 'undefined') return null;
+  try { const raw = localStorage.getItem(WX_LOC_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+function writeWxOverride(v: WxLoc | null) {
+  try { if (v) localStorage.setItem(WX_LOC_KEY, JSON.stringify(v)); else localStorage.removeItem(WX_LOC_KEY); } catch {}
+}
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function WeatherForecastCard({ coords, compact }: { coords: { lat: number; lng: number } | null; compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<ForecastBundle | null>(null);
+  const [override, setOverride] = useState<WxLoc | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const effective = override ? { lat: override.lat, lng: override.lng } : coords;
+  const locationName = override?.name || null;
 
+  useEffect(() => { setOverride(readWxOverride()); }, []);
   useEffect(() => {
     let cancelled = false;
-    if (!coords) return;
+    if (!effective) return;
     (async () => {
-      const f = await fetchExtendedForecast(coords.lat, coords.lng);
+      const f = await fetchExtendedForecast(effective.lat, effective.lng);
       if (!cancelled) setData(f);
     })();
     return () => { cancelled = true; };
-  }, [coords]);
+  }, [effective?.lat, effective?.lng]);
 
   // Slice next-12 hourly starting from "now" hour.
   const next12 = useMemo(() => {
@@ -69,7 +84,7 @@ export default function WeatherForecastCard({ coords, compact }: { coords: { lat
     return { dir: 'steady' as const, delta };
   }, [data]);
 
-  if (!coords) return null;
+  if (!effective) return null;
   if (!data) {
     return (
       <div style={{
@@ -92,7 +107,10 @@ export default function WeatherForecastCard({ coords, compact }: { coords: { lat
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div style={{ fontSize: 36, lineHeight: 1 }}>{c.code != null ? weatherCodeEmoji(c.code, c.isDay) : '☁️'}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--gold-2)', fontWeight: 700 }}>Weather</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--gold-2)', fontWeight: 700 }}>
+            Weather
+            {locationName && <span style={{ color: 'var(--text-3)', fontSize: 10, letterSpacing: '0.08em', textTransform: 'none', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>· {locationName}</span>}
+          </div>
           <div className="display-font" style={{ fontSize: 18, color: 'var(--text)', fontWeight: 500, lineHeight: 1.1 }}>
             {c.temp != null ? `${c.temp}°C` : '—'} · {c.code != null ? weatherCodeLabel(c.code) : ''}
           </div>
@@ -100,8 +118,19 @@ export default function WeatherForecastCard({ coords, compact }: { coords: { lat
             Feels like {c.apparent != null ? `${c.apparent}°C` : '—'}{c.windDir ? ` · Wind ${c.windDir}${c.windSpeed != null ? ` ${c.windSpeed}km/h` : ''}` : ''}
           </div>
         </div>
+        <button onClick={(e) => { e.stopPropagation(); setSearchOpen(true); }} aria-label="Search location"
+          style={{ width: 30, height: 30, borderRadius: 10, background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.18)', color: 'var(--text-2)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <Search size={13} />
+        </button>
         {!compact && <ChevronRight size={16} style={{ color: 'var(--text-3)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />}
       </div>
+
+      {searchOpen && <WeatherLocationSearch
+        onClose={() => setSearchOpen(false)}
+        onPick={(loc) => { writeWxOverride(loc); setOverride(loc); setSearchOpen(false); }}
+        onReset={() => { writeWxOverride(null); setOverride(null); setSearchOpen(false); }}
+        canReset={!!override}
+      />}
 
       {showExpansion && (
         <div className="fade-in" style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(234,201,136,0.18)' }}>
@@ -221,5 +250,81 @@ function PressureChart({ series }: { series: { times: Date[]; pres: number[]; mi
       <line x1={nowX} y1="0" x2={nowX} y2={H} stroke="var(--gold)" strokeWidth="1" strokeDasharray="2 3" />
       <text x={nowX + 3} y="10" fontSize="9" fontFamily="Manrope" fill="var(--gold-2)">now</text>
     </svg>
+  );
+}
+
+function WeatherLocationSearch({ onClose, onPick, onReset, canReset }: {
+  onClose: () => void;
+  onPick: (loc: WxLoc) => void;
+  onReset: () => void;
+  canReset: boolean;
+}) {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<WxLoc[]>([]);
+  const [busy, setBusy] = useState(false);
+  const tRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (tRef.current) clearTimeout(tRef.current);
+    if (!q.trim()) { setResults([]); setBusy(false); return; }
+    setBusy(true);
+    tRef.current = setTimeout(async () => {
+      try {
+        const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=5`);
+        const j = await r.json();
+        const items: WxLoc[] = (j?.results || []).map((x: any) => ({
+          lat: x.latitude, lng: x.longitude,
+          name: [x.name, x.admin1, x.country_code].filter(Boolean).join(', '),
+        }));
+        setResults(items);
+      } catch { setResults([]); }
+      finally { setBusy(false); }
+    }, 350);
+    return () => { if (tRef.current) clearTimeout(tRef.current); };
+  }, [q]);
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 110, background: 'rgba(3,10,9,0.7)',
+      backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '60px 16px 16px',
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 420, padding: 14, borderRadius: 18,
+        background: 'rgba(10,24,22,0.95)',
+        backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+        border: '1px solid rgba(234,201,136,0.18)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--gold-2)', letterSpacing: '0.08em', textTransform: 'uppercase', flex: 1 }}>Pick a location</div>
+          <button onClick={onClose} style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 10, width: 32, height: 32, color: 'var(--text-2)', cursor: 'pointer' }}><X size={14} /></button>
+        </div>
+        <div style={{ position: 'relative', marginBottom: 10 }}>
+          <Search size={14} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-3)' }} />
+          <input className="input" autoFocus placeholder="e.g. Burgundy, Stoneacres, EC1A…"
+            value={q} onChange={(e) => setQ(e.target.value)} style={{ paddingLeft: 38, fontSize: 14 }} />
+        </div>
+        {busy && <p style={{ color: 'var(--text-3)', fontSize: 12, textAlign: 'center', padding: '6px 0' }}>Searching…</p>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 280, overflowY: 'auto' }}>
+          {results.map((r, i) => (
+            <button key={i} onClick={() => onPick(r)} className="tap" style={{
+              padding: '10px 12px', borderRadius: 12, textAlign: 'left',
+              background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
+              color: 'var(--text)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
+            }}>{r.name}</button>
+          ))}
+        </div>
+        {canReset && (
+          <button onClick={onReset} className="tap" style={{
+            marginTop: 10, width: '100%', padding: '10px 14px', borderRadius: 12,
+            background: 'transparent', border: '1px dashed rgba(234,201,136,0.3)',
+            color: 'var(--text-2)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          }}>
+            <Crosshair size={12} /> Reset to my location
+          </button>
+        )}
+      </div>
+    </div>
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useState } from 'react';
-import { Anchor, Globe, Lock, MapPin, MessageCircle, Tent, Users } from 'lucide-react';
+import { Anchor, MapPin, MessageCircle, Tent } from 'lucide-react';
 import type { Catch, Profile, Trip } from '@/lib/types';
 import { formatDate } from '@/lib/util';
 import { photoPublicUrl } from '@/lib/db';
@@ -15,12 +15,6 @@ const SPECIES = [
   { id: 'koi',     label: 'Koi',     hue: '#D85B47' },
   { id: 'other',   label: 'Other',   hue: '#8A9D96' },
 ];
-
-function VisibilityIcon({ v }: { v: Catch['visibility'] }) {
-  if (v === 'public') return <Globe size={11} style={{ color: 'var(--sage)' }} />;
-  if (v === 'private') return <Lock size={11} style={{ color: 'var(--text-3)' }} />;
-  return <Users size={11} style={{ color: 'var(--gold-2)' }} />;
-}
 
 function PBPeel() {
   return (
@@ -69,8 +63,7 @@ export default function CatchCard({
             <span style={{ color: 'var(--text-3)' }}>lost one</span>
             {commentCount > 0 && <span style={{ marginLeft: 'auto', color: 'var(--text-3)', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 3 }}><MessageCircle size={11} />{commentCount}</span>}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-3)', display: 'flex', alignItems: 'center', gap: 5 }}>
-            <VisibilityIcon v={catchData.visibility} />
+          <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
             {formatDate(catchData.date)}
             {catchData.swim && ` · Swim ${catchData.swim}`}
             {catchData.rig && ` · ${catchData.rig}`}
@@ -121,9 +114,7 @@ export default function CatchCard({
               <span style={{ fontSize: 14, fontWeight: 600 }}>{angler.display_name}</span>
             </Link>
           )}
-          <span style={{ color: 'var(--text-3)', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <VisibilityIcon v={catchData.visibility} /> {formatDate(catchData.date)}
-          </span>
+          <span style={{ color: 'var(--text-3)', fontSize: 13 }}>{formatDate(catchData.date)}</span>
           {commentCount > 0 && <span style={{ marginLeft: 'auto', color: 'var(--text-3)', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 3 }}><MessageCircle size={12} />{commentCount}</span>}
         </div>
         {(catchData.lake || catchData.swim || catchData.bait) && (

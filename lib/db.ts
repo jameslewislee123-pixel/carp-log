@@ -276,6 +276,24 @@ export async function uploadPhotoFromDataUrl(catchId: string, dataUrl: string): 
   return photoPublicUrl(user.id, catchId);
 }
 
+// ============ AVATARS ============
+const AVATAR_BUCKET = 'avatars';
+export async function uploadAvatarFromDataUrl(dataUrl: string): Promise<string> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const blob = await (await fetch(dataUrl)).blob();
+  const path = `${user.id}/avatar.jpg`;
+  const { error } = await supabase().storage.from(AVATAR_BUCKET).upload(path, blob, {
+    contentType: 'image/jpeg', upsert: true, cacheControl: '60',
+  });
+  if (error) throw error;
+  // bust the public URL cache by appending a timestamp
+  const { data } = supabase().storage.from(AVATAR_BUCKET).getPublicUrl(path);
+  const url = `${data.publicUrl}?v=${Date.now()}`;
+  await updateProfile({ avatar_url: url });
+  return url;
+}
+
 export async function deletePhoto(catchId: string): Promise<void> {
   const { data: { user } } = await supabase().auth.getUser();
   if (!user) return;

@@ -6,9 +6,10 @@ import {
   Camera, Plus, Trophy, Images, Settings, X, Check, Fish, MapPin, Calendar,
   Edit2, Trash2, ChevronRight, Loader2, Download, ArrowLeft, Sparkles, Crown,
   Cloud, Wind, Thermometer, MessageCircle, Bell, Send, Anchor, BarChart3,
-  Clock, Tent, MapPinned, Star, Globe, Users as UsersIcon, Lock, LogOut, UserPlus, Mail,
+  Clock, Tent, MapPinned, Star, Users as UsersIcon, Lock, LogOut, UserPlus, Mail,
   Activity as ActivityIcon, Map as MapIcon, MessageSquare, ThumbsUp,
 } from 'lucide-react';
+import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
 import InvitePicker from './InvitePicker';
 import TripChat from './TripChat';
 import TripActivityFeed from './TripActivity';
@@ -1814,7 +1815,8 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
   const [conditions, setConditions] = useState(existing?.weather?.conditions || '');
   const [wind, setWind] = useState(existing?.weather?.wind || '');
   const [pressure, setPressure] = useState<string>(existing?.weather?.pressure != null ? String(existing.weather.pressure) : '');
-  const [visibility, setVisibility] = useState<CatchVisibility>(existing?.visibility || 'friends');
+  // Visibility UI removed; new catches default to 'friends'. Existing catches preserve their value.
+  const visibility: CatchVisibility = existing?.visibility || 'friends';
   const [showMore, setShowMore] = useState(!!(existing?.lake || existing?.swim || existing?.bait || existing?.rig || existing?.notes));
   const [showWeather, setShowWeather] = useState(!!(existing?.weather?.tempC != null || existing?.weather?.conditions));
   const [autoStatus, setAutoStatus] = useState<{ wx: 'idle' | 'fetching' | 'done' | 'failed'; sp: 'idle' | 'detecting' | 'done' | 'failed' }>({ wx: 'idle', sp: 'idle' });
@@ -2269,8 +2271,6 @@ function CatchDetail({ catchData, me, profilesById, trips, onClose, onDelete, on
         {catchData.swim && <DetailRow icon={<MapPin size={14} />} label="Swim" value={catchData.swim} />}
         {catchData.bait && <DetailRow label="Bait" value={catchData.bait} />}
         {catchData.rig && <DetailRow label="Rig" value={catchData.rig} />}
-        <DetailRow icon={catchData.visibility === 'public' ? <Globe size={14} /> : catchData.visibility === 'private' ? <Lock size={14} /> : <UsersIcon size={14} />}
-          label="Visibility" value={catchData.visibility === 'public' ? 'Public' : catchData.visibility === 'private' ? 'Only me' : 'Friends'} />
       </div>
 
       {weather && (weather.tempC != null || weather.conditions || weather.wind || weather.pressure != null) && (
@@ -2305,7 +2305,22 @@ function CatchDetail({ catchData, me, profilesById, trips, onClose, onDelete, on
         </div>
       )}
 
-      <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+      <BanterSection
+        comments={comments}
+        commentProfiles={commentProfiles}
+        likes={likes}
+        meId={me.id}
+        commentText={commentText}
+        setCommentText={setCommentText}
+        commentErr={commentErr}
+        posting={posting}
+        onSubmit={submitComment}
+        onRemove={removeComment}
+        onToggleLike={toggleLike}
+      />
+      {/* The legacy block below is unreachable but kept as a no-op fallback; the modular component does the work above. */}
+      {false && (
+        <div className="card" style={{ padding: 16, marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <MessageCircle size={14} style={{ color: 'var(--text-3)' }} />
           <div className="label" style={{ marginBottom: 0 }}>Banter ({comments.length})</div>
@@ -2321,28 +2336,31 @@ function CatchDetail({ catchData, me, profilesById, trips, onClose, onDelete, on
                 <div key={c.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                   <AvatarBubble username={ca?.username} displayName={ca?.display_name} avatarUrl={ca?.avatar_url} size={26} link={!!ca?.username} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 2 }}>
-                      <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{ca?.display_name || 'Unknown'}</strong>
-                      <span> · {new Date(c.created_at).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
-                    </div>
-                    <div style={{ fontSize: 14, color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.text}</div>
-                    <div style={{ marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      <span style={{ fontSize: 12, color: 'var(--text-3)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{ca?.display_name || 'Unknown'}</strong>
+                        <span> · {new Date(c.created_at).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                      </span>
                       <button onClick={() => toggleLike(c.id)} aria-label={myLike ? 'Unlike' : 'Like'} style={{
-                        background: 'transparent', border: 'none', color: myLike ? 'var(--gold-2)' : 'var(--text-3)',
-                        cursor: 'pointer', padding: 2, display: 'inline-flex', alignItems: 'center', gap: 4,
-                        fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+                        minWidth: 32, height: 32, padding: '0 8px', borderRadius: 999,
+                        background: myLike ? 'rgba(212,182,115,0.18)' : 'transparent',
+                        border: `1px solid ${myLike ? 'var(--gold)' : 'transparent'}`,
+                        color: myLike ? 'var(--gold-2)' : 'var(--text-3)',
+                        cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                        fontFamily: 'inherit', fontSize: 11, fontWeight: 700, flexShrink: 0,
                       }}>
                         <ThumbsUp size={12} fill={myLike ? 'var(--gold-2)' : 'transparent'} />
                         {likeCount > 0 && <span>{likeCount}</span>}
                       </button>
+                      {mine && (
+                        <button onClick={() => removeComment(c.id)} aria-label="Delete comment"
+                          style={{ minWidth: 32, height: 32, padding: 0, background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <Trash2 size={12} />
+                        </button>
+                      )}
                     </div>
+                    <div style={{ fontSize: 14, color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.text}</div>
                   </div>
-                  {mine && (
-                    <button onClick={() => removeComment(c.id)} aria-label="Delete comment"
-                      style={{ background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer', padding: 4 }}>
-                      <Trash2 size={12} />
-                    </button>
-                  )}
                 </div>
               );
             })}
@@ -2369,6 +2387,7 @@ function CatchDetail({ catchData, me, profilesById, trips, onClose, onDelete, on
             }}>{posting ? <Loader2 size={14} className="spin" /> : <Send size={16} />}</button>
         </div>
       </div>
+      )}
 
       {isMyCatch && (
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
@@ -2377,6 +2396,122 @@ function CatchDetail({ catchData, me, profilesById, trips, onClose, onDelete, on
         </div>
       )}
     </ModalShell>
+  );
+}
+
+function BanterSection({
+  comments, commentProfiles, likes, meId, commentText, setCommentText,
+  commentErr, posting, onSubmit, onRemove, onToggleLike,
+}: {
+  comments: import('@/lib/types').CatchComment[];
+  commentProfiles: Record<string, Profile>;
+  likes: import('@/lib/types').CommentLike[];
+  meId: string;
+  commentText: string;
+  setCommentText: (v: string) => void;
+  commentErr: string | null;
+  posting: boolean;
+  onSubmit: () => void;
+  onRemove: (id: string) => void;
+  onToggleLike: (id: string) => void;
+}) {
+  // 0–2 comments → expanded; 3+ → collapsed by default. User can override.
+  const [expanded, setExpanded] = useState<boolean>(comments.length < 3);
+  // If a new comment arrives that pushes count to ≥3 we keep current state.
+  const showThread = expanded || comments.length < 3;
+  const last = comments[comments.length - 1];
+  const lastAuthor = last ? commentProfiles[last.angler_id] : null;
+
+  return (
+    <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+      <button onClick={() => setExpanded(e => !e)} className="tap" style={{
+        width: '100%', background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
+        display: 'flex', alignItems: 'center', gap: 8, marginBottom: showThread ? 12 : 0,
+        color: 'var(--text)', fontFamily: 'inherit', textAlign: 'left',
+      }}>
+        <MessageCircle size={14} style={{ color: 'var(--text-3)' }} />
+        <div className="label" style={{ marginBottom: 0, flex: 1 }}>Banter ({comments.length}){comments.length >= 3 && !expanded ? ' — tap to expand' : ''}</div>
+        {comments.length >= 3 && (
+          <ChevronRight size={14} style={{ color: 'var(--text-3)', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
+        )}
+      </button>
+
+      {!showThread && last && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, paddingTop: 4 }}>
+          <AvatarBubble username={lastAuthor?.username} displayName={lastAuthor?.display_name} avatarUrl={lastAuthor?.avatar_url} size={24} link={false} />
+          <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--text-3)' }}>
+            <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{lastAuthor?.display_name || 'Unknown'}: </strong>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: '70%', verticalAlign: 'bottom' }}>{last.text}</span>
+          </div>
+        </div>
+      )}
+
+      {showThread && (
+        <>
+          {comments.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>
+              {comments.map(c => {
+                const ca = commentProfiles[c.angler_id];
+                const mine = c.angler_id === meId;
+                const myLike = likes.some(l => l.comment_id === c.id && l.angler_id === meId);
+                const likeCount = likes.filter(l => l.comment_id === c.id).length;
+                return (
+                  <div key={c.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                    <AvatarBubble username={ca?.username} displayName={ca?.display_name} avatarUrl={ca?.avatar_url} size={26} link={!!ca?.username} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                        <span style={{ fontSize: 12, color: 'var(--text-3)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{ca?.display_name || 'Unknown'}</strong>
+                          <span> · {new Date(c.created_at).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                        </span>
+                        <button onClick={() => onToggleLike(c.id)} aria-label={myLike ? 'Unlike' : 'Like'} style={{
+                          minWidth: 32, height: 32, padding: '0 8px', borderRadius: 999,
+                          background: myLike ? 'rgba(212,182,115,0.18)' : 'transparent',
+                          border: `1px solid ${myLike ? 'var(--gold)' : 'transparent'}`,
+                          color: myLike ? 'var(--gold-2)' : 'var(--text-3)',
+                          cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                          fontFamily: 'inherit', fontSize: 11, fontWeight: 700, flexShrink: 0,
+                        }}>
+                          <ThumbsUp size={12} fill={myLike ? 'var(--gold-2)' : 'transparent'} />
+                          {likeCount > 0 && <span>{likeCount}</span>}
+                        </button>
+                        {mine && (
+                          <button onClick={() => onRemove(c.id)} aria-label="Delete comment"
+                            style={{ minWidth: 32, height: 32, padding: 0, background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 14, color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.text}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {commentErr && (
+            <div role="alert" style={{
+              marginBottom: 10, padding: 10, borderRadius: 10, fontSize: 12,
+              background: 'rgba(220,107,88,0.14)', border: '1px solid rgba(220,107,88,0.4)', color: 'var(--danger)',
+            }}>{commentErr}</div>
+          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input className="input" placeholder="Add a comment…" value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(); } }}
+              style={{ flex: 1, padding: '10px 14px', fontSize: 14 }} />
+            <button onClick={onSubmit}
+              disabled={!commentText.trim() || posting} className="tap" style={{
+                width: 44, height: 44, borderRadius: 12,
+                background: commentText.trim() && !posting ? 'var(--gold)' : 'rgba(20,42,38,0.7)',
+                color: commentText.trim() && !posting ? '#1A1004' : 'var(--text-3)',
+                border: 'none', cursor: commentText.trim() && !posting ? 'pointer' : 'not-allowed',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              }}>{posting ? <Loader2 size={14} className="spin" /> : <Send size={16} />}</button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -2434,17 +2569,18 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
 
   return (
     <ModalShell title="Settings" onClose={onClose}>
-      <Link href={`/profile/${me.username}`} onClick={onClose}
-        className="tap"
-        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', marginBottom: 18, color: 'var(--text)', textDecoration: 'none', cursor: 'pointer' }}>
-        <AvatarBubble username={me.username} displayName={me.display_name} avatarUrl={me.avatar_url} size={48} link={false} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 600 }}>{me.display_name}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>@{me.username}</div>
-          {email && <div style={{ fontSize: 11, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{email}</div>}
-        </div>
-        <ChevronRight size={16} style={{ color: 'var(--text-3)' }} />
-      </Link>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', marginBottom: 18 }}>
+        <AvatarUploader me={me} onSaved={(url) => onSaveProfile({ avatar_url: url })} />
+        <Link href={`/profile/${me.username}`} onClick={onClose}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0, color: 'var(--text)', textDecoration: 'none' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 600 }}>{me.display_name}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>@{me.username}</div>
+            {email && <div style={{ fontSize: 11, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{email}</div>}
+          </div>
+          <ChevronRight size={16} style={{ color: 'var(--text-3)' }} />
+        </Link>
+      </div>
 
       <div className="label">Profile</div>
       {!editing ? (
@@ -2595,29 +2731,51 @@ function TelegramSetup({ notify, onSaveNotify }: { notify: NotifyConfig | null; 
 // ============ SHELL ============
 function ModalShell({ title, onClose, hideTitle, children }: { title?: string; onClose: () => void; hideTitle?: boolean; children: React.ReactNode }) {
   useEffect(() => { document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = ''; }; }, []);
+  // Pull-to-dismiss: drag the sheet down; close on >150px or velocity > 500/s.
+  const y = useMotionValue(0);
+  const backdropOpacity = useTransform(y, [0, 200, 400], [0.7, 0.4, 0]);
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 100,
-      background: 'rgba(3, 10, 9, 0.7)',
-      backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
-      display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-      // Block horizontal swipes on the backdrop entirely.
-      touchAction: 'none',
-    }} onClick={onClose}>
-      <div className="slide-up" onClick={(e) => e.stopPropagation()} style={{
-        width: '100%', maxWidth: 480, maxHeight: '92vh',
-        background: 'rgba(10, 24, 22, 0.92)',
-        backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-        borderRadius: '28px 28px 0 0', border: '1px solid rgba(234,201,136,0.14)', borderBottom: 'none',
-        overflowY: 'auto', overflowX: 'hidden',
-        position: 'relative',
-        padding: '20px 20px max(40px, env(safe-area-inset-bottom))',
-        boxShadow: '0 -10px 40px rgba(0,0,0,0.45)',
-        // Only allow vertical scroll inside the sheet — horizontal swipes do nothing.
-        touchAction: 'pan-y',
-        // Prevent the body underneath from scrolling when we hit the edge.
-        overscrollBehavior: 'contain',
-      }}>
+    <motion.div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: useTransform(backdropOpacity, (o) => `rgba(3, 10, 9, ${o})`) as any,
+        backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+        touchAction: 'none',
+      }}
+      onClick={onClose}
+    >
+      <motion.div
+        onClick={(e) => e.stopPropagation()}
+        drag="y"
+        dragConstraints={{ top: 0, bottom: 0 }}
+        dragElastic={{ top: 0, bottom: 0.6 }}
+        dragMomentum={false}
+        style={{ y,
+          width: '100%', maxWidth: 480, maxHeight: '92vh',
+          background: 'rgba(10, 24, 22, 0.92)',
+          backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          borderRadius: '28px 28px 0 0', border: '1px solid rgba(234,201,136,0.14)', borderBottom: 'none',
+          overflowY: 'auto', overflowX: 'hidden',
+          position: 'relative',
+          padding: '20px 20px max(40px, env(safe-area-inset-bottom))',
+          boxShadow: '0 -10px 40px rgba(0,0,0,0.45)',
+          touchAction: 'pan-y',
+          overscrollBehavior: 'contain',
+        }}
+        initial={{ y: '100%' }}
+        animate={{ y: 0 }}
+        exit={{ y: '100%' }}
+        transition={{ type: 'spring', stiffness: 260, damping: 30 }}
+        onDragEnd={(_, info) => {
+          if (info.offset.y > 150 || info.velocity.y > 500) {
+            // Animate down then close.
+            animate(y, 700, { duration: 0.18, onComplete: onClose });
+          } else {
+            animate(y, 0, { type: 'spring', stiffness: 320, damping: 28 });
+          }
+        }}
+      >
         <div className="sheet-handle" />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: hideTitle ? 8 : 16, position: 'sticky', top: 0, paddingTop: 8, paddingBottom: 8, zIndex: 10, background: 'transparent' }}>
           {!hideTitle && <h2 className="display-font" style={{ fontSize: 22, margin: 0, fontWeight: 500 }}>{title}</h2>}
@@ -2632,8 +2790,8 @@ function ModalShell({ title, onClose, hideTitle, children }: { title?: string; o
           )}
         </div>
         {children}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -2656,6 +2814,18 @@ function FAB({ onClick }: { onClick: () => void }) {
 }
 
 function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 'trips' | 'stats' | 'gallery') => void }) {
+  // Dim while user is actively scrolling; restore after a short idle.
+  const [dimmed, setDimmed] = useState(false);
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const onScroll = () => {
+      setDimmed(true);
+      if (t) clearTimeout(t);
+      t = setTimeout(() => setDimmed(false), 300);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => { window.removeEventListener('scroll', onScroll); if (t) clearTimeout(t); };
+  }, []);
   const items = [
     { id: 'feed' as const,    label: 'Log',    icon: Fish },
     { id: 'trips' as const,   label: 'Trips',  icon: Tent },
@@ -2663,7 +2833,9 @@ function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 't
     { id: 'gallery' as const, label: 'Photos', icon: Images },
   ];
   return (
-    <div style={{
+    <div
+      onPointerEnter={() => setDimmed(false)}
+      style={{
       position: 'fixed',
       bottom: 'calc(16px + env(safe-area-inset-bottom))',
       left: 16, right: 16,
@@ -2674,6 +2846,8 @@ function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 't
       padding: '10px 8px', zIndex: 40,
       display: 'flex', justifyContent: 'space-around',
       boxShadow: '0 12px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.18)',
+      opacity: dimmed ? 0.5 : 1,
+      transition: dimmed ? 'opacity 0.2s ease' : 'opacity 0.3s ease',
     }}>
       {items.map(item => {
         const Icon = item.icon;
@@ -2711,4 +2885,63 @@ function LakeDetailLoader({ name, catches, profilesById, me, onClose, onOpenCatc
   if (!lake) return null;
   const lakeCatches = catches.filter(c => (c.lake || '').trim().toLowerCase() === lake.name.trim().toLowerCase());
   return <LakeDetail lake={lake} lakeCatches={lakeCatches} profilesById={profilesById} me={me} onClose={onClose} onOpenCatch={onOpenCatch} />;
+}
+
+function AvatarUploader({ me, onSaved }: { me: Profile; onSaved: (url: string) => Promise<void> | void }) {
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [busy, setBusy] = useState(false);
+  async function pick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    try {
+      // Square-crop + resize to 512px JPEG.
+      const dataUrl = await squareCompress(file, 512, 0.86);
+      const url = await db.uploadAvatarFromDataUrl(dataUrl);
+      await onSaved(url);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to upload avatar');
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+  return (
+    <button onClick={() => fileRef.current?.click()} aria-label="Change avatar"
+      style={{ position: 'relative', background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}>
+      <AvatarBubble username={me.username} displayName={me.display_name} avatarUrl={me.avatar_url} size={48} link={false} />
+      <span style={{
+        position: 'absolute', right: -2, bottom: -2, width: 20, height: 20, borderRadius: 999,
+        background: 'var(--gold)', color: '#1A1004',
+        border: '2px solid rgba(10,24,22,0.95)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>{busy ? <Loader2 size={10} className="spin" /> : <Camera size={10} />}</span>
+      <input ref={fileRef} type="file" accept="image/*" onChange={pick} style={{ display: 'none' }} />
+    </button>
+  );
+}
+
+// Square-crop centered, downscale to maxDim, return JPEG data URL.
+function squareCompress(file: File, maxDim: number, quality: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const side = Math.min(img.width, img.height);
+        const sx = (img.width - side) / 2;
+        const sy = (img.height - side) / 2;
+        const out = Math.min(maxDim, side);
+        const canvas = document.createElement('canvas');
+        canvas.width = out; canvas.height = out;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, out, out);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+      img.src = e.target!.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
