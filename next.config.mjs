@@ -6,12 +6,15 @@ const withPWA = withPWAInit({
   dest: 'public',
   register: true,
   skipWaiting: true,
-  clientsClaim: true, // critical — new SW takes control of open clients on activate
+  clientsClaim: true,
   disable: isDev,
-  // Adds our push/notificationclick handlers to the generated sw.js.
-  // Bump the cache-buster query when push-sw.js changes so workbox sees a
-  // byte-different sw.js and triggers a fresh install.
-  importScripts: ['/push-sw.js?v=2'],
+  // Disable precaching entirely. The default precache list includes
+  // /_next/app-build-manifest.json which 404s in App Router builds; workbox's
+  // install handler then retries it forever and the SW never reaches "active".
+  // We don't need precache for offline-first — runtimeCaching covers live use,
+  // and full offline support isn't a product requirement right now.
+  buildExcludes: [/.*/],
+  importScripts: ['/push-sw.js?v=3'],
   runtimeCaching: [
     {
       urlPattern: /^https:\/\/[^/]+\.supabase\.co\/realtime\/.*$/i,

@@ -1,15 +1,24 @@
 // Push notification handler — imported into the next-pwa generated service
 // worker via `importScripts` (see next.config.mjs).
-//
-// We intentionally don't use any caching API or workbox features here —
-// next-pwa already handles those.
-//
-// Belt-and-braces: take over the page on activate so a freshly-installed SW
-// immediately controls open clients instead of sitting in "waiting" state.
-// next-pwa's clientsClaim:true also does this; doing it again here is
-// idempotent and protects us if next-pwa config drifts.
-self.addEventListener('install', () => { self.skipWaiting(); });
-self.addEventListener('activate', (event) => { event.waitUntil(self.clients.claim()); });
+
+// Lifecycle timing — visible in `chrome://inspect` / Safari Web Inspector
+// SW console. If install ever hangs again, the missing log line tells us
+// exactly which step never completed.
+console.log('[push-sw] script evaluated', new Date().toISOString());
+
+self.addEventListener('install', (event) => {
+  console.log('[push-sw] install event start', new Date().toISOString());
+  self.skipWaiting();
+  // Don't add anything to event.waitUntil here — next-pwa's workbox install
+  // step is already in-flight, and we want install to settle as fast as
+  // possible. skipWaiting() is fire-and-forget.
+  console.log('[push-sw] install event done (skipWaiting called)');
+});
+
+self.addEventListener('activate', (event) => {
+  console.log('[push-sw] activate event', new Date().toISOString());
+  event.waitUntil(self.clients.claim());
+});
 
 self.addEventListener('push', (event) => {
   if (!event.data) return;
