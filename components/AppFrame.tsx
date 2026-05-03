@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
 export function PageHeader({ title, kicker, right, back }: { title: string; kicker?: string; right?: ReactNode; back?: boolean }) {
   const router = useRouter();
   return (
-    <div style={{ padding: '24px 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+    <div style={{ paddingTop: 'max(24px, env(safe-area-inset-top))', paddingLeft: 20, paddingRight: 20, paddingBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
         {back && (
           <button onClick={() => router.back()} className="tap" style={{

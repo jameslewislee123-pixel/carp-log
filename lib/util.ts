@@ -22,6 +22,30 @@ export function formatDateRange(startISO: string, endISO: string): string {
   return `${s.toLocaleDateString([], { day: 'numeric', month: 'short' })} – ${e.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}`;
 }
 
+// ----------------------------------------------------------------
+// datetime-local / date input helpers
+// `<input type="datetime-local">` and `<input type="date">` work in
+// LOCAL time without a timezone. If we feed them a UTC ISO string
+// directly, the browser shows UTC values, and saving back round-trips
+// through `new Date(localValue).toISOString()` shifts the timestamp
+// by the user's UTC offset on every edit. These helpers take a UTC
+// ISO and return a string formatted as the LOCAL wall-clock time so
+// the input shows what the user actually saw / saved.
+// ----------------------------------------------------------------
+function toLocalISO(d: Date): string {
+  const offsetMs = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - offsetMs).toISOString();
+}
+export function isoToLocalDateTimeInput(iso: string): string {
+  return toLocalISO(new Date(iso)).slice(0, 16); // "YYYY-MM-DDTHH:mm"
+}
+export function isoToLocalDateInput(iso: string): string {
+  return toLocalISO(new Date(iso)).slice(0, 10); // "YYYY-MM-DD"
+}
+export function nowLocalDateTimeInput(): string { return isoToLocalDateTimeInput(new Date().toISOString()); }
+export function todayLocalDateInput(): string { return isoToLocalDateInput(new Date().toISOString()); }
+export function tomorrowLocalDateInput(): string { return isoToLocalDateInput(new Date(Date.now() + 86400000).toISOString()); }
+
 export function compressImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

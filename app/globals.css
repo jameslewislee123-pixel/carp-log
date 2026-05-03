@@ -49,7 +49,16 @@ body {
   position: relative;
   overflow-x: hidden;
 }
-.app-content { position: relative; z-index: 1; padding-bottom: 130px; }
+.app-content {
+  position: relative;
+  z-index: 1;
+  /* Bottom padding accounts for floating bottom nav (16+62) + iOS home indicator */
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+}
+
+/* Reusable safe-area helpers */
+.safe-top    { padding-top: max(20px, env(safe-area-inset-top)); }
+.safe-bottom { padding-bottom: max(20px, env(safe-area-inset-bottom)); }
 
 .display-font { font-family: 'Fraunces', Georgia, serif; font-optical-sizing: auto; }
 .num-display {

@@ -16,6 +16,7 @@ import type {
 } from '@/lib/types';
 import {
   formatDate, formatDateRange, formatWeight, totalOz, compressImage, sendTelegram,
+  isoToLocalDateTimeInput, isoToLocalDateInput, nowLocalDateTimeInput, todayLocalDateInput, tomorrowLocalDateInput,
 } from '@/lib/util';
 import {
   getMoonIllumination, getMoonPhaseLabel, getSolunarWindows,
@@ -291,7 +292,7 @@ export default function CarpApp() {
 function Header({ me, unread, onSettings, view }: { me: Profile | null; unread: number; onSettings: () => void; view: string }) {
   const titles: Record<string, string> = { feed: 'The Log', trips: 'Trips', stats: 'The Board', gallery: 'Gallery' };
   return (
-    <div style={{ padding: '24px 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+    <div style={{ paddingTop: 'max(24px, env(safe-area-inset-top))', paddingLeft: 20, paddingRight: 20, paddingBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--text-3)', fontWeight: 600 }}>Carp Tracker</div>
         <h1 className="display-font" style={{ fontSize: 30, margin: '2px 0 0', fontWeight: 500, letterSpacing: '-0.02em' }}>{titles[view]}</h1>
@@ -823,10 +824,8 @@ function AddTripModal({ existing, onClose, onSave }: {
 }) {
   const [name, setName] = useState(existing?.name || '');
   const [location, setLocation] = useState(existing?.location || '');
-  const today = new Date().toISOString().slice(0, 10);
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-  const [startDate, setStartDate] = useState(existing?.start_date ? existing.start_date.slice(0, 10) : today);
-  const [endDate, setEndDate] = useState(existing?.end_date ? existing.end_date.slice(0, 10) : tomorrow);
+  const [startDate, setStartDate] = useState(existing?.start_date ? isoToLocalDateInput(existing.start_date) : todayLocalDateInput());
+  const [endDate, setEndDate]     = useState(existing?.end_date   ? isoToLocalDateInput(existing.end_date)   : tomorrowLocalDateInput());
   const [notes, setNotes] = useState(existing?.notes || '');
   const [visibility, setVisibility] = useState<TripVisibility>(existing?.visibility || 'invited_only');
   const [saving, setSaving] = useState(false);
@@ -1327,7 +1326,7 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
   const [lbs, setLbs] = useState<string>(existing ? String(existing.lbs) : '');
   const [oz, setOz] = useState<string>(existing ? String(existing.oz) : '');
   const [species, setSpecies] = useState<string>(existing?.species || 'mirror');
-  const [date, setDate] = useState(existing?.date ? existing.date.slice(0, 16) : new Date().toISOString().slice(0, 16));
+  const [date, setDate] = useState(existing?.date ? isoToLocalDateTimeInput(existing.date) : nowLocalDateTimeInput());
   const [trip_id, setTripId] = useState<string | null>(existing?.trip_id || activeTrips[0]?.id || null);
   const [lake, setLake] = useState(existing?.lake || '');
   const [swim, setSwim] = useState(existing?.swim || '');
@@ -2022,14 +2021,27 @@ function TelegramSetup({ notify, onSaveNotify }: { notify: NotifyConfig | null; 
 function ModalShell({ title, onClose, hideTitle, children }: { title?: string; onClose: () => void; hideTitle?: boolean; children: React.ReactNode }) {
   useEffect(() => { document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = ''; }; }, []);
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(3, 10, 9, 0.7)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={onClose}>
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 100,
+      background: 'rgba(3, 10, 9, 0.7)',
+      backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
+      display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+      // Block horizontal swipes on the backdrop entirely.
+      touchAction: 'none',
+    }} onClick={onClose}>
       <div className="slide-up" onClick={(e) => e.stopPropagation()} style={{
         width: '100%', maxWidth: 480, maxHeight: '92vh',
         background: 'rgba(10, 24, 22, 0.92)',
         backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
         borderRadius: '28px 28px 0 0', border: '1px solid rgba(234,201,136,0.14)', borderBottom: 'none',
-        overflowY: 'auto', position: 'relative', padding: '20px 20px 40px',
+        overflowY: 'auto', overflowX: 'hidden',
+        position: 'relative',
+        padding: '20px 20px max(40px, env(safe-area-inset-bottom))',
         boxShadow: '0 -10px 40px rgba(0,0,0,0.45)',
+        // Only allow vertical scroll inside the sheet — horizontal swipes do nothing.
+        touchAction: 'pan-y',
+        // Prevent the body underneath from scrolling when we hit the edge.
+        overscrollBehavior: 'contain',
       }}>
         <div className="sheet-handle" />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: hideTitle ? 8 : 16, position: 'sticky', top: 0, paddingTop: 8, paddingBottom: 8, zIndex: 10, background: 'transparent' }}>
@@ -2053,7 +2065,9 @@ function ModalShell({ title, onClose, hideTitle, children }: { title?: string; o
 function FAB({ onClick }: { onClick: () => void }) {
   return (
     <button onClick={onClick} className="tap" style={{
-      position: 'fixed', bottom: 92, left: '50%', transform: 'translateX(-50%)',
+      position: 'fixed',
+      bottom: 'calc(92px + env(safe-area-inset-bottom))',
+      left: '50%', transform: 'translateX(-50%)',
       width: 64, height: 64, borderRadius: 999,
       background: 'linear-gradient(180deg, var(--gold-2), var(--gold))',
       border: '3px solid rgba(5,14,13,0.9)',
@@ -2075,7 +2089,9 @@ function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 't
   ];
   return (
     <div style={{
-      position: 'fixed', bottom: 16, left: 16, right: 16,
+      position: 'fixed',
+      bottom: 'calc(16px + env(safe-area-inset-bottom))',
+      left: 16, right: 16,
       maxWidth: 448, margin: '0 auto',
       background: 'rgba(28, 60, 54, 0.55)',
       backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',

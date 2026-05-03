@@ -111,7 +111,7 @@ export default function OnboardingPage() {
 
   return (
     <div className="app-root">
-      <div className="app-content" style={{ padding: '60px 24px 40px' }}>
+      <div className="app-content" style={{ paddingTop: 'max(60px, calc(40px + env(safe-area-inset-top)))', paddingLeft: 24, paddingRight: 24, paddingBottom: 'max(40px, env(safe-area-inset-bottom))' }}>
         <Fish size={36} style={{ color: 'var(--gold)', marginBottom: 22 }} />
         <h1 className="display-font" style={{ fontSize: 32, lineHeight: 1.1, margin: '0 0 8px', fontWeight: 500, letterSpacing: '-0.02em' }}>
           Pick your handle

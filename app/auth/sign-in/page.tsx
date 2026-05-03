@@ -56,7 +56,7 @@ function SignInBody() {
 
   return (
     <div className="app-root">
-      <div className="app-content" style={{ padding: '80px 24px 60px', textAlign: 'center' }}>
+      <div className="app-content" style={{ paddingTop: 'max(80px, calc(60px + env(safe-area-inset-top)))', paddingLeft: 24, paddingRight: 24, paddingBottom: 'max(60px, env(safe-area-inset-bottom))', textAlign: 'center' }}>
         <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 72, height: 72, borderRadius: 22, background: 'rgba(212,182,115,0.12)', border: '1px solid rgba(212,182,115,0.3)', marginBottom: 24 }}>
           <Fish size={36} style={{ color: 'var(--gold)' }} />
         </div>
