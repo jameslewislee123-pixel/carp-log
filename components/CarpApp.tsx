@@ -480,6 +480,7 @@ function ForecastCarousel({ catches }: { catches: CatchT[] }) {
   const coords = useFeedCoords(catches);
   const ref = useRef<HTMLDivElement | null>(null);
   const [page, setPage] = useState(0);
+  const [expanded, setExpanded] = useState<'bite' | 'weather' | null>(null);
   function onScroll() {
     const el = ref.current;
     if (!el) return;
@@ -496,8 +497,12 @@ function ForecastCarousel({ catches }: { catches: CatchT[] }) {
           overflowX: 'auto', scrollSnapType: 'x mandatory',
           touchAction: 'pan-x pan-y',
         }}>
-        <div style={{ scrollSnapAlign: 'center', height: 92 }}><BiteForecastCard coords={coords} compact /></div>
-        <div style={{ scrollSnapAlign: 'center', height: 92 }}><WeatherForecastCard coords={coords} compact /></div>
+        <TappableSlide onTap={() => setExpanded('bite')} style={{ scrollSnapAlign: 'center', height: 92 }}>
+          <BiteForecastCard coords={coords} compact />
+        </TappableSlide>
+        <TappableSlide onTap={() => setExpanded('weather')} style={{ scrollSnapAlign: 'center', height: 92 }}>
+          <WeatherForecastCard coords={coords} compact />
+        </TappableSlide>
       </div>
       <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginTop: 6 }}>
         {[0, 1].map(i => (
@@ -508,6 +513,41 @@ function ForecastCarousel({ catches }: { catches: CatchT[] }) {
           }} />
         ))}
       </div>
+
+      {expanded === 'bite' && coords && (
+        <BiteForecastModal coords={coords} onClose={() => setExpanded(null)} />
+      )}
+      {expanded === 'weather' && coords && (
+        <WeatherForecastModal coords={coords} onClose={() => setExpanded(null)} />
+      )}
+    </div>
+  );
+}
+
+// Tap-vs-swipe detector for cards inside the horizontal carousel.
+// Swipe (>10px movement) → bubble up to the scroll container; tap (<10px) → fire onTap.
+function TappableSlide({ onTap, style, children }: { onTap: () => void; style?: React.CSSProperties; children: React.ReactNode }) {
+  const startRef = useRef<{ x: number; y: number } | null>(null);
+  const handledTouchRef = useRef(false);
+  return (
+    <div
+      style={{ ...style, cursor: 'pointer' }}
+      onTouchStart={(e) => { startRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
+      onTouchEnd={(e) => {
+        const s = startRef.current;
+        startRef.current = null;
+        if (!s) return;
+        const dx = e.changedTouches[0].clientX - s.x;
+        const dy = e.changedTouches[0].clientY - s.y;
+        if (Math.hypot(dx, dy) < 10) {
+          handledTouchRef.current = true;
+          setTimeout(() => { handledTouchRef.current = false; }, 500);
+          onTap();
+        }
+      }}
+      onClick={() => { if (!handledTouchRef.current) onTap(); }}
+    >
+      {children}
     </div>
   );
 }
@@ -602,6 +642,344 @@ function BiteForecastCard({ coords, compact }: { coords: { lat: number; lng: num
         </div>
       )}
     </div>
+  );
+}
+
+// ============ BITE FORECAST EXPANDED MODAL ============
+function BiteForecastModal({ coords, onClose }: { coords: { lat: number; lng: number }; onClose: () => void }) {
+  const now = new Date();
+  const ill = useMemo(() => getMoonIllumination(now), []);
+  const phaseInfo = useMemo(() => getMoonPhaseLabel(ill.phase), [ill.phase]);
+  const rating = useMemo(() => getBiteRating(now, coords.lat, coords.lng), [coords.lat, coords.lng]);
+  const windows = useMemo(() => getSolunarWindows(now, coords.lat, coords.lng), [coords.lat, coords.lng]);
+  const cur = useMemo(() => isInSolunarWindow(now, windows), [windows]);
+  const upcoming = useMemo(() => windows.filter(w => w.start.getTime() > now.getTime()).slice(0, 1)[0] || null, [windows]);
+
+  const days = useMemo(() => Array.from({ length: 7 }).map((_, i) => {
+    const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() + i);
+    const il = getMoonIllumination(d);
+    const lab = getMoonPhaseLabel(il.phase);
+    const r = getBiteRating(d, coords.lat, coords.lng);
+    return { date: d, ill: il, label: lab, rating: r };
+  }), [coords.lat, coords.lng]);
+
+  const ratingTone = rating.stars >= 4 ? 'var(--sage)' : rating.stars >= 3 ? 'var(--gold-2)' : 'var(--text-3)';
+
+  return (
+    <ModalShell title="Bite Forecast" onClose={onClose}>
+      {/* Hero */}
+      <div style={{ textAlign: 'center', padding: '12px 0 18px' }}>
+        <div style={{ fontSize: 80, lineHeight: 1, filter: 'drop-shadow(0 6px 18px rgba(0,0,0,0.45))' }}>{phaseInfo.emoji}</div>
+        <div className="display-font" style={{ fontSize: 26, fontWeight: 500, marginTop: 10 }}>{phaseInfo.label}</div>
+        <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 4 }}>
+          {(ill.fraction * 100).toFixed(0)}% illuminated
+        </div>
+        <div style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span className="pill" style={{ background: `color-mix(in srgb, ${ratingTone} 20%, transparent)`, color: ratingTone, border: `1px solid ${ratingTone}` }}>
+            <Star size={11} fill="currentColor" /> {rating.label}
+          </span>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 8 }}>{rating.reason}</div>
+      </div>
+
+      {/* Today's windows */}
+      <div className="label">Today's solunar windows</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 22 }}>
+        {windows.map((w, i) => {
+          const isCur = cur === w;
+          const isNext = !cur && upcoming === w;
+          const tone = w.kind === 'major' ? 'var(--gold-2)' : 'var(--sage)';
+          return (
+            <div key={i} className="card" style={{
+              padding: 12, display: 'flex', alignItems: 'center', gap: 10,
+              borderColor: isCur ? 'var(--gold)' : isNext ? 'rgba(234,201,136,0.3)' : 'rgba(234,201,136,0.14)',
+              background: isCur ? 'rgba(212,182,115,0.16)' : 'rgba(10,24,22,0.55)',
+            }}>
+              <span className="pill" style={{
+                background: `color-mix(in srgb, ${tone} 15%, transparent)`,
+                color: tone, border: `1px solid ${tone}`, minWidth: 56, justifyContent: 'center',
+              }}>{w.kind === 'major' ? 'Major' : 'Minor'}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 600 }}>
+                  {w.start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – {w.end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{w.centerLabel}</div>
+              </div>
+              {isCur && <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--gold-2)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Now</span>}
+              {isNext && <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Next</span>}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 7-day mini calendar */}
+      <div className="label">Next 7 days</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 18 }}>
+        {days.map((d, i) => {
+          const tone = d.rating.stars >= 4 ? 'var(--sage)' : d.rating.stars >= 3 ? 'var(--gold-2)' : 'var(--text-3)';
+          return (
+            <div key={i} className="card" style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 56, fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                {i === 0 ? 'Today' : d.date.toLocaleDateString('en', { weekday: 'short' })}
+              </div>
+              <div style={{ fontSize: 24, lineHeight: 1 }}>{d.label.emoji}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{d.label.label}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{(d.ill.fraction * 100).toFixed(0)}% illum.</div>
+              </div>
+              <div style={{ display: 'flex', gap: 1 }}>
+                {Array.from({ length: 5 }).map((_, n) => (
+                  <Star key={n} size={10}
+                    fill={n < d.rating.stars ? tone : 'transparent'}
+                    style={{ color: n < d.rating.stars ? tone : 'var(--text-3)' }} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <p style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.6, margin: '0 0 10px' }}>
+        Major windows: moon overhead or underfoot. Minor windows: moonrise / moonset. Best fishing typically lines up with new and full moons.
+      </p>
+    </ModalShell>
+  );
+}
+
+// ============ WEATHER EXPANDED MODAL ============
+function WeatherForecastModal({ coords, onClose }: { coords: { lat: number; lng: number }; onClose: () => void }) {
+  // Reuse the same fetcher (cached for 30 min in lib/weather).
+  const [data, setData] = useState<import('@/lib/weather').ForecastBundle | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    import('@/lib/weather').then(({ fetchExtendedForecast }) => fetchExtendedForecast(coords.lat, coords.lng))
+      .then(r => { if (!cancelled) setData(r); });
+    return () => { cancelled = true; };
+  }, [coords.lat, coords.lng]);
+
+  if (!data) {
+    return (
+      <ModalShell title="Weather" onClose={onClose}>
+        <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-3)', fontSize: 13 }}>
+          <Loader2 size={18} className="spin" /> Loading forecast…
+        </div>
+      </ModalShell>
+    );
+  }
+
+  const c = data.current;
+  // Slice the hourly arrays starting from the current hour, take next 24.
+  const hourlyStart = data.hourly.time.findIndex(t => t.getTime() >= Date.now());
+  const hi = hourlyStart === -1 ? 0 : hourlyStart;
+  const hours = data.hourly.time.slice(hi, hi + 24).map((t, i) => ({
+    t,
+    temp: data.hourly.temp[hi + i],
+    pop:  data.hourly.pop[hi + i],
+    code: data.hourly.code[hi + i],
+  }));
+
+  const today = data.daily.time[0];
+  const sunrise = data.daily.sunrise[0];
+  const sunset  = data.daily.sunset[0];
+  const tMax    = data.daily.tMax[0];
+  const tMin    = data.daily.tMin[0];
+
+  // Pressure trend: 24h past + 24h future.
+  const pSeries = (() => {
+    const now = Date.now();
+    const fromIdx = data.hourly.time.findIndex(t => t.getTime() >= now - 24 * 3600_000);
+    const toIdx   = data.hourly.time.findIndex(t => t.getTime() >  now + 24 * 3600_000);
+    const start = fromIdx === -1 ? 0 : fromIdx;
+    const end   = toIdx === -1 ? data.hourly.time.length : toIdx;
+    const times = data.hourly.time.slice(start, end);
+    const pres  = data.hourly.pressure.slice(start, end);
+    if (times.length < 2) return null;
+    const min = Math.min(...pres), max = Math.max(...pres);
+    const span = Math.max(4, max - min);
+    const nowIdx = times.findIndex(t => t.getTime() >= now);
+    return { times, pres, min, max, span, nowIdx: nowIdx === -1 ? times.length - 1 : nowIdx };
+  })();
+  const pTrend = (() => {
+    if (data.hourly.pressure.length < 8) return null;
+    const i = hi;
+    const a = data.hourly.pressure[i];
+    const b = data.hourly.pressure[i + 6];
+    if (a == null || b == null) return null;
+    const delta = b - a;
+    if (delta < -1.5) return 'falling';
+    if (delta >  1.5) return 'rising';
+    return 'steady';
+  })();
+
+  return (
+    <ModalShell title="Weather" onClose={onClose}>
+      {/* Hero */}
+      <div style={{ textAlign: 'center', padding: '8px 0 14px' }}>
+        <div style={{ fontSize: 80, lineHeight: 1 }}>{c.code != null ? weatherEmoji(c.code, c.isDay) : '☁️'}</div>
+        <div className="num-display" style={{ fontSize: 56, lineHeight: 1, marginTop: 6, color: 'var(--gold-2)' }}>
+          {c.temp != null ? `${c.temp}°` : '—'}<span style={{ fontSize: 26, color: 'var(--text-2)' }}>C</span>
+        </div>
+        <div style={{ fontSize: 14, color: 'var(--text-2)', marginTop: 6 }}>
+          {c.code != null ? weatherLabel(c.code) : '—'} · feels like {c.apparent != null ? `${c.apparent}°C` : '—'}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4 }}>
+          High {Math.round(tMax || 0)}° · Low {Math.round(tMin || 0)}°
+        </div>
+      </div>
+
+      {/* Hourly next 24h */}
+      <div className="label">Next 24 hours</div>
+      <div className="scrollbar-thin" style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 20, paddingBottom: 4 }}>
+        {hours.map((h, i) => {
+          const isNow = i === 0;
+          return (
+            <div key={i} style={{
+              flex: '0 0 56px', padding: '8px 4px', borderRadius: 12,
+              background: isNow ? 'rgba(212,182,115,0.15)' : 'rgba(10,24,22,0.55)',
+              border: `1px solid ${isNow ? 'var(--gold)' : 'rgba(234,201,136,0.14)'}`,
+              textAlign: 'center',
+            }}>
+              <div style={{ fontSize: 10, color: 'var(--text-3)', fontWeight: 700, textTransform: 'uppercase' }}>
+                {isNow ? 'Now' : h.t.getHours().toString().padStart(2, '0') + ':00'}
+              </div>
+              <div style={{ fontSize: 18, marginTop: 2 }}>{weatherEmoji(h.code ?? 0, h.t.getHours() >= 6 && h.t.getHours() < 20)}</div>
+              <div style={{ fontFamily: 'Fraunces, serif', fontSize: 14, color: 'var(--text)' }}>{Math.round(h.temp ?? 0)}°</div>
+              <div style={{ fontSize: 10, color: 'var(--sage)' }}>{Math.round(h.pop ?? 0)}%</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 7-day forecast */}
+      <div className="label">7-day forecast</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 20 }}>
+        {data.daily.time.slice(0, 7).map((d, i) => (
+          <div key={i} className="card" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 56, fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              {i === 0 ? 'Today' : d.toLocaleDateString('en', { weekday: 'short' })}
+            </div>
+            <div style={{ fontSize: 22 }}>{weatherEmoji(data.daily.code[i] ?? 0, true)}</div>
+            <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--text-3)' }}>
+              <span style={{ color: 'var(--sage)' }}>{Math.round(data.daily.pop[i] || 0)}% rain</span>
+            </div>
+            <div style={{ fontFamily: 'Fraunces, serif', fontSize: 15, color: 'var(--text)' }}>
+              {Math.round(data.daily.tMax[i] || 0)}°
+            </div>
+            <div style={{ fontFamily: 'Fraunces, serif', fontSize: 13, color: 'var(--text-3)' }}>
+              {Math.round(data.daily.tMin[i] || 0)}°
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Pressure */}
+      {pSeries && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div className="label" style={{ marginBottom: 0 }}>Pressure trend</div>
+            {pTrend && (
+              <span style={{
+                fontSize: 11, fontWeight: 700, padding: '2px 10px', borderRadius: 999, letterSpacing: '0.06em', textTransform: 'uppercase',
+                background: pTrend === 'falling' ? 'rgba(141,191,157,0.16)' : pTrend === 'rising' ? 'rgba(220,107,88,0.12)' : 'rgba(120,140,132,0.15)',
+                color: pTrend === 'falling' ? 'var(--sage)' : pTrend === 'rising' ? 'var(--danger)' : 'var(--text-3)',
+                border: `1px solid ${pTrend === 'falling' ? 'rgba(141,191,157,0.45)' : pTrend === 'rising' ? 'rgba(220,107,88,0.3)' : 'rgba(120,140,132,0.3)'}`,
+              }}>
+                {pTrend} {pTrend === 'falling' ? '— bites likely' : pTrend === 'rising' ? '— slow' : ''}
+              </span>
+            )}
+          </div>
+          <div className="card" style={{ padding: 12, marginTop: 8, marginBottom: 6 }}>
+            <PressureLine series={pSeries} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 10, color: 'var(--text-3)' }}>
+              <span>-24h</span><span>now</span><span>+24h</span>
+            </div>
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.5, margin: '0 0 18px' }}>
+            Falling pressure ahead of low-pressure systems often triggers feeding. Carp anglers fish the drop.
+          </p>
+        </>
+      )}
+
+      {/* Wind + sun */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 8 }}>
+        <div className="card" style={{ padding: 12 }}>
+          <div className="label" style={{ marginBottom: 8 }}>Wind</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <CompassDial dir={c.windDir || 'N'} />
+            <div>
+              <div style={{ fontFamily: 'Fraunces, serif', fontSize: 18, color: 'var(--text)' }}>{c.windDir || '—'}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{c.windSpeed != null ? `${c.windSpeed} km/h` : '—'}</div>
+            </div>
+          </div>
+        </div>
+        <div className="card" style={{ padding: 12 }}>
+          <div className="label" style={{ marginBottom: 8 }}>Sun</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-2)' }}>↑ {sunrise ? sunrise.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-2)' }}>↓ {sunset ? sunset.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</div>
+          </div>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+// Inline helpers for the modal — pulled from lib/weather to avoid awaiting an import inside JSX.
+function weatherEmoji(code: number, isDay = true) {
+  if (code === 0)        return isDay ? '☀️' : '🌙';
+  if (code <= 2)         return isDay ? '🌤️' : '☁️';
+  if (code === 3)        return '☁️';
+  if (code >= 45 && code <= 48) return '🌫️';
+  if (code >= 51 && code <= 67) return '🌧️';
+  if (code >= 71 && code <= 77) return '🌨️';
+  if (code >= 80 && code <= 86) return '🌧️';
+  if (code >= 95) return '⛈️';
+  return '☁️';
+}
+function weatherLabel(code: number) {
+  if (code === 0) return 'Clear';
+  if (code <= 2) return 'Partly cloudy';
+  if (code === 3) return 'Overcast';
+  if (code >= 45 && code <= 48) return 'Mist';
+  if (code >= 51 && code <= 57) return 'Drizzle';
+  if (code >= 61 && code <= 67) return 'Rain';
+  if (code >= 71 && code <= 77) return 'Snow';
+  if (code >= 80 && code <= 86) return 'Showers';
+  if (code >= 95) return 'Thunderstorm';
+  return '—';
+}
+
+function CompassDial({ dir }: { dir: string }) {
+  const angles: Record<string, number> = { N: 0, NE: 45, E: 90, SE: 135, S: 180, SW: 225, W: 270, NW: 315 };
+  const a = angles[dir] ?? 0;
+  return (
+    <div style={{ width: 44, height: 44, borderRadius: 999, border: '1px solid rgba(234,201,136,0.3)', position: 'relative' }}>
+      <span style={{ position: 'absolute', top: 2, left: '50%', transform: 'translateX(-50%)', fontSize: 8, color: 'var(--text-3)' }}>N</span>
+      <div style={{ position: 'absolute', top: '50%', left: '50%', transform: `translate(-50%, -50%) rotate(${a}deg)`, width: 2, height: 18, background: 'var(--gold-2)', borderRadius: 2, transformOrigin: 'center bottom', marginTop: -9 }} />
+    </div>
+  );
+}
+
+function PressureLine({ series }: { series: { times: Date[]; pres: number[]; min: number; max: number; span: number; nowIdx: number } }) {
+  const W = 320, H = 70;
+  const n = series.times.length;
+  const x = (i: number) => (i / Math.max(1, n - 1)) * W;
+  const y = (p: number) => H - ((p - series.min) / series.span) * (H - 8) - 4;
+  const path = series.pres.map((p, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(p).toFixed(1)}`).join(' ');
+  const nowX = x(series.nowIdx);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 70 }}>
+      <defs>
+        <linearGradient id="pres-modal" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="rgba(212,182,115,0.55)" />
+          <stop offset="100%" stopColor="rgba(212,182,115,0)" />
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width={nowX} height={H} fill="rgba(141,191,157,0.06)" />
+      <path d={`${path} L ${W} ${H} L 0 ${H} Z`} fill="url(#pres-modal)" />
+      <path d={path} fill="none" stroke="var(--gold-2)" strokeWidth="1.6" strokeLinecap="round" />
+      <line x1={nowX} y1="0" x2={nowX} y2={H} stroke="var(--gold)" strokeWidth="1" strokeDasharray="2 3" />
+    </svg>
   );
 }
 
