@@ -276,6 +276,50 @@ export async function uploadPhotoFromDataUrl(catchId: string, dataUrl: string): 
   return photoPublicUrl(user.id, catchId);
 }
 
+// ============ PUSH NOTIFICATIONS (preferences) ============
+export type NotifPrefRow = {
+  user_id: string;
+  enabled: Record<string, boolean>;
+  push_master: boolean;
+  updated_at?: string;
+};
+
+const DEFAULT_PREFS: Record<string, boolean> = {
+  trip_new_catch: true, trip_new_member: true, trip_invite: true,
+  trip_chat: false, trip_chat_mention: true,
+  friend_request: true, friend_accepted: true, comment_on_catch: true,
+};
+
+export async function getMyNotifPrefs(): Promise<NotifPrefRow> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { data } = await supabase().from('notification_preferences')
+    .select('*').eq('user_id', user.id).maybeSingle();
+  if (data) {
+    const enabled = { ...DEFAULT_PREFS, ...(data.enabled || {}) };
+    return { user_id: user.id, enabled, push_master: !!data.push_master };
+  }
+  // Lazy-create with defaults so subsequent updates have a row.
+  await supabase().from('notification_preferences')
+    .insert({ user_id: user.id, enabled: DEFAULT_PREFS, push_master: false })
+    .then(() => {});
+  return { user_id: user.id, enabled: { ...DEFAULT_PREFS }, push_master: false };
+}
+
+export async function setPushMaster(enabled: boolean): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  await supabase().from('notification_preferences')
+    .upsert({ user_id: user.id, push_master: enabled }, { onConflict: 'user_id' });
+}
+
+export async function setPushTypePref(type: string, value: boolean): Promise<void> {
+  const cur = await getMyNotifPrefs();
+  const next = { ...cur.enabled, [type]: value };
+  await supabase().from('notification_preferences')
+    .upsert({ user_id: cur.user_id, enabled: next }, { onConflict: 'user_id' });
+}
+
 // ============ AVATARS ============
 const AVATAR_BUCKET = 'avatars';
 export async function uploadAvatarFromDataUrl(dataUrl: string): Promise<string> {

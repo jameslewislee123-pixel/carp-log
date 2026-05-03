@@ -21,6 +21,7 @@ import WeatherForecastCard from './WeatherForecastCard';
 import GearItemPicker from './GearItemPicker';
 import GearManager from './GearManager';
 import LakeDetail from './LakeDetail';
+import PushSettings from './PushSettings';
 import type { TripSwimRoll } from '@/lib/types';
 import { Dices } from 'lucide-react';
 
@@ -2612,6 +2613,11 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
           </div>
         </div>
       )}
+
+      <div className="label">Push notifications</div>
+      <div style={{ marginBottom: 24 }}>
+        <PushSettings />
+      </div>
 
       <div className="label">My gear</div>
       <div style={{ marginBottom: 24 }}>

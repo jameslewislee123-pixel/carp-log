@@ -7,6 +7,8 @@ const withPWA = withPWAInit({
   register: true,
   skipWaiting: true,
   disable: isDev,
+  // Adds our push/notificationclick handlers to the generated sw.js.
+  importScripts: ['/push-sw.js'],
   runtimeCaching: [
     {
       urlPattern: /^https:\/\/[^/]+\.supabase\.co\/realtime\/.*$/i,
