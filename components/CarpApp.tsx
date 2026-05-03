@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Camera, Plus, Trophy, Images, Settings, X, Check, Fish, MapPin, Calendar,
   Edit2, Trash2, ChevronRight, Loader2, Download, ArrowLeft, Sparkles, Crown,
@@ -15,6 +15,13 @@ import TripActivityFeed from './TripActivity';
 import TripMap from './TripMap';
 import TripLeaderboard from './TripLeaderboard';
 import TripStatusPill from './TripStatusPill';
+import SwimRollModal, { SwimRollResultCard } from './SwimRollModal';
+import WeatherForecastCard from './WeatherForecastCard';
+import GearItemPicker from './GearItemPicker';
+import GearManager from './GearManager';
+import LakeDetail from './LakeDetail';
+import type { TripSwimRoll } from '@/lib/types';
+import { Dices } from 'lucide-react';
 
 import { hasSupabase, supabase } from '@/lib/supabase/client';
 import * as db from '@/lib/db';
@@ -49,6 +56,7 @@ const LOC_KEY = 'carp_log_loc_v1';
 
 export default function CarpApp() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [me, setMe] = useState<Profile | null>(null);
   const [catches, setCatches] = useState<CatchT[]>([]);
@@ -60,6 +68,7 @@ export default function CarpApp() {
   const [showAdd, setShowAdd] = useState(false);
   const [detailCatch, setDetailCatch] = useState<CatchT | null>(null);
   const [detailTrip, setDetailTrip] = useState<Trip | null>(null);
+  const [detailLakeName, setDetailLakeName] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddTrip, setShowAddTrip] = useState(false);
   const [editTrip, setEditTrip] = useState<Trip | null>(null);
@@ -113,6 +122,19 @@ export default function CarpApp() {
       } finally { setLoading(false); }
     })();
   }, [router]);
+
+  // Open a catch by ?catch=<id> query param (deep link from /profile)
+  useEffect(() => {
+    const id = searchParams?.get('catch');
+    if (!id || catches.length === 0) return;
+    const c = catches.find(x => x.id === id);
+    if (c) {
+      setDetailCatch(c);
+      const u = new URL(window.location.href);
+      u.searchParams.delete('catch');
+      window.history.replaceState({}, '', u.toString());
+    }
+  }, [searchParams, catches]);
 
   // Realtime subscriptions: catches, trips, notifications.
   useEffect(() => {
@@ -231,7 +253,7 @@ export default function CarpApp() {
           />
         )}
         {view === 'stats' && (
-          <Stats catches={catches} profilesById={profilesById} me={me} onOpen={setDetailCatch} />
+          <Stats catches={catches} profilesById={profilesById} me={me} onOpen={setDetailCatch} onOpenLake={(name) => setDetailLakeName(name)} />
         )}
         {view === 'gallery' && (
           <Gallery catches={catches} profilesById={profilesById} onOpen={setDetailCatch} />
@@ -261,6 +283,10 @@ export default function CarpApp() {
           onDeleteComment={(cid) => deleteComment(detailCatch.id, cid)}
           onOpenTrip={(t) => { setDetailCatch(null); setDetailTrip(t); }}
         />
+      )}
+      {detailLakeName && (
+        <LakeDetailLoader name={detailLakeName} catches={catches} profilesById={profilesById} me={me}
+          onClose={() => setDetailLakeName(null)} onOpenCatch={setDetailCatch} />
       )}
       {detailTrip && (
         <TripDetail
@@ -380,7 +406,7 @@ function Feed({ me, catches, trips, profilesById, onOpen, onOpenTrip }: {
 
   return (
     <div style={{ padding: '8px 20px' }}>
-      <BiteForecast catches={catches} />
+      <ForecastCarousel catches={catches} />
       {activeTrip && <ActiveTripBanner trip={activeTrip} catches={catches} onClick={() => onOpenTrip(activeTrip)} />}
       <div className="scrollbar-thin" style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 16, paddingBottom: 4 }}>
         <Chip active={filter === 'all'}  onClick={() => setFilter('all')}>All visible</Chip>
@@ -403,9 +429,8 @@ function Feed({ me, catches, trips, profilesById, onOpen, onOpenTrip }: {
   );
 }
 
-// ============ BITE FORECAST (unchanged from v1) ============
-function BiteForecast({ catches }: { catches: CatchT[] }) {
-  const [open, setOpen] = useState(false);
+// ============ BITE & WEATHER CAROUSEL ============
+function useFeedCoords(catches: CatchT[]) {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -413,10 +438,7 @@ function BiteForecast({ catches }: { catches: CatchT[] }) {
       const stored = typeof window !== 'undefined' ? localStorage.getItem(LOC_KEY) : null;
       if (stored) { try { const j = JSON.parse(stored); if (!cancelled) setCoords(j); return; } catch {} }
       const gps = await getCurrentLocation();
-      if (gps) {
-        if (!cancelled) { setCoords(gps); localStorage.setItem(LOC_KEY, JSON.stringify(gps)); }
-        return;
-      }
+      if (gps) { if (!cancelled) { setCoords(gps); localStorage.setItem(LOC_KEY, JSON.stringify(gps)); } return; }
       const lastWithLake = [...catches].reverse().find(c => c.lake);
       if (lastWithLake?.lake) {
         const g = await geocodeLake(lastWithLake.lake);
@@ -425,8 +447,49 @@ function BiteForecast({ catches }: { catches: CatchT[] }) {
       if (!cancelled) setCoords({ lat: 52.05, lng: -0.7 });
     })();
     return () => { cancelled = true; };
-  }, [catches.length]);
+  }, [catches.length]); // eslint-disable-line
+  return coords;
+}
 
+function ForecastCarousel({ catches }: { catches: CatchT[] }) {
+  const coords = useFeedCoords(catches);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [page, setPage] = useState(0);
+  function onScroll() {
+    const el = ref.current;
+    if (!el) return;
+    const w = el.clientWidth;
+    setPage(Math.round(el.scrollLeft / Math.max(1, w)));
+  }
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div ref={ref} onScroll={onScroll}
+        className="scrollbar-thin"
+        style={{
+          display: 'grid', gridAutoFlow: 'column', gap: 10,
+          gridAutoColumns: '100%',
+          overflowX: 'auto', scrollSnapType: 'x mandatory',
+          touchAction: 'pan-x pan-y',
+          paddingBottom: 4,
+        }}>
+        <div style={{ scrollSnapAlign: 'center' }}><BiteForecastCard coords={coords} /></div>
+        <div style={{ scrollSnapAlign: 'center' }}><WeatherForecastCard coords={coords} /></div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginTop: 6 }}>
+        {[0, 1].map(i => (
+          <span key={i} style={{
+            width: i === page ? 18 : 6, height: 6, borderRadius: 999,
+            background: i === page ? 'var(--gold-2)' : 'rgba(234,201,136,0.25)',
+            transition: 'width 0.25s var(--spring), background 0.25s var(--spring)',
+          }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BiteForecastCard({ coords }: { coords: { lat: number; lng: number } | null }) {
+  const [open, setOpen] = useState(false);
   const data = useMemo(() => {
     if (!coords) return null;
     const now = new Date();
@@ -640,6 +703,9 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
   const [myStakeDraft, setMyStakeDraft] = useState('');
   const [showInvite, setShowInvite] = useState(false);
   const [activityPreview, setActivityPreview] = useState<import('@/lib/types').TripActivity[]>([]);
+  const [latestRoll, setLatestRoll] = useState<TripSwimRoll | null>(null);
+  const [rollViewer, setRollViewer] = useState<{ roll: TripSwimRoll; mode: 'animate' | 'replay' } | null>(null);
+  const [rolling, setRolling] = useState(false);
   const isOwner = trip.owner_id === me.id;
 
   async function refreshMembers() {
@@ -661,7 +727,40 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
   useEffect(() => {
     refreshMembers(); refreshStakes();
     db.listTripActivity(trip.id, 5).then(setActivityPreview);
+    db.getLatestTripRoll(trip.id).then(setLatestRoll);
   /* eslint-disable-next-line */ }, [trip.id]);
+
+  // Realtime: any new swim_roll → open animation for everyone (except the roller, who already opened it locally)
+  useEffect(() => {
+    const ch = supabase()
+      .channel(`trip-rolls-${trip.id}`)
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'trip_swim_rolls', filter: `trip_id=eq.${trip.id}` },
+        async (payload) => {
+          const r = payload.new as TripSwimRoll;
+          setLatestRoll(r);
+          // Don't double-open for the roller; their handler already triggered it.
+          if (r.rolled_by !== me.id) setRollViewer({ roll: r, mode: 'animate' });
+        })
+      .subscribe();
+    return () => { supabase().removeChannel(ch); };
+  /* eslint-disable-next-line */ }, [trip.id, me.id]);
+
+  async function startRoll() {
+    if (!isOwner || rolling) return;
+    if (latestRoll && !confirm('All members will see a new roll. Continue?')) return;
+    setRolling(true);
+    try {
+      const joinedIds = members.filter(m => m.status === 'joined').map(m => m.angler_id);
+      if (joinedIds.length < 2) { alert('Need at least 2 joined members to roll.'); return; }
+      const results = db.rollDiceForAnglers(joinedIds);
+      const created = await db.createTripRoll(trip.id, results);
+      setLatestRoll(created);
+      setRollViewer({ roll: created, mode: 'animate' });
+    } catch (e: any) {
+      alert(e?.message || 'Failed to roll');
+    } finally { setRolling(false); }
+  }
 
   const tripCatches = useMemo(() => catches.filter(c => c.trip_id === trip.id).sort((a, b) => +new Date(b.date) - +new Date(a.date)), [catches, trip.id]);
   const landed = tripCatches.filter(c => !c.lost);
@@ -767,6 +866,34 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
             <StatCard label="Total" value={totalWeightOz ? `${Math.floor(totalWeightOz / 16)}lb` : '—'} />
           </div>
 
+          {/* Swim roll */}
+          {latestRoll ? (
+            <div style={{ marginBottom: 16 }}>
+              <SwimRollResultCard roll={latestRoll} profilesById={memberProfiles} onReplay={() => setRollViewer({ roll: latestRoll, mode: 'replay' })} />
+              {isOwner && (
+                <button onClick={startRoll} disabled={rolling} className="tap" style={{
+                  marginTop: 8, width: '100%', padding: '10px 14px', borderRadius: 12,
+                  background: 'transparent', border: '1px dashed rgba(234,201,136,0.3)',
+                  color: 'var(--text-2)', fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, cursor: 'pointer',
+                }}>
+                  {rolling ? <Loader2 size={12} className="spin" /> : <RotateCcwIcon />} Re-roll
+                </button>
+              )}
+            </div>
+          ) : isOwner && joinedMembers.length >= 2 ? (
+            <button onClick={startRoll} disabled={rolling} className="tap" style={{
+              marginBottom: 16, width: '100%', padding: '14px 16px', borderRadius: 18,
+              background: 'linear-gradient(135deg, rgba(234,201,136,0.18), rgba(212,182,115,0.06))',
+              border: '1px solid rgba(234,201,136,0.4)',
+              color: 'var(--gold-2)', fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer',
+            }}>
+              {rolling ? <Loader2 size={16} className="spin" /> : <Dices size={16} />}
+              Roll for swims
+            </button>
+          ) : null}
+
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
             <div className="label" style={{ marginBottom: 0 }}>Members ({joinedMembers.length})</div>
             {isOwner && (
@@ -869,7 +996,28 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
           onInvited={async () => { setShowInvite(false); await refreshMembers(); }}
         />
       )}
+
+      {rollViewer && (
+        <SwimRollModal
+          roll={rollViewer.roll}
+          profilesById={memberProfiles}
+          mode={rollViewer.mode}
+          isOwner={isOwner}
+          onClose={() => setRollViewer(null)}
+          onReroll={async () => { setRollViewer(null); await startRoll(); }}
+        />
+      )}
     </ModalShell>
+  );
+}
+
+// Tiny inline icon for the re-roll button (matches lucide style without import).
+function RotateCcwIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+      <path d="M3 3v5h5" />
+    </svg>
   );
 }
 
@@ -1040,8 +1188,9 @@ function AddTripModal({ existing, me, onClose, onSave }: {
 }
 
 // ============ STATS ============
-function Stats({ catches, profilesById, me, onOpen }: {
-  catches: CatchT[]; profilesById: Record<string, Profile>; me: Profile; onOpen: (c: CatchT) => void;
+function Stats({ catches, profilesById, me, onOpen, onOpenLake }: {
+  catches: CatchT[]; profilesById: Record<string, Profile>; me: Profile;
+  onOpen: (c: CatchT) => void; onOpenLake: (lakeName: string) => void;
 }) {
   const [tab, setTab] = useState<'crew' | 'time' | 'bait' | 'lakes'>('crew');
   if (catches.length === 0) return <div style={{ padding: '40px 20px' }}><EmptyState /></div>;
@@ -1074,7 +1223,7 @@ function Stats({ catches, profilesById, me, onOpen }: {
       {tab === 'crew' && <StatsCrew catches={catches} profilesById={profilesById} me={me} onOpen={onOpen} />}
       {tab === 'time' && <StatsTime catches={catches} />}
       {tab === 'bait' && <StatsBait catches={catches} />}
-      {tab === 'lakes' && <StatsLakes catches={catches} profilesById={profilesById} onOpen={onOpen} />}
+      {tab === 'lakes' && <StatsLakes catches={catches} profilesById={profilesById} onOpen={onOpen} onOpenLake={onOpenLake} />}
     </div>
   );
 }
@@ -1293,7 +1442,7 @@ function StatsBait({ catches }: { catches: CatchT[] }) {
   );
 }
 
-function StatsLakes({ catches, profilesById, onOpen }: { catches: CatchT[]; profilesById: Record<string, Profile>; onOpen: (c: CatchT) => void }) {
+function StatsLakes({ catches, profilesById, onOpen, onOpenLake }: { catches: CatchT[]; profilesById: Record<string, Profile>; onOpen: (c: CatchT) => void; onOpenLake: (lakeName: string) => void }) {
   const landed = useMemo(() => catches.filter(c => !c.lost && c.lake), [catches]);
   const lakes = useMemo(() => {
     const grouped: Record<string, { name: string; catches: CatchT[]; totalOz: number; biggest: CatchT | null }> = {};
@@ -1313,13 +1462,20 @@ function StatsLakes({ catches, profilesById, onOpen }: { catches: CatchT[]; prof
         const top3 = [...lake.catches].sort((a, b) => totalOz(b.lbs, b.oz) - totalOz(a.lbs, a.oz)).slice(0, 3);
         return (
           <div key={lake.name} className="card" style={{ padding: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 8 }}>
+            <button onClick={() => onOpenLake(lake.name)} className="tap" style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 8,
+              background: 'transparent', border: 'none', padding: 0, width: '100%',
+              color: 'var(--text)', fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer',
+            }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
                 <MapPinned size={18} style={{ color: 'var(--gold)', flexShrink: 0 }} />
                 <h3 className="display-font" style={{ fontSize: 18, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>{lake.name}</h3>
               </div>
-              <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>{lake.catches.length} fish</div>
-            </div>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>{lake.catches.length} fish</div>
+                <ChevronRight size={14} style={{ color: 'var(--text-3)' }} />
+              </div>
+            </button>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {top3.map((c, i) => {
                 const a = profilesById[c.angler_id];
@@ -1476,6 +1632,7 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
   const [swim, setSwim] = useState(existing?.swim || '');
   const [bait, setBait] = useState(existing?.bait || '');
   const [rig, setRig] = useState(existing?.rig || '');
+  const [hook, setHook] = useState(existing?.hook || '');
   const [notes, setNotes] = useState(existing?.notes || '');
   const [tempC, setTempC] = useState<string>(existing?.weather?.tempC != null ? String(existing.weather.tempC) : '');
   const [conditions, setConditions] = useState(existing?.weather?.conditions || '');
@@ -1579,7 +1736,7 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
         species: lost ? null : species,
         date: new Date(date).toISOString(), trip_id,
         lake: lake.trim() || null, swim: swim.trim() || null,
-        bait: bait.trim() || null, rig: rig.trim() || null, notes: notes.trim() || null,
+        bait: bait.trim() || null, rig: rig.trim() || null, hook: hook.trim() || null, notes: notes.trim() || null,
         weather, moon,
         latitude: lat, longitude: lng,
         has_photo: !lost && !!photo,
@@ -1718,9 +1875,11 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
           <label className="label">Swim / Peg</label>
           <input className="input" placeholder="e.g. 12" value={swim} onChange={(e) => setSwim(e.target.value)} style={{ marginBottom: 14 }} />
           <label className="label">Bait</label>
-          <input className="input" placeholder="e.g. 18mm Mainline Cell pop-up" value={bait} onChange={(e) => setBait(e.target.value)} style={{ marginBottom: 14 }} />
+          <div style={{ marginBottom: 14 }}><GearItemPicker type="bait" value={bait} onChange={setBait} meId={me.id} /></div>
           <label className="label">Rig</label>
-          <input className="input" placeholder="e.g. Ronnie / Spinner" value={rig} onChange={(e) => setRig(e.target.value)} style={{ marginBottom: 14 }} />
+          <div style={{ marginBottom: 14 }}><GearItemPicker type="rig" value={rig} onChange={setRig} meId={me.id} /></div>
+          <label className="label">Hook</label>
+          <div style={{ marginBottom: 14 }}><GearItemPicker type="hook" value={hook} onChange={setHook} meId={me.id} /></div>
           <label className="label">Notes</label>
           <textarea className="input" placeholder="Any details about the session, the fight, the conditions…" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
             style={{ marginBottom: 8, resize: 'vertical', fontFamily: 'inherit' }} />
@@ -2027,14 +2186,17 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
 
   return (
     <ModalShell title="Settings" onClose={onClose}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', marginBottom: 18 }}>
+      <Link href={`/profile/${me.username}`} onClick={onClose}
+        className="tap"
+        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', marginBottom: 18, color: 'var(--text)', textDecoration: 'none', cursor: 'pointer' }}>
         <AvatarBubble username={me.username} displayName={me.display_name} avatarUrl={me.avatar_url} size={48} link={false} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 600 }}>{me.display_name}</div>
           <div style={{ fontSize: 12, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>@{me.username}</div>
           {email && <div style={{ fontSize: 11, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{email}</div>}
         </div>
-      </div>
+        <ChevronRight size={16} style={{ color: 'var(--text-3)' }} />
+      </Link>
 
       <div className="label">Profile</div>
       {!editing ? (
@@ -2066,6 +2228,11 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
           </div>
         </div>
       )}
+
+      <div className="label">My gear</div>
+      <div style={{ marginBottom: 24 }}>
+        <GearManager />
+      </div>
 
       <div className="label">Telegram alerts</div>
       <button onClick={() => setShowNotify(!showNotify)} className="tap" style={{
@@ -2278,4 +2445,22 @@ function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 't
       })}
     </div>
   );
+}
+
+function LakeDetailLoader({ name, catches, profilesById, me, onClose, onOpenCatch }: {
+  name: string; catches: CatchT[]; profilesById: Record<string, Profile>; me: Profile;
+  onClose: () => void; onOpenCatch: (c: CatchT) => void;
+}) {
+  const [lake, setLake] = useState<import('@/lib/types').Lake | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const l = await db.getLakeByName(name);
+      if (!cancelled) setLake(l);
+    })();
+    return () => { cancelled = true; };
+  }, [name]);
+  if (!lake) return null;
+  const lakeCatches = catches.filter(c => (c.lake || '').trim().toLowerCase() === lake.name.trim().toLowerCase());
+  return <LakeDetail lake={lake} lakeCatches={lakeCatches} profilesById={profilesById} me={me} onClose={onClose} onOpenCatch={onOpenCatch} />;
 }

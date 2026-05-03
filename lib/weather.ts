@@ -60,6 +60,140 @@ function pickClosest<T extends { time: string[] }>(data: T, target: Date, fields
   return out;
 }
 
+// ============================================================
+// Extended forecast for the carousel weather card.
+// 30-min localStorage cache keyed by rounded coords.
+// ============================================================
+export type ForecastBundle = {
+  current: {
+    temp: number | null;
+    apparent: number | null;
+    humidity: number | null;
+    pressure: number | null;
+    windSpeed: number | null;
+    windDir: string | null;
+    code: number | null;
+    isDay: boolean;
+  };
+  hourly: {
+    time: Date[];
+    temp: number[];
+    pop: number[];          // precipitation probability %
+    code: number[];
+    pressure: number[];
+  };
+  daily: {
+    time: Date[];
+    code: number[];
+    tMax: number[];
+    tMin: number[];
+    pop: number[];
+    sunrise: Date[];
+    sunset: Date[];
+  };
+  fetchedAt: number;
+};
+
+export function weatherCodeEmoji(code: number, isDay = true): string {
+  if (code === 0)        return isDay ? '☀️' : '🌙';
+  if (code <= 2)         return isDay ? '🌤️' : '☁️';
+  if (code === 3)        return '☁️';
+  if (code >= 45 && code <= 48) return '🌫️';
+  if (code >= 51 && code <= 67) return '🌧️';
+  if (code >= 71 && code <= 77) return '🌨️';
+  if (code >= 80 && code <= 86) return '🌧️';
+  if (code >= 95) return '⛈️';
+  return '☁️';
+}
+export function weatherCodeLabel(code: number): string {
+  if (code === 0) return 'Clear';
+  if (code <= 2) return 'Partly cloudy';
+  if (code === 3) return 'Overcast';
+  if (code >= 45 && code <= 48) return 'Mist';
+  if (code >= 51 && code <= 57) return 'Drizzle';
+  if (code >= 61 && code <= 67) return 'Rain';
+  if (code >= 71 && code <= 77) return 'Snow';
+  if (code >= 80 && code <= 86) return 'Showers';
+  if (code >= 95) return 'Thunderstorm';
+  return '—';
+}
+
+const CACHE_KEY = 'carp_log_weather_cache_v1';
+const CACHE_TTL = 30 * 60 * 1000; // 30 min
+type CacheEntry = { lat: number; lng: number; data: any; ts: number };
+
+function readCache(lat: number, lng: number): any | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const entries: CacheEntry[] = JSON.parse(raw);
+    const r = entries.find(e =>
+      Math.abs(e.lat - lat) < 0.05 && Math.abs(e.lng - lng) < 0.05 &&
+      Date.now() - e.ts < CACHE_TTL
+    );
+    return r?.data || null;
+  } catch { return null; }
+}
+function writeCache(lat: number, lng: number, data: any) {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    const entries: CacheEntry[] = raw ? JSON.parse(raw) : [];
+    const next = [{ lat, lng, data, ts: Date.now() }, ...entries.filter(e => !(Math.abs(e.lat - lat) < 0.05 && Math.abs(e.lng - lng) < 0.05))].slice(0, 6);
+    localStorage.setItem(CACHE_KEY, JSON.stringify(next));
+  } catch {}
+}
+
+export async function fetchExtendedForecast(lat: number, lng: number): Promise<ForecastBundle | null> {
+  const cached = readCache(lat, lng);
+  if (cached) return parseForecast(cached);
+  try {
+    const url = `${FORECAST}?latitude=${lat}&longitude=${lng}` +
+      `&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,pressure_msl,wind_speed_10m,wind_direction_10m` +
+      `&hourly=temperature_2m,precipitation_probability,weather_code,pressure_msl` +
+      `&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max` +
+      `&past_hours=24&forecast_hours=48&forecast_days=7&timezone=auto`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const j = await r.json();
+    writeCache(lat, lng, j);
+    return parseForecast(j);
+  } catch { return null; }
+}
+
+function parseForecast(j: any): ForecastBundle | null {
+  if (!j?.current || !j?.hourly || !j?.daily) return null;
+  const c = j.current;
+  return {
+    current: {
+      temp: c.temperature_2m != null ? Math.round(c.temperature_2m) : null,
+      apparent: c.apparent_temperature != null ? Math.round(c.apparent_temperature) : null,
+      humidity: c.relative_humidity_2m != null ? Math.round(c.relative_humidity_2m) : null,
+      pressure: c.pressure_msl != null ? Math.round(c.pressure_msl) : null,
+      windSpeed: c.wind_speed_10m != null ? Math.round(c.wind_speed_10m) : null,
+      windDir: c.wind_direction_10m != null ? degToCompass(c.wind_direction_10m) : null,
+      code: c.weather_code ?? null,
+      isDay: c.is_day === 1,
+    },
+    hourly: {
+      time:     (j.hourly.time || []).map((t: string) => new Date(t)),
+      temp:     j.hourly.temperature_2m || [],
+      pop:      j.hourly.precipitation_probability || [],
+      code:     j.hourly.weather_code || [],
+      pressure: j.hourly.pressure_msl || [],
+    },
+    daily: {
+      time:    (j.daily.time || []).map((t: string) => new Date(t)),
+      code:    j.daily.weather_code || [],
+      tMax:    j.daily.temperature_2m_max || [],
+      tMin:    j.daily.temperature_2m_min || [],
+      pop:     j.daily.precipitation_probability_max || [],
+      sunrise: (j.daily.sunrise || []).map((t: string) => new Date(t)),
+      sunset:  (j.daily.sunset || []).map((t: string) => new Date(t)),
+    },
+    fetchedAt: Date.now(),
+  };
+}
+
 export async function fetchWeatherFor(
   date: Date,
   lat: number,

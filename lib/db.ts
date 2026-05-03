@@ -1,8 +1,9 @@
 'use client';
 import { supabase } from './supabase/client';
 import type {
-  AppNotification, Catch, CatchVisibility, Comment, Friendship, Moon, NotifyConfig,
-  Profile, Trip, TripActivity, TripMember, TripMessage, TripStake, TripVisibility, Weather,
+  AppNotification, Catch, CatchVisibility, Comment, Friendship, GearItem, GearType,
+  Lake, LakeAnnotation, LakeAnnotationType, Moon, NotifyConfig, Profile, SwimRollResult,
+  Trip, TripActivity, TripMember, TripMessage, TripStake, TripSwimRoll, TripVisibility, Weather,
 } from './types';
 
 // ============ PROFILES ============
@@ -170,7 +171,7 @@ export type CatchInput = {
   lbs: number; oz: number;
   species: string | null;
   date: string;
-  lake?: string | null; swim?: string | null; bait?: string | null; rig?: string | null; notes?: string | null;
+  lake?: string | null; swim?: string | null; bait?: string | null; rig?: string | null; hook?: string | null; notes?: string | null;
   has_photo: boolean;
   weather: Weather | null;
   moon: Moon | null;
@@ -296,6 +297,135 @@ export async function listTripActivity(tripId: string, limit = 50): Promise<Trip
   const { data } = await supabase().from('trip_activity').select('*')
     .eq('trip_id', tripId).order('created_at', { ascending: false }).limit(limit);
   return (data || []) as TripActivity[];
+}
+
+// ============ TRIP SWIM ROLLS (dice) ============
+function rollD20(): number {
+  // Cryptographic randomness for fairness; fallback to Math.random.
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const a = new Uint32Array(1);
+    crypto.getRandomValues(a);
+    return (a[0] % 20) + 1;
+  }
+  return Math.floor(Math.random() * 20) + 1;
+}
+
+// Generate a roll for a list of anglers, breaking ties by re-rolling the tied set.
+export function rollDiceForAnglers(anglerIds: string[]): SwimRollResult[] {
+  if (anglerIds.length === 0) return [];
+  const draft = anglerIds.map(id => ({ angler_id: id, value: rollD20() }));
+  // Re-roll any group with the same value (recursive on tied subsets).
+  const byValue: Record<number, SwimRollResult[]> = {};
+  draft.forEach(r => { (byValue[r.value] ||= []).push(r); });
+  for (const [val, group] of Object.entries(byValue)) {
+    if (group.length > 1) {
+      // re-roll only this tied group
+      const reRolled = rollDiceForAnglers(group.map(g => g.angler_id));
+      // splice rerolls back into draft preserving original positions
+      const map = new Map(reRolled.map(r => [r.angler_id, r.value]));
+      group.forEach(g => { g.value = map.get(g.angler_id) ?? g.value; });
+    }
+  }
+  return draft.sort((a, b) => b.value - a.value);
+}
+
+export async function listTripRolls(tripId: string): Promise<TripSwimRoll[]> {
+  const { data } = await supabase().from('trip_swim_rolls').select('*')
+    .eq('trip_id', tripId).order('created_at', { ascending: false }).limit(20);
+  return (data || []) as TripSwimRoll[];
+}
+export async function getLatestTripRoll(tripId: string): Promise<TripSwimRoll | null> {
+  const { data } = await supabase().from('trip_swim_rolls').select('*')
+    .eq('trip_id', tripId).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  return (data as TripSwimRoll) || null;
+}
+export async function createTripRoll(tripId: string, results: SwimRollResult[]): Promise<TripSwimRoll> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { data, error } = await supabase().from('trip_swim_rolls')
+    .insert({ trip_id: tripId, rolled_by: user.id, results }).select().single();
+  if (error) throw error;
+  return data as TripSwimRoll;
+}
+
+// ============ GEAR ITEMS (tackle) ============
+export async function listMyGear(types?: GearType[]): Promise<GearItem[]> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return [];
+  let q = supabase().from('gear_items').select('*')
+    .eq('angler_id', user.id).eq('active', true).order('updated_at', { ascending: false });
+  if (types && types.length) q = q.in('type', types);
+  const { data } = await q;
+  return (data || []) as GearItem[];
+}
+
+// Returns mine + shared-by-friends, deduped by (angler_id, name).
+export async function listVisibleGear(type: GearType): Promise<GearItem[]> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return [];
+  const { data } = await supabase().from('gear_items').select('*')
+    .eq('type', type).eq('active', true).order('shared', { ascending: true });
+  return (data || []) as GearItem[];
+}
+
+export async function upsertGearItem(input: { id?: string; type: GearType; name: string; description?: string | null; shared?: boolean }): Promise<GearItem> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  if (input.id) {
+    const { data, error } = await supabase().from('gear_items')
+      .update({ type: input.type, name: input.name, description: input.description ?? null, shared: !!input.shared })
+      .eq('id', input.id).select().single();
+    if (error) throw error; return data as GearItem;
+  }
+  const { data, error } = await supabase().from('gear_items')
+    .insert({ angler_id: user.id, type: input.type, name: input.name, description: input.description ?? null, shared: !!input.shared })
+    .select().single();
+  if (error) throw error; return data as GearItem;
+}
+export async function archiveGearItem(id: string): Promise<void> {
+  const { error } = await supabase().from('gear_items').update({ active: false }).eq('id', id);
+  if (error) throw error;
+}
+export async function setGearShared(id: string, shared: boolean): Promise<void> {
+  const { error } = await supabase().from('gear_items').update({ shared }).eq('id', id);
+  if (error) throw error;
+}
+
+// ============ LAKES + ANNOTATIONS ============
+export async function listLakes(): Promise<Lake[]> {
+  const { data } = await supabase().from('lakes').select('*').order('name');
+  return (data || []) as Lake[];
+}
+export async function getLakeByName(name: string): Promise<Lake | null> {
+  // case-insensitive lookup
+  const { data } = await supabase().from('lakes').select('*').ilike('name', name.trim()).maybeSingle();
+  return (data as Lake) || null;
+}
+export async function getLake(id: string): Promise<Lake | null> {
+  const { data } = await supabase().from('lakes').select('*').eq('id', id).maybeSingle();
+  return (data as Lake) || null;
+}
+
+export async function listLakeAnnotations(lakeId: string): Promise<LakeAnnotation[]> {
+  const { data } = await supabase().from('lake_annotations').select('*')
+    .eq('lake_id', lakeId).order('created_at', { ascending: false });
+  return (data || []) as LakeAnnotation[];
+}
+export async function createLakeAnnotation(input: {
+  lake_id: string; type: LakeAnnotationType; latitude: number; longitude: number; title: string; description?: string | null;
+}): Promise<LakeAnnotation> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { data, error } = await supabase().from('lake_annotations').insert({
+    lake_id: input.lake_id, angler_id: user.id, type: input.type,
+    latitude: input.latitude, longitude: input.longitude,
+    title: input.title, description: input.description ?? null,
+  }).select().single();
+  if (error) throw error;
+  return data as LakeAnnotation;
+}
+export async function deleteLakeAnnotation(id: string): Promise<void> {
+  await supabase().from('lake_annotations').delete().eq('id', id);
 }
 
 // ============ NOTIFICATIONS ============

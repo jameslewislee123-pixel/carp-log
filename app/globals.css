@@ -173,6 +173,32 @@ body {
   50%      { opacity: 0.45; transform: scale(0.6); }
 }
 
+/* Dice roll animation */
+@keyframes dice-tumble {
+  0%   { transform: rotate3d(1, 1, 0,   0deg) scale(0.6); opacity: 0; }
+  10%  { opacity: 1; }
+  20%  { transform: rotate3d(1, 1, 0, 120deg) scale(1.1); }
+  40%  { transform: rotate3d(1, 0, 1, 360deg) scale(1.0); }
+  60%  { transform: rotate3d(0, 1, 1, 540deg) scale(1.05); }
+  80%  { transform: rotate3d(1, 1, 0, 700deg) scale(0.95); }
+  100% { transform: rotate3d(0, 0, 1, 720deg) scale(1.0); opacity: 1; }
+}
+@keyframes dice-settle { 0% { transform: scale(1.18); } 60% { transform: scale(0.94); } 100% { transform: scale(1); } }
+@keyframes confetti-fall {
+  0%   { transform: translate3d(0, -20vh, 0) rotate(0deg);  opacity: 1; }
+  100% { transform: translate3d(var(--tx, 0), 110vh, 0) rotate(720deg); opacity: 0; }
+}
+@keyframes ribbon-pop {
+  0%   { opacity: 0; transform: translate(-50%, -55%) scale(0.4); }
+  60%  { opacity: 1; transform: translate(-50%, -52%) scale(1.15); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes avatar-spotlight {
+  0%   { box-shadow: 0 0 0 0 rgba(234, 201, 136, 0); }
+  50%  { box-shadow: 0 0 0 14px rgba(234, 201, 136, 0.4); }
+  100% { box-shadow: 0 0 0 0 rgba(234, 201, 136, 0); }
+}
+
 /* Leaflet dark-tile fixes */
 .leaflet-container { background: #050E0D; outline: none; }
 .leaflet-popup-content-wrapper, .leaflet-popup-tip {

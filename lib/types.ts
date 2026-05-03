@@ -124,6 +124,7 @@ export type Catch = {
   swim: string | null;
   bait: string | null;
   rig: string | null;
+  hook: string | null;
   notes: string | null;
   has_photo: boolean;
   weather: Weather | null;
@@ -145,6 +146,50 @@ export type NotifyConfig = {
 };
 
 export type NotificationType = 'friend_request' | 'friend_accepted' | 'trip_invite' | 'comment_on_catch' | 'trip_new_catch' | 'trip_new_member' | 'trip_chat_mention';
+
+export type SwimRollResult = { angler_id: string; value: number };
+export type TripSwimRoll = {
+  id: string;
+  trip_id: string;
+  rolled_by: string;
+  results: SwimRollResult[];
+  created_at: string;
+};
+
+export type GearType = 'rig' | 'bait' | 'hook';
+export type GearItem = {
+  id: string;
+  angler_id: string;
+  type: GearType;
+  name: string;
+  description: string | null;
+  shared: boolean;
+  active: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type Lake = {
+  id: string;
+  name: string;
+  latitude: number | null;
+  longitude: number | null;
+  created_by: string | null;
+  created_at?: string;
+};
+
+export type LakeAnnotationType = 'productive_spot' | 'snag' | 'note' | 'hot_spot';
+export type LakeAnnotation = {
+  id: string;
+  lake_id: string;
+  angler_id: string;
+  type: LakeAnnotationType;
+  latitude: number;
+  longitude: number;
+  title: string;
+  description: string | null;
+  created_at?: string;
+};
 export type AppNotification = {
   id: string;
   recipient_id: string;
