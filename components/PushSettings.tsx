@@ -54,6 +54,9 @@ type Diag = {
   vapidLen: number;
   standalone: boolean;
   ua: string;
+  swJsStatus: string;
+  pushSwJsStatus: string;
+  hasExistingSubscription: 'true' | 'false' | 'unknown';
 };
 
 export default function PushSettings() {
@@ -77,6 +80,9 @@ export default function PushSettings() {
       vapidLen: VAPID_PUBLIC.length,
       standalone: detectStandalone(),
       ua: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+      swJsStatus: 'pending',
+      pushSwJsStatus: 'pending',
+      hasExistingSubscription: 'unknown',
     };
     if (d.hasServiceWorker) {
       try {
@@ -84,8 +90,23 @@ export default function PushSettings() {
         const main = regs.find(r => r.active) || regs[0];
         d.swRegistered = regs.length > 0;
         d.swScope = main?.scope || null;
+        if (main) {
+          try {
+            const sub = await main.pushManager.getSubscription();
+            d.hasExistingSubscription = sub ? 'true' : 'false';
+          } catch { d.hasExistingSubscription = 'unknown'; }
+        }
       } catch {}
     }
+    // Probe the SW asset URLs without redirects so we know if middleware is intercepting.
+    try {
+      const r = await fetch('/sw.js', { redirect: 'manual', cache: 'no-store' });
+      d.swJsStatus = `${r.status}${r.type === 'opaqueredirect' ? ' (opaqueredirect)' : ''}`;
+    } catch (e: any) { d.swJsStatus = `error: ${e?.message || 'fetch failed'}`; }
+    try {
+      const r = await fetch('/push-sw.js', { redirect: 'manual', cache: 'no-store' });
+      d.pushSwJsStatus = `${r.status}${r.type === 'opaqueredirect' ? ' (opaqueredirect)' : ''}`;
+    } catch (e: any) { d.pushSwJsStatus = `error: ${e?.message || 'fetch failed'}`; }
     setDiag(d);
   }
 
@@ -328,6 +349,9 @@ Notification.permission     : ${diag.permission}
 typeof navigator.serviceWorker : ${diag.hasServiceWorker ? 'object' : 'undefined'}
 ServiceWorker registered    : ${diag.swRegistered}
 SW scope                    : ${diag.swScope || '—'}
+SW file fetch /sw.js        : ${diag.swJsStatus}
+SW file fetch /push-sw.js   : ${diag.pushSwJsStatus}
+Push subscription exists    : ${diag.hasExistingSubscription}
 VAPID public key length     : ${diag.vapidLen} ${diag.vapidLen === 0 ? '⚠ MISSING' : ''}
 Standalone (PWA)            : ${diag.standalone}
 User-Agent                  : ${diag.ua.slice(0, 110)}`}

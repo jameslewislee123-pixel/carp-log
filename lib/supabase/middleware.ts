@@ -9,7 +9,16 @@ const PUBLIC_PATHS = ['/auth/sign-in', '/auth/callback', '/auth/sign-out', '/api
 function isPublicPath(p: string) {
   if (PUBLIC_PATHS.some(s => p === s || p.startsWith(s + '/'))) return true;
   if (p.startsWith('/_next') || p.startsWith('/favicon') || p.startsWith('/icons') || p.startsWith('/splash')) return true;
-  if (p === '/manifest.json' || p === '/sw.js' || p.startsWith('/workbox-') || p.startsWith('/fallback-')) return true;
+  // All service-worker-related paths must NEVER be redirected — the SW import
+  // chain breaks if any of these returns a 307 to the sign-in page.
+  if (
+    p === '/manifest.json' ||
+    p === '/sw.js' ||
+    p === '/push-sw.js' ||
+    p.startsWith('/workbox-') ||
+    p.startsWith('/worker-') ||
+    p.startsWith('/fallback-')
+  ) return true;
   return false;
 }
 
