@@ -4,12 +4,12 @@ import { ChevronRight, Cloud, Wind, Thermometer, Droplets, ArrowDown, ArrowUp, S
 import { fetchExtendedForecast, weatherCodeEmoji, weatherCodeLabel, type ForecastBundle } from '@/lib/weather';
 
 const WX_LOC_KEY = 'carp_log_weather_override_v1';
-type WxLoc = { lat: number; lng: number; name: string };
-function readWxOverride(): WxLoc | null {
+export type WxLoc = { lat: number; lng: number; name: string };
+export function readWxOverride(): WxLoc | null {
   if (typeof window === 'undefined') return null;
   try { const raw = localStorage.getItem(WX_LOC_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
 }
-function writeWxOverride(v: WxLoc | null) {
+export function writeWxOverride(v: WxLoc | null) {
   try { if (v) localStorage.setItem(WX_LOC_KEY, JSON.stringify(v)); else localStorage.removeItem(WX_LOC_KEY); } catch {}
 }
 
@@ -118,7 +118,14 @@ export default function WeatherForecastCard({ coords, compact }: { coords: { lat
             Feels like {c.apparent != null ? `${c.apparent}°C` : '—'}{c.windDir ? ` · Wind ${c.windDir}${c.windSpeed != null ? ` ${c.windSpeed}km/h` : ''}` : ''}
           </div>
         </div>
-        <button onClick={(e) => { e.stopPropagation(); setSearchOpen(true); }} aria-label="Search location"
+        <button
+          onClick={(e) => { e.stopPropagation(); setSearchOpen(true); }}
+          // Touch events must stop propagation BEFORE TappableSlide sees them,
+          // otherwise its touchstart→touchend distance check fires onTap (the
+          // expand modal) instead of letting our click handler open the search.
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
+          aria-label="Search location"
           style={{ width: 30, height: 30, borderRadius: 10, background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.18)', color: 'var(--text-2)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <Search size={13} />
         </button>
@@ -253,7 +260,7 @@ function PressureChart({ series }: { series: { times: Date[]; pres: number[]; mi
   );
 }
 
-function WeatherLocationSearch({ onClose, onPick, onReset, canReset }: {
+export function WeatherLocationSearch({ onClose, onPick, onReset, canReset }: {
   onClose: () => void;
   onPick: (loc: WxLoc) => void;
   onReset: () => void;

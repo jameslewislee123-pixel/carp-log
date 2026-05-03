@@ -7,7 +7,7 @@ import {
   Edit2, Trash2, ChevronRight, Loader2, Download, ArrowLeft, Sparkles, Crown,
   Cloud, Wind, Thermometer, MessageCircle, Bell, Send, Anchor, BarChart3,
   Clock, Tent, MapPinned, Star, Users as UsersIcon, Lock, LogOut, UserPlus, Mail,
-  Activity as ActivityIcon, Map as MapIcon, MessageSquare, ThumbsUp,
+  Activity as ActivityIcon, Map as MapIcon, MessageSquare, ThumbsUp, Search,
 } from 'lucide-react';
 import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
 import InvitePicker from './InvitePicker';
@@ -17,7 +17,7 @@ import TripMap from './TripMap';
 import TripLeaderboard from './TripLeaderboard';
 import TripStatusPill from './TripStatusPill';
 import SwimRollModal, { SwimRollResultCard } from './SwimRollModal';
-import WeatherForecastCard from './WeatherForecastCard';
+import WeatherForecastCard, { WeatherLocationSearch, readWxOverride, writeWxOverride, type WxLoc } from './WeatherForecastCard';
 import GearItemPicker from './GearItemPicker';
 import GearManager from './GearManager';
 import LakeDetail from './LakeDetail';
@@ -748,21 +748,57 @@ function BiteForecastModal({ coords, onClose }: { coords: { lat: number; lng: nu
 
 // ============ WEATHER EXPANDED MODAL ============
 function WeatherForecastModal({ coords, onClose }: { coords: { lat: number; lng: number }; onClose: () => void }) {
+  // Honour the saved location override so the modal stays in sync with the
+  // compact card. If the user picks a new location from inside the modal we
+  // update both this state and localStorage so the compact card sees it on
+  // re-mount.
+  const [override, setOverride] = useState<WxLoc | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  useEffect(() => { setOverride(readWxOverride()); }, []);
+  const effective = override ? { lat: override.lat, lng: override.lng } : coords;
+  const locationName = override?.name || null;
+
   // Reuse the same fetcher (cached for 30 min in lib/weather).
   const [data, setData] = useState<import('@/lib/weather').ForecastBundle | null>(null);
   useEffect(() => {
     let cancelled = false;
-    import('@/lib/weather').then(({ fetchExtendedForecast }) => fetchExtendedForecast(coords.lat, coords.lng))
+    setData(null);
+    import('@/lib/weather').then(({ fetchExtendedForecast }) => fetchExtendedForecast(effective.lat, effective.lng))
       .then(r => { if (!cancelled) setData(r); });
     return () => { cancelled = true; };
-  }, [coords.lat, coords.lng]);
+  }, [effective.lat, effective.lng]);
+
+  // The header has a button that opens the location search.
+  const headerSearchBtn = (
+    <button
+      onClick={() => setSearchOpen(true)}
+      aria-label="Change location"
+      style={{
+        position: 'absolute', top: 8, right: 64, zIndex: 11,
+        width: 32, height: 32, borderRadius: 10,
+        background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)',
+        color: 'var(--text-2)', cursor: 'pointer',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+      <Search size={14} />
+    </button>
+  );
 
   if (!data) {
     return (
-      <ModalShell title="Weather" onClose={onClose}>
+      <ModalShell title={locationName || 'Weather'} onClose={onClose}>
+        {headerSearchBtn}
         <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-3)', fontSize: 13 }}>
           <Loader2 size={18} className="spin" /> Loading forecast…
         </div>
+        {searchOpen && (
+          <WeatherLocationSearch
+            onClose={() => setSearchOpen(false)}
+            onPick={(loc) => { writeWxOverride(loc); setOverride(loc); setSearchOpen(false); }}
+            onReset={() => { writeWxOverride(null); setOverride(null); setSearchOpen(false); }}
+            canReset={!!override}
+          />
+        )}
       </ModalShell>
     );
   }
@@ -812,7 +848,16 @@ function WeatherForecastModal({ coords, onClose }: { coords: { lat: number; lng:
   })();
 
   return (
-    <ModalShell title="Weather" onClose={onClose}>
+    <ModalShell title={locationName || 'Weather'} onClose={onClose}>
+      {headerSearchBtn}
+      {searchOpen && (
+        <WeatherLocationSearch
+          onClose={() => setSearchOpen(false)}
+          onPick={(loc) => { writeWxOverride(loc); setOverride(loc); setSearchOpen(false); }}
+          onReset={() => { writeWxOverride(null); setOverride(null); setSearchOpen(false); }}
+          canReset={!!override}
+        />
+      )}
       {/* Hero */}
       <div style={{ textAlign: 'center', padding: '8px 0 14px' }}>
         <div style={{ fontSize: 80, lineHeight: 1 }}>{c.code != null ? weatherEmoji(c.code, c.isDay) : '☁️'}</div>
@@ -3159,7 +3204,11 @@ function ModalShell({ title, onClose, hideTitle, children }: { title?: string; o
       <motion.div
         onClick={(e) => e.stopPropagation()}
         style={{ y,
-          width: '100%', maxWidth: 480, maxHeight: '92vh',
+          width: '100%', maxWidth: 480,
+          // Use dvh so iOS Safari's URL bar / home indicator are accounted for.
+          // Falls back to 92vh on browsers that don't support dvh.
+          maxHeight: '92vh' as any,
+          height: 'min(92vh, calc(100dvh - 24px))' as any,
           background: 'rgba(10, 24, 22, 0.92)',
           backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
           borderRadius: '28px 28px 0 0', border: '1px solid rgba(234,201,136,0.14)', borderBottom: 'none',
@@ -3201,7 +3250,9 @@ function ModalShell({ title, onClose, hideTitle, children }: { title?: string; o
           overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain',
           touchAction: 'pan-y',
           WebkitOverflowScrolling: 'touch' as any,
-          padding: '0 20px max(40px, env(safe-area-inset-bottom))',
+          // Bottom padding accounts for the iOS home indicator AND a 24px breathing
+          // margin so the last row isn't flush against the dock area.
+          padding: '0 20px max(40px, calc(env(safe-area-inset-bottom) + 24px))',
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: hideTitle ? 8 : 16, paddingTop: 4, paddingBottom: 8 }}>
             {!hideTitle && <h2 className="display-font" style={{ fontSize: 22, margin: 0, fontWeight: 500 }}>{title}</h2>}
