@@ -108,6 +108,30 @@ export function useCommentCounts(catchIds: string[]) {
   });
 }
 
+// Catch-likes: aggregated count + the current user's liked-set, both keyed
+// on the (sorted) ids of the catches currently visible. Realtime invalidates
+// these via QK.catchLikes whenever a row changes.
+export function useCatchLikeCounts(catchIds: string[]) {
+  const ids = useMemo(() => [...catchIds].sort(), [catchIds.join(',')]); // eslint-disable-line
+  return useQuery({
+    queryKey: QK.catchLikes.countsForCatches(ids),
+    queryFn: () => db.listCatchLikeCounts(ids),
+    enabled: ids.length > 0,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  });
+}
+export function useMyCatchLikes(catchIds: string[]) {
+  const ids = useMemo(() => [...catchIds].sort(), [catchIds.join(',')]); // eslint-disable-line
+  return useQuery({
+    queryKey: QK.catchLikes.myLikedFor(ids),
+    queryFn: () => db.listMyCatchLikedIds(ids),
+    enabled: ids.length > 0,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
 // Auth-bound singletons. `me` is loaded once and reused across pages.
 export function useMe() {
   return useQuery({ queryKey: QK.profiles.me, queryFn: db.getMe, staleTime: 5 * 60_000 });

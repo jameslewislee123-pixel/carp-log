@@ -13,6 +13,10 @@ export const QK = {
     byCatch: (catchId: string) => ['comments', catchId] as const,
     countsForCatches: (catchIds: string[]) => ['comments', 'counts', [...catchIds].sort().join(',')] as const,
   },
+  catchLikes: {
+    countsForCatches: (catchIds: string[]) => ['catch_likes', 'counts', [...catchIds].sort().join(',')] as const,
+    myLikedFor: (catchIds: string[]) => ['catch_likes', 'mine', [...catchIds].sort().join(',')] as const,
+  },
   trips: {
     all: ['trips'] as const,
     detail: (id: string) => ['trips', id] as const,

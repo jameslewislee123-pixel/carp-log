@@ -8,7 +8,7 @@ import {
   Cloud, Wind, Thermometer, MessageCircle, Bell, Send, Anchor, BarChart3,
   Clock, Tent, MapPinned, Star, Users as UsersIcon, Lock, LogOut, UserPlus, Mail,
   Activity as ActivityIcon, Map as MapIcon, MessageSquare, ThumbsUp, Search,
-  Eye, EyeOff,
+  Eye, EyeOff, SlidersHorizontal,
 } from 'lucide-react';
 import { Drawer } from 'vaul';
 import nextDynamic from 'next/dynamic';
@@ -39,6 +39,7 @@ import * as db from '@/lib/db';
 import {
   useMe, useCatches, useTrips, useMyNotifyConfig, useUnreadCount,
   useProfilesByIds, useCommentCounts, useLakes, useLakeStatsTiles, useLakesEnriched,
+  useCatchLikeCounts, useMyCatchLikes,
   prefetchTrip, prefetchLake, prefetchNotifications, prefetchFriendships,
   type EnrichedLake,
 } from '@/lib/queries';
@@ -204,6 +205,12 @@ export default function CarpApp() {
         // for an open catch detail re-syncs via its own per-catch subscription.
         qc.invalidateQueries({ queryKey: ['comments', 'counts'] });
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'catch_likes' }, () => {
+        // Counts + my-liked queries are keyed on the visible catch ids; just
+        // invalidating the whole catch_likes namespace lets each subscriber
+        // refetch with its own keyed query.
+        qc.invalidateQueries({ queryKey: ['catch_likes'] });
+      })
       .subscribe();
     return () => { supabase().removeChannel(ch); };
   }, [me, qc]);
@@ -339,7 +346,11 @@ export default function CarpApp() {
         )}
       </div>
 
-      <FAB onClick={() => setShowAdd(true)} />
+      {/* The FAB action depends on which top-level view is active. Feed →
+          new catch. Trips → new trip. Stats and Lakes don't expose a
+          create action so the FAB is hidden there. */}
+      {view === 'feed' && <FAB onClick={() => setShowAdd(true)} />}
+      {view === 'trips' && <FAB onClick={() => { setEditTrip(null); setShowAddTrip(true); }} />}
       <BottomNav view={view} onChange={setView} />
 
       {showAdd && (
@@ -509,6 +520,7 @@ function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenT
   onOpen: (c: CatchT) => void; onOpenTrip: (t: Trip) => void;
 }) {
   const pbByAngler = useMemo(() => computePBMap(catches), [catches]);
+  const qc = useQueryClient();
   const [filter, setFilter] = useState<FeedFilter>(DEFAULT_FILTER);
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   // Hydrate from localStorage on mount.
@@ -586,31 +598,87 @@ function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenT
     <div style={{ padding: '8px 20px' }}>
       <ForecastCarousel catches={catches} />
       {activeTrip && <ActiveTripBanner trip={activeTrip} catches={catches} onClick={() => onOpenTrip(activeTrip)} />}
-      <div className="scrollbar-thin" style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 16, paddingBottom: 4 }}>
-        <Chip active={filter.scope === 'all'} onClick={selectAll}>All</Chip>
-        <Chip active={filter.scope === 'mine'} onClick={selectMine}>Mine</Chip>
-        {friendPillsToRender.map(p => {
-          const label = p.display_name.length > 12 ? `${p.display_name.slice(0, 12)}…` : p.display_name;
-          return (
-            <Chip key={p.id} active onClick={() => removeSelectedFriend(p.id)}>
-              {label}
-            </Chip>
-          );
-        })}
-        {friendOverflowCount > 0 && (
-          <Chip active onClick={() => setFilterModalOpen(true)}>
-            +{friendOverflowCount} more
-          </Chip>
-        )}
-        <button onClick={() => setFilterModalOpen(true)} className="tap" style={{
-          flexShrink: 0, padding: '8px 14px', borderRadius: 999,
-          border: `1px solid ${fCount > 0 ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
-          background: fCount > 0 ? 'rgba(212,182,115,0.15)' : 'rgba(10,24,22,0.45)',
-          color: fCount > 0 ? 'var(--gold-2)' : 'var(--text-2)',
-          fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-          display: 'inline-flex', alignItems: 'center', gap: 6,
+      {/* Feed controls: segmented All|Mine on the left (matches the radio
+          card styling in FeedFilterModal), friend pills (when any are
+          selected via the modal) center-scrollable, filter icon button
+          on the right with a count badge for active dimensions. */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        marginBottom: 16,
+      }}>
+        <div style={{
+          display: 'inline-flex', flexShrink: 0,
+          background: 'rgba(239,233,217,0.06)',
+          border: '1px solid rgba(239,233,217,0.12)',
+          borderRadius: 999,
+          padding: 3, gap: 2,
         }}>
-          Filter{fCount > 0 ? ` (${fCount})` : ''}
+          {([
+            { id: 'all'  as const, label: 'All' },
+            { id: 'mine' as const, label: 'Mine' },
+          ]).map(opt => {
+            const isActive = filter.scope === opt.id;
+            return (
+              <button key={opt.id}
+                onClick={opt.id === 'all' ? selectAll : selectMine}
+                className="tap"
+                style={{
+                  padding: '7px 16px', borderRadius: 999,
+                  background: isActive ? 'var(--gold)' : 'transparent',
+                  color: isActive ? '#1A1004' : 'var(--text-2)',
+                  border: 'none',
+                  fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  transition: 'background 0.18s, color 0.18s',
+                }}>{opt.label}</button>
+            );
+          })}
+        </div>
+
+        {(friendPillsToRender.length > 0 || friendOverflowCount > 0) && (
+          <div className="scrollbar-thin" style={{ display: 'flex', gap: 6, overflowX: 'auto', minWidth: 0, flex: 1, paddingBottom: 2 }}>
+            {friendPillsToRender.map(p => {
+              const label = p.display_name.length > 12 ? `${p.display_name.slice(0, 12)}…` : p.display_name;
+              return (
+                <Chip key={p.id} active onClick={() => removeSelectedFriend(p.id)}>
+                  {label}
+                </Chip>
+              );
+            })}
+            {friendOverflowCount > 0 && (
+              <Chip active onClick={() => setFilterModalOpen(true)}>
+                +{friendOverflowCount} more
+              </Chip>
+            )}
+          </div>
+        )}
+
+        <button
+          onClick={() => setFilterModalOpen(true)}
+          aria-label={fCount > 0 ? `Filter (${fCount} active)` : 'Filter'}
+          className="tap"
+          style={{
+            position: 'relative', flexShrink: 0,
+            width: 40, height: 40, borderRadius: 999,
+            background: fCount > 0 ? 'rgba(212,182,115,0.15)' : 'rgba(239,233,217,0.06)',
+            border: `1px solid ${fCount > 0 ? 'var(--gold)' : 'rgba(239,233,217,0.12)'}`,
+            color: fCount > 0 ? 'var(--gold-2)' : 'var(--text-2)',
+            cursor: 'pointer', padding: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            marginLeft: 'auto',
+          }}>
+          <SlidersHorizontal size={18} />
+          {fCount > 0 && (
+            <span style={{
+              position: 'absolute', top: -4, right: -4,
+              minWidth: 18, height: 18, padding: '0 5px',
+              borderRadius: 999,
+              background: 'var(--gold)', color: '#1A1004',
+              fontSize: 11, fontWeight: 700, lineHeight: 1,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: '1.5px solid var(--bg, #050E0D)',
+            }}>{fCount}</span>
+          )}
         </button>
       </div>
       {filtered.length === 0 ? (
@@ -625,16 +693,15 @@ function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenT
           </div>
         ) : <EmptyState />
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {filtered.map(c => (
-            <CatchCard key={c.id} catchData={c}
-              angler={profilesById[c.angler_id] || null}
-              trip={c.trip_id ? trips.find(t => t.id === c.trip_id) || null : null}
-              commentCount={commentCounts[c.id] || 0}
-              pb={pbByAngler[c.angler_id] === c.id}
-              onClick={() => onOpen(c)} />
-          ))}
-        </div>
+        <FeedListWithLikes
+          filtered={filtered}
+          me={me}
+          profilesById={profilesById}
+          trips={trips}
+          commentCounts={commentCounts}
+          pbByAngler={pbByAngler}
+          onOpen={onOpen}
+        />
       )}
       {filterModalOpen && (
         <FeedFilterModal
@@ -838,6 +905,72 @@ function BiteForecastCard({ coords, compact }: { coords: { lat: number; lng: num
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ============ FEED LIST WITH LIKES ============
+// Wraps the per-card like wiring — keeps the count + my-liked queries
+// scoped to the catches actually rendered (so we never query likes for
+// catches you don't see), and centralises the optimistic toggle path.
+function FeedListWithLikes({ filtered, me, profilesById, trips, commentCounts, pbByAngler, onOpen }: {
+  filtered: CatchT[];
+  me: Profile;
+  profilesById: Record<string, Profile>;
+  trips: Trip[];
+  commentCounts: Record<string, number>;
+  pbByAngler: Record<string, string>;
+  onOpen: (c: CatchT) => void;
+}) {
+  const qc = useQueryClient();
+  const visibleIds = useMemo(() => filtered.map(c => c.id), [filtered]);
+  const countsQuery = useCatchLikeCounts(visibleIds);
+  const likedQuery = useMyCatchLikes(visibleIds);
+  const counts: Record<string, number> = (countsQuery.data && typeof countsQuery.data === 'object' && !Array.isArray(countsQuery.data))
+    ? countsQuery.data : {};
+  const likedSet = useMemo(() => new Set(Array.isArray(likedQuery.data) ? likedQuery.data : []), [likedQuery.data]);
+
+  async function toggleLike(catchId: string) {
+    const liked = likedSet.has(catchId);
+    // Optimistic: flip the local view via setQueryData on both keyed queries
+    // (they're scoped by sorted id-list, hence the use of the same key the
+    // hooks compute internally).
+    const sortedIds = [...visibleIds].sort();
+    qc.setQueryData<Record<string, number>>(QK.catchLikes.countsForCatches(sortedIds), prev => {
+      const next = { ...(prev || {}) };
+      next[catchId] = Math.max(0, (next[catchId] || 0) + (liked ? -1 : 1));
+      return next;
+    });
+    qc.setQueryData<string[]>(QK.catchLikes.myLikedFor(sortedIds), prev => {
+      const arr = prev || [];
+      return liked ? arr.filter(x => x !== catchId) : [...arr, catchId];
+    });
+    try {
+      if (liked) await db.unlikeCatch(catchId);
+      else await db.likeCatch(catchId);
+    } catch {
+      // Revert on failure by invalidating; realtime will reconcile too.
+      qc.invalidateQueries({ queryKey: ['catch_likes'] });
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {filtered.map(c => {
+        const isMine = c.angler_id === me.id;
+        return (
+          <CatchCard key={c.id} catchData={c}
+            angler={profilesById[c.angler_id] || null}
+            trip={c.trip_id ? trips.find(t => t.id === c.trip_id) || null : null}
+            commentCount={commentCounts[c.id] || 0}
+            pb={pbByAngler[c.angler_id] === c.id}
+            likeCount={counts[c.id] || 0}
+            iLiked={likedSet.has(c.id)}
+            canLike={!isMine && !c.lost}
+            onToggleLike={() => toggleLike(c.id)}
+            onClick={() => onOpen(c)} />
+        );
+      })}
     </div>
   );
 }
@@ -1500,15 +1633,7 @@ function TripsView({ me, trips, catches, profilesById, onOpenTrip, onAddTrip }: 
   const isActive = (t: Trip) => { const now = Date.now(); return +new Date(t.start_date) <= now && +new Date(t.end_date) >= now - 86400000; };
   return (
     <div style={{ padding: '8px 20px' }}>
-      <button onClick={onAddTrip} className="tap" style={{
-        width: '100%', padding: 14, borderRadius: 16,
-        background: 'transparent', border: '1.5px dashed rgba(234,201,136,0.3)',
-        color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-        cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, marginBottom: 16,
-      }}>
-        <Plus size={16} /> New trip
-      </button>
-      {sorted.length === 0 ? <EmptyState icon={<Tent size={48} />} title="No trips yet" subtitle="Plan your annual France trip or any session" /> : (
+      {sorted.length === 0 ? <EmptyState icon={<Tent size={48} />} title="No trips yet" subtitle="Tap the + button to plan your first trip" /> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {sorted.map(t => {
             const s = tripStats(t.id);
@@ -2698,6 +2823,72 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
   // Owned trips: trips.owner_id === me.id. Joined trips already in `trips` array (RLS exposes trips that include trip_member rows for me).
   const eligibleTrips = trips;
 
+  // Library multi-pick. Compresses each file, appends as a slot, and caps
+  // at MAX_PHOTOS. AI / weather autofill still fires only when the FIRST
+  // photo overall is added (same rule as single-camera path).
+  async function handleLibraryFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []);
+    if (e.target) e.target.value = '';
+    if (files.length === 0) return;
+    const remaining = MAX_PHOTOS - photoSlots.length;
+    if (remaining <= 0) { alert(`Up to ${MAX_PHOTOS} photos per catch`); return; }
+    const accepted = files.slice(0, remaining);
+    const wasEmpty = photoSlots.length === 0;
+    setPhotoLoading(true);
+    try {
+      const compressedList = await Promise.all(accepted.map(f => compressImage(f)));
+      setPhotoSlots(curr => [...curr, ...compressedList.map(d => ({ dataUrl: d }))]);
+      if (files.length > remaining) {
+        alert(`Added ${remaining} of ${files.length} photos. Max ${MAX_PHOTOS} per catch.`);
+      }
+      // Mirror handleFile's first-photo-only autofill on the cover image.
+      if (wasEmpty && compressedList.length > 0) await runAutofillForCover(compressedList[0]);
+    } catch { alert('Failed to process images'); }
+    finally { setPhotoLoading(false); }
+  }
+
+  // Shared helper extracted from handleFile so the multi-pick path doesn't
+  // duplicate the AI + weather detection logic.
+  async function runAutofillForCover(compressed: string) {
+    setAutoStatus({ wx: 'fetching', sp: 'detecting' });
+    Promise.all([
+      (async () => {
+        try {
+          let c: { lat: number; lng: number } | null = null;
+          const cached = localStorage.getItem(LOC_KEY);
+          if (cached) { try { c = JSON.parse(cached); } catch {} }
+          if (!c) {
+            const gps = await getCurrentLocation();
+            if (gps) { c = gps; localStorage.setItem(LOC_KEY, JSON.stringify(gps)); }
+          }
+          if (!c && lake.trim()) c = await geocodeLake(lake);
+          if (!c) { setAutoStatus(s => ({ ...s, wx: 'failed' })); return; }
+          setCoords(c);
+          const w = await fetchWeatherFor(new Date(date), c.lat, c.lng);
+          if (!w) { setAutoStatus(s => ({ ...s, wx: 'failed' })); return; }
+          if (w.tempC != null) setTempC(String(w.tempC));
+          if (w.pressure != null) setPressure(String(w.pressure));
+          if (w.wind) setWind(w.wind);
+          if (w.conditions) setConditions(w.conditions);
+          setShowWeather(true);
+          setAutoStatus(s => ({ ...s, wx: 'done' }));
+        } catch { setAutoStatus(s => ({ ...s, wx: 'failed' })); }
+      })(),
+      (async () => {
+        try {
+          const r = await fetch('/api/detect-species', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ imageBase64: compressed }),
+          });
+          const j = await r.json();
+          if (j?.species && SPECIES.find(s => s.id === j.species)) {
+            setSpecies(j.species); setAutoStatus(s => ({ ...s, sp: 'done' }));
+          } else setAutoStatus(s => ({ ...s, sp: 'failed' }));
+        } catch { setAutoStatus(s => ({ ...s, sp: 'failed' })); }
+      })(),
+    ]);
+  }
+
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     // Reset the input value so the user can re-pick the same file later.
@@ -2829,9 +3020,12 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
 
       {!lost && (
         <>
-          {/* Two hidden inputs: with-capture opens the camera, without-capture opens the photo library/file picker. */}
+          {/* Two hidden inputs: with-capture opens the camera (one shot at
+              a time), without-capture + multiple opens iOS's batch photo
+              picker. handleFile takes one file (camera path); handleLibrary
+              iterates the FileList and queues up to MAX_PHOTOS - current. */}
           <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: 'none' }} />
-          <input ref={libraryInputRef} type="file" accept="image/*" onChange={handleFile} style={{ display: 'none' }} />
+          <input ref={libraryInputRef} type="file" accept="image/*" multiple onChange={handleLibraryFiles} style={{ display: 'none' }} />
           {photoSlots.length === 0 && !photoLoading ? (
             // Empty-state large dashed placeholder.
             <div onClick={() => setPhotoSourcePickerOpen(true)} className="tap" style={{
@@ -4149,43 +4343,68 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
             boxShadow: '0 -10px 40px rgba(0,0,0,0.45)',
             display: 'flex', flexDirection: 'column', minHeight: 0,
           }}>
-            {/* vaul's Drawer.Handle is the ONLY draggable region thanks to handleOnly. */}
-            <div style={{
-              height: 28, flexShrink: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              touchAction: 'none',
-            }}>
-              <Drawer.Handle style={{
-                width: 44, height: 5, borderRadius: 999,
-                background: 'rgba(255,255,255,0.22)',
-                margin: 0,
-              }} />
-            </div>
-
-            {/* HEADER — sticky outside the scroll region. */}
-            <div style={{
+            {/* DRAG ZONE — handle pill + header row. Drawer.Handle is the
+                only element vaul accepts as a drag-source under handleOnly,
+                and it renders as a plain div with vaul-data attributes —
+                so we can style it to be the wrapper of the entire top
+                region (pill + header row) and dragging from anywhere in
+                this zone dismisses the sheet. The close button (and any
+                headerAction) calls stopPropagation on pointerdown so taps
+                still register without arming the drag. */}
+            <Drawer.Handle style={{
               flexShrink: 0,
-              padding: hideTitle ? '0 20px 8px' : '0 20px 12px',
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+              userSelect: 'none', WebkitUserSelect: 'none',
+              cursor: 'grab',
+              // Override vaul's default tiny-pill look — we paint the
+              // visual pill ourselves below.
+              width: 'auto', height: 'auto', background: 'transparent', margin: 0,
+              display: 'block',
             }}>
-              {!hideTitle && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-                  <Drawer.Title asChild>
-                    <h2 className="display-font" style={{ fontSize: 22, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h2>
-                  </Drawer.Title>
-                  {headerAction}
+                <div style={{
+                  height: 28,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <div style={{
+                    width: 44, height: 5, borderRadius: 999,
+                    background: 'rgba(255,255,255,0.22)',
+                  }} />
                 </div>
-              )}
-              {hideTitle ? (
-                <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6, padding: 4, fontFamily: 'inherit', fontSize: 14, cursor: 'pointer' }}>
-                  <ArrowLeft size={18} /> Back
-                </button>
-              ) : (
-                <button onClick={onClose} aria-label="Close" style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 12, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-2)', flexShrink: 0, padding: 0 }}>
-                  <X size={18} />
-                </button>
-              )}
-            </div>
+                <div style={{
+                  padding: hideTitle ? '0 20px 8px' : '0 20px 12px',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                }}>
+                  {!hideTitle && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                      <Drawer.Title asChild>
+                        <h2 className="display-font" style={{ fontSize: 22, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h2>
+                      </Drawer.Title>
+                      {/* headerAction (e.g. weather modal magnifier) gets its
+                          own pointerdown stopPropagation so the search button
+                          taps still work without arming the drag. */}
+                      {headerAction && (
+                        <span onPointerDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}>
+                          {headerAction}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {hideTitle ? (
+                    <button onClick={onClose}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onTouchStart={(e) => e.stopPropagation()}
+                      style={{ background: 'transparent', border: 'none', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6, padding: 4, fontFamily: 'inherit', fontSize: 14, cursor: 'pointer' }}>
+                      <ArrowLeft size={18} /> Back
+                    </button>
+                  ) : (
+                    <button onClick={onClose} aria-label="Close"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onTouchStart={(e) => e.stopPropagation()}
+                      style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 12, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-2)', flexShrink: 0, padding: 0 }}>
+                      <X size={18} />
+                    </button>
+                  )}
+                </div>
+            </Drawer.Handle>
 
             {/* SCROLLABLE BODY — vaul does NOT intercept gestures here when handleOnly is set. */}
             <div style={{

@@ -169,6 +169,15 @@ export type CatchComment = {
   created_at: string;
 };
 
+// Composite-PK row from catch_likes. We rarely need the full row in the
+// UI — most reads project to count + a Set of catch_ids the current user
+// has liked.
+export type CatchLike = {
+  catch_id: string;
+  angler_id: string;
+  created_at?: string;
+};
+
 export type CommentLike = {
   id: string;
   comment_id: string;

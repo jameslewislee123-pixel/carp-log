@@ -1,7 +1,7 @@
 'use client';
 import { supabase } from './supabase/client';
 import type {
-  AppNotification, Catch, CatchComment, CatchVisibility, Comment, CommentLike, FieldVisibility,
+  AppNotification, Catch, CatchComment, CatchLike, CatchVisibility, Comment, CommentLike, FieldVisibility,
   Friendship, GearItem, GearType, Lake, LakeAnnotation, LakeAnnotationType, Moon,
   NotifyConfig, Profile, SwimRollResult, Trip, TripActivity, TripMember, TripMessage,
   TripStake, TripSwimRoll, TripVisibility, Weather,
@@ -262,6 +262,55 @@ export async function unlikeComment(commentId: string): Promise<void> {
   if (!user) return;
   await supabase().from('comment_likes')
     .delete().eq('comment_id', commentId).eq('angler_id', user.id);
+}
+
+// ============ CATCH LIKES ============
+// Per-catch thumbs-up. Composite primary key (catch_id, angler_id) — RLS
+// lets anyone read counts but only the owning angler can insert/delete
+// their own row.
+
+// Aggregated counts for a list of catches in one round-trip. Returns
+// { [catch_id]: count }. Implemented client-side over a SELECT because
+// PostgREST doesn't expose group-by directly without an RPC.
+export async function listCatchLikeCounts(catchIds: string[]): Promise<Record<string, number>> {
+  if (catchIds.length === 0) return {};
+  const { data } = await supabase()
+    .from('catch_likes')
+    .select('catch_id')
+    .in('catch_id', catchIds);
+  const out: Record<string, number> = {};
+  (data || []).forEach((row: any) => {
+    out[row.catch_id] = (out[row.catch_id] || 0) + 1;
+  });
+  catchIds.forEach(id => { if (!(id in out)) out[id] = 0; });
+  return out;
+}
+
+// Set of catch_ids the current user has liked (for any of the supplied
+// ids). Returned as an array so it serializes through the cache cleanly.
+export async function listMyCatchLikedIds(catchIds: string[]): Promise<string[]> {
+  if (catchIds.length === 0) return [];
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return [];
+  const { data } = await supabase()
+    .from('catch_likes')
+    .select('catch_id')
+    .eq('angler_id', user.id)
+    .in('catch_id', catchIds);
+  return (data || []).map((r: any) => r.catch_id as string);
+}
+
+export async function likeCatch(catchId: string): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  await supabase().from('catch_likes').insert({ catch_id: catchId, angler_id: user.id });
+}
+
+export async function unlikeCatch(catchId: string): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return;
+  await supabase().from('catch_likes')
+    .delete().eq('catch_id', catchId).eq('angler_id', user.id);
 }
 
 // ============ PHOTOS (Supabase Storage) ============
