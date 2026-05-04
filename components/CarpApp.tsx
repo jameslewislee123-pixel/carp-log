@@ -4676,8 +4676,8 @@ function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 't
   const items = [
     { id: 'feed' as const,    label: 'Log',    icon: Fish },
     { id: 'trips' as const,   label: 'Trips',  icon: Tent },
-    { id: 'stats' as const,   label: 'Stats',  icon: Trophy },
     { id: 'lakes' as const,   label: 'Lakes',  icon: MapPinned },
+    { id: 'stats' as const,   label: 'Stats',  icon: Trophy },
   ];
   const opacity = modalOpen ? 0 : (dimmed ? 0.5 : 1);
   return (
