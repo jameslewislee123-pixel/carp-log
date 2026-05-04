@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { ArrowLeft, Bookmark, BookmarkCheck, Check, Fish, Loader2, MapPinned, Plus, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkCheck, Check, Fish, Loader2, MapPinned, Navigation, Plus, Trash2, X } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import * as db from '@/lib/db';
 import { useMySavedLakeIds } from '@/lib/queries';
@@ -9,6 +9,7 @@ import { QK } from '@/lib/queryKeys';
 import type { Catch, Lake, LakeAnnotation, LakeAnnotationType, Profile } from '@/lib/types';
 import { formatWeight, totalOz } from '@/lib/util';
 import { geocodeLake } from '@/lib/weather';
+import { directionsUrl } from '@/lib/osm';
 
 const ANN_TYPES: { id: LakeAnnotationType; label: string; emoji: string }[] = [
   { id: 'hot_spot',        label: 'Hot spot',   emoji: '🔥' },
@@ -206,6 +207,26 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
               {lake.name}
             </h2>
           </div>
+        )}
+
+        {center && (
+          <a
+            href={directionsUrl(center.lat, center.lng, lake.name)}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Get directions to ${lake.name}`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              padding: '10px 16px', marginBottom: 14,
+              background: 'rgba(234,201,136,0.12)',
+              border: '1px solid rgba(234,201,136,0.3)',
+              borderRadius: 12,
+              color: 'var(--gold-2)', fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
+              textDecoration: 'none', cursor: 'pointer',
+            }}
+          >
+            <Navigation size={14} /> Directions
+          </a>
         )}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 14 }}>

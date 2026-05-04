@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import type { Catch, LakeAnnotation, Profile } from '@/lib/types';
 import { formatWeight } from '@/lib/util';
 import { TILE_LAYERS, type MapLayer } from '@/lib/mapTiles';
+import { directionsUrl } from '@/lib/osm';
 import MapLayerToggle from './MapLayerToggle';
 
 // Tear-drop pin for the lake itself. Gold, distinct from the angler-coloured
@@ -91,13 +92,26 @@ export default function LakeMapInner({
 
         <Marker position={[center.lat, center.lng]} icon={lakeCenterIcon()}>
           <Popup>
-            <div style={{ minWidth: 140 }}>
+            <div style={{ minWidth: 160 }}>
               <div style={{ fontFamily: 'Fraunces, serif', fontSize: 16, color: '#EAC988', lineHeight: 1.2 }}>
                 {lakeName || 'Lake'}
               </div>
               <div style={{ fontSize: 11, color: '#B5B6A6', marginTop: 2 }}>
                 {center.lat.toFixed(4)}, {center.lng.toFixed(4)}
               </div>
+              <a
+                href={directionsUrl(center.lat, center.lng, lakeName)}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '6px 10px', borderRadius: 8,
+                  background: '#D4B673', color: '#1A1004', textDecoration: 'none',
+                  fontFamily: 'Manrope, sans-serif', fontSize: 11, fontWeight: 700,
+                }}
+              >
+                Get directions
+              </a>
             </div>
           </Popup>
         </Marker>

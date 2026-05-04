@@ -8,7 +8,7 @@ import {
   Cloud, Wind, Thermometer, MessageCircle, Bell, Send, Anchor, BarChart3,
   Clock, Tent, MapPinned, Star, Users as UsersIcon, Lock, LogOut, UserPlus, Mail,
   Activity as ActivityIcon, Map as MapIcon, MessageSquare, ThumbsUp, Search,
-  Eye, EyeOff, SlidersHorizontal, Box,
+  Eye, EyeOff, SlidersHorizontal, Box, Navigation,
 } from 'lucide-react';
 import { Drawer } from 'vaul';
 import nextDynamic from 'next/dynamic';
@@ -36,6 +36,7 @@ import { Dices } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { hasSupabase, supabase } from '@/lib/supabase/client';
 import * as db from '@/lib/db';
+import { directionsUrl } from '@/lib/osm';
 import {
   useMe, useCatches, useTrips, useMyNotifyConfig, useUnreadCount,
   useProfilesByIds, useCommentCounts, useLakeStatsTiles, useLakesEnriched,
@@ -1723,6 +1724,16 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
   const [latestRoll, setLatestRoll] = useState<TripSwimRoll | null>(null);
   const [rollViewer, setRollViewer] = useState<{ roll: TripSwimRoll; mode: 'animate' | 'replay' } | null>(null);
   const [rolling, setRolling] = useState(false);
+  const [tripLake, setTripLake] = useState<Lake | null>(null);
+  // Lazy-load the trip's lake row if it has a lake_id, so the Directions
+  // button can render with the resolved coords. Skipped for legacy trips
+  // (lake_id is null) — those only have free-text trip.location.
+  useEffect(() => {
+    if (!trip.lake_id) { setTripLake(null); return; }
+    let cancelled = false;
+    db.getLake(trip.lake_id).then(l => { if (!cancelled) setTripLake(l); });
+    return () => { cancelled = true; };
+  }, [trip.lake_id]);
   const isOwner = trip.owner_id === me.id;
 
   async function refreshMembers() {
@@ -1806,6 +1817,25 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><Calendar size={12} /> {formatDateRange(trip.start_date, trip.end_date)}</span>
         {trip.location && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>· <MapPin size={12} />{trip.location}</span>}
       </div>
+      {tripLake && tripLake.latitude != null && tripLake.longitude != null && (
+        <a
+          href={directionsUrl(tripLake.latitude, tripLake.longitude, tripLake.name)}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`Get directions to ${tripLake.name}`}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            padding: '8px 14px', marginBottom: 16,
+            background: 'rgba(234,201,136,0.12)',
+            border: '1px solid rgba(234,201,136,0.3)',
+            borderRadius: 12,
+            color: 'var(--gold-2)', fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
+            textDecoration: 'none', cursor: 'pointer',
+          }}
+        >
+          <Navigation size={13} /> Directions to {tripLake.name}
+        </a>
+      )}
 
       {/* Tab bar */}
       <div className="scrollbar-thin" style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 16, paddingBottom: 4 }}>

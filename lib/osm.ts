@@ -138,11 +138,22 @@ export async function fetchOverpassVenues(center: { lat: number; lng: number }, 
   return venues;
 }
 
-export function openDirections(v: { lat: number; lng: number }) {
+// Build a directions URL that opens the platform-native maps app.
+// iOS Safari/PWA intercepts maps.apple.com universal links and opens
+// Apple Maps; Android Chrome intercepts the Google Maps directions
+// intent URL. Desktop falls through to Google Maps web. Used by
+// <a href> anchors so the click is a real navigation (better than
+// window.open in PWA contexts).
+export function directionsUrl(lat: number, lng: number, name?: string): string {
   const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
   const isIOS = /iPad|iPhone|iPod/.test(ua);
-  const url = isIOS
-    ? `https://maps.apple.com/?daddr=${v.lat},${v.lng}`
-    : `https://www.google.com/maps/dir/?api=1&destination=${v.lat},${v.lng}`;
-  window.open(url, '_blank', 'noopener,noreferrer');
+  if (isIOS) {
+    const q = name ? `&q=${encodeURIComponent(name)}` : '';
+    return `https://maps.apple.com/?daddr=${lat},${lng}&dirflg=d${q}`;
+  }
+  return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`;
+}
+
+export function openDirections(v: { lat: number; lng: number; name?: string }) {
+  window.open(directionsUrl(v.lat, v.lng, v.name), '_blank', 'noopener,noreferrer');
 }
