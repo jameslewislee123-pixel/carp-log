@@ -1,7 +1,9 @@
 'use client';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { TILE_LAYERS, type MapLayer } from '@/lib/mapTiles';
+import MapLayerToggle from './MapLayerToggle';
 
 export type OSMVenue = {
   id: string;          // composite "type-id" so duplicates from the api don't collide
@@ -80,9 +82,10 @@ export default function DiscoverVenuesMap({ center, venues, radiusKm, focusId, o
 }) {
   const radiusMeters = radiusKm * 1000;
   const focused = useMemo(() => venues.find(v => v.id === focusId) || null, [venues, focusId]);
+  const [layer, setLayer] = useState<MapLayer>('satellite');
 
   return (
-    <div style={{ height: '50vh', minHeight: 320, borderRadius: 18, overflow: 'hidden', border: '1px solid rgba(234,201,136,0.14)' }}>
+    <div style={{ height: '50vh', minHeight: 320, borderRadius: 18, overflow: 'hidden', border: '1px solid rgba(234,201,136,0.14)', position: 'relative' }}>
       <MapContainer
         center={[center.lat, center.lng]}
         zoom={11}
@@ -90,8 +93,10 @@ export default function DiscoverVenuesMap({ center, venues, radiusKm, focusId, o
         style={{ height: '100%', width: '100%' }}
       >
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          key={layer}
+          url={TILE_LAYERS[layer].url}
+          attribution={TILE_LAYERS[layer].attribution}
+          maxZoom={TILE_LAYERS[layer].maxZoom}
         />
 
         {/* Search radius outline */}
@@ -146,6 +151,7 @@ export default function DiscoverVenuesMap({ center, venues, radiusKm, focusId, o
         <FitBounds center={center} venues={venues} radiusMeters={radiusMeters} />
         <FocusOnMarker focused={focused} />
       </MapContainer>
+      <MapLayerToggle layer={layer} onChange={setLayer} />
     </div>
   );
 }

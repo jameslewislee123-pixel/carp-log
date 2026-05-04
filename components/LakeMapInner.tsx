@@ -1,9 +1,11 @@
 'use client';
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { Catch, LakeAnnotation, Profile } from '@/lib/types';
 import { formatWeight } from '@/lib/util';
+import { TILE_LAYERS, type MapLayer } from '@/lib/mapTiles';
+import MapLayerToggle from './MapLayerToggle';
 
 // Tear-drop pin for the lake itself. Gold, distinct from the angler-coloured
 // catch pins and the round annotation badges. Always rendered at `center`
@@ -71,6 +73,7 @@ export default function LakeMapInner({
     return pts.length >= 2 ? L.latLngBounds(pts) : null;
   }, [catches, annotations]);
 
+  const [layer, setLayer] = useState<MapLayer>('satellite');
   return (
     <div style={{ height: '52vh', minHeight: 320, borderRadius: 18, overflow: 'hidden', border: '1px solid rgba(234,201,136,0.14)', position: 'relative', cursor: dropMode ? 'crosshair' : 'auto' }}>
       <MapContainer
@@ -79,8 +82,10 @@ export default function LakeMapInner({
         scrollWheelZoom style={{ height: '100%', width: '100%' }}
       >
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          key={layer}
+          url={TILE_LAYERS[layer].url}
+          attribution={TILE_LAYERS[layer].attribution}
+          maxZoom={TILE_LAYERS[layer].maxZoom}
         />
         <ClickCapture enabled={dropMode} onPick={onDropPick} />
 
@@ -138,6 +143,8 @@ export default function LakeMapInner({
           </Marker>
         ))}
       </MapContainer>
+
+      <MapLayerToggle layer={layer} onChange={setLayer} />
 
       {dropMode && (
         <div style={{

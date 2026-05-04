@@ -1,8 +1,10 @@
 'use client';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { EnrichedLake } from '@/lib/queries';
+import { TILE_LAYERS, type MapLayer } from '@/lib/mapTiles';
+import MapLayerToggle from './MapLayerToggle';
 
 function pinIcon(fished: boolean) {
   const fill = fished ? '#EAC988' : '#7BA888';
@@ -43,8 +45,9 @@ export default function LakesMapInner({ lakes, onOpen }: {
     ? { lat: pinned[0].latitude!, lng: pinned[0].longitude! }
     : { lat: 52.05, lng: -0.7 };
 
+  const [layer, setLayer] = useState<MapLayer>('satellite');
   return (
-    <div style={{ height: '60vh', minHeight: 400, borderRadius: 18, overflow: 'hidden', border: '1px solid rgba(234,201,136,0.14)' }}>
+    <div style={{ height: '60vh', minHeight: 400, borderRadius: 18, overflow: 'hidden', border: '1px solid rgba(234,201,136,0.14)', position: 'relative' }}>
       <MapContainer
         center={[initial.lat, initial.lng]}
         zoom={6}
@@ -52,8 +55,10 @@ export default function LakesMapInner({ lakes, onOpen }: {
         style={{ height: '100%', width: '100%' }}
       >
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          key={layer}
+          url={TILE_LAYERS[layer].url}
+          attribution={TILE_LAYERS[layer].attribution}
+          maxZoom={TILE_LAYERS[layer].maxZoom}
         />
         {pinned.map(l => (
           <Marker key={l.key} position={[l.latitude!, l.longitude!]} icon={pinIcon(l.catchCount > 0)}>
@@ -77,6 +82,7 @@ export default function LakesMapInner({ lakes, onOpen }: {
         ))}
         <FitBounds lakes={pinned} />
       </MapContainer>
+      <MapLayerToggle layer={layer} onChange={setLayer} />
     </div>
   );
 }

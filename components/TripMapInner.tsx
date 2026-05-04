@@ -3,7 +3,9 @@ import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import type { MarkerCatch } from './TripMap';
 import { formatWeight } from '@/lib/util';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { TILE_LAYERS, type MapLayer } from '@/lib/mapTiles';
+import MapLayerToggle from './MapLayerToggle';
 
 // Build a colored circular div-icon — avoids the default-icon webpack hassle entirely.
 function pinIcon(color: string, label: string) {
@@ -28,8 +30,9 @@ export default function TripMapInner({ center, markers, onOpenCatch, photoUrl }:
     return L.latLngBounds(markers.map(m => [m.lat, m.lng] as [number, number]));
   }, [markers]);
 
+  const [layer, setLayer] = useState<MapLayer>('satellite');
   return (
-    <div style={{ height: '60vh', minHeight: 380, borderRadius: 18, overflow: 'hidden', border: '1px solid rgba(234,201,136,0.14)' }}>
+    <div style={{ height: '60vh', minHeight: 380, borderRadius: 18, overflow: 'hidden', border: '1px solid rgba(234,201,136,0.14)', position: 'relative' }}>
       <MapContainer
         center={[center.lat, center.lng]}
         zoom={markers.length === 0 ? 11 : 13}
@@ -39,8 +42,10 @@ export default function TripMapInner({ center, markers, onOpenCatch, photoUrl }:
         style={{ height: '100%', width: '100%' }}
       >
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          key={layer}
+          url={TILE_LAYERS[layer].url}
+          attribution={TILE_LAYERS[layer].attribution}
+          maxZoom={TILE_LAYERS[layer].maxZoom}
         />
         {markers.map(m => {
           const url = photoUrl(m);
@@ -71,6 +76,7 @@ export default function TripMapInner({ center, markers, onOpenCatch, photoUrl }:
           );
         })}
       </MapContainer>
+      <MapLayerToggle layer={layer} onChange={setLayer} />
     </div>
   );
 }
