@@ -27,7 +27,8 @@ export type Trip = {
   id: string;
   owner_id: string;
   name: string;
-  location: string | null;
+  location: string | null;       // legacy free-text location (kept for back-compat)
+  lake_id: string | null;        // canonical FK to lakes; new trips set this, legacy trips have null
   start_date: string;
   end_date: string;
   notes: string | null;

@@ -104,6 +104,7 @@ export async function upsertTrip(t: Partial<Trip> & { name: string; start_date: 
   const payload: any = {
     owner_id: user.id,
     name: t.name, location: t.location ?? null,
+    lake_id: t.lake_id ?? null,
     start_date: t.start_date, end_date: t.end_date, notes: t.notes ?? null,
     visibility: t.visibility || 'invited_only',
     wager_enabled: !!t.wager_enabled,
@@ -649,6 +650,32 @@ export async function getLakeByName(name: string): Promise<Lake | null> {
   // case-insensitive lookup
   const { data } = await supabase().from('lakes').select('*').ilike('name', name.trim()).maybeSingle();
   return (data as Lake) || null;
+}
+
+// Manually-created lake (no OSM source). User typed a name, optionally
+// dropped a pin. Source='manual'. If a row with this name already
+// exists (case-insensitive) we return it instead of erroring on the
+// unique-name index.
+export async function createManualLake(input: {
+  name: string;
+  latitude?: number | null;
+  longitude?: number | null;
+}): Promise<Lake> {
+  const trimmed = input.name.trim();
+  if (!trimmed) throw new Error('Lake name required');
+  const existing = await getLakeByName(trimmed);
+  if (existing) return existing;
+  const { data: { user } } = await supabase().auth.getUser();
+  const payload: any = {
+    name: trimmed,
+    latitude: input.latitude ?? null,
+    longitude: input.longitude ?? null,
+    created_by: user?.id || null,
+    source: 'manual',
+  };
+  const { data, error } = await supabase().from('lakes').insert(payload).select().single();
+  if (error) throw error;
+  return data as Lake;
 }
 export async function getLake(id: string): Promise<Lake | null> {
   const { data } = await supabase().from('lakes').select('*').eq('id', id).maybeSingle();

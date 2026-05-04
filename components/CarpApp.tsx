@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { Drawer } from 'vaul';
 import nextDynamic from 'next/dynamic';
-const DiscoverVenues = nextDynamic(() => import('./DiscoverVenues'), { ssr: false });
+const AddLakeModal = nextDynamic(() => import('./AddLakeModal'), { ssr: false });
 const LakesView = nextDynamic(() => import('./LakesView'), { ssr: false });
 import InvitePicker from './InvitePicker';
 import TripChat from './TripChat';
@@ -45,7 +45,7 @@ import {
 } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
 import type {
-  Profile, Catch as CatchT, Comment, Moon as MoonT, NotifyConfig, Trip, TripMember, Weather, CatchVisibility, TripVisibility,
+  Profile, Catch as CatchT, Comment, Moon as MoonT, NotifyConfig, Trip, TripMember, Weather, CatchVisibility, TripVisibility, Lake,
 } from '@/lib/types';
 import {
   formatDate, formatDateRange, formatWeight, totalOz, compressImage, sendTelegram,
@@ -123,6 +123,7 @@ export default function CarpApp() {
   const [detailLakeName, setDetailLakeName] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddTrip, setShowAddTrip] = useState(false);
+  const [showAddLake, setShowAddLake] = useState(false);
   const [editTrip, setEditTrip] = useState<Trip | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
 
@@ -362,10 +363,11 @@ export default function CarpApp() {
       </div>
 
       {/* The FAB action depends on which top-level view is active. Feed →
-          new catch. Trips → new trip. Stats and Lakes don't expose a
+          new catch. Trips → new trip. Lakes → add a lake. Stats has no
           create action so the FAB is hidden there. */}
       {view === 'feed' && <FAB onClick={() => setShowAdd(true)} />}
       {view === 'trips' && <FAB onClick={() => { setEditTrip(null); setShowAddTrip(true); }} />}
+      {view === 'lakes' && <FAB onClick={() => setShowAddLake(true)} />}
       <BottomNav view={view} onChange={setView} />
 
       {showAdd && (
@@ -421,6 +423,9 @@ export default function CarpApp() {
             setShowAddTrip(false); setEditTrip(null);
           }}
         />
+      )}
+      {showAddLake && (
+        <AddLakeModal onClose={() => setShowAddLake(false)} />
       )}
       {showSettings && (
         <SettingsModal
@@ -2096,10 +2101,20 @@ function AddTripModal({ existing, me, onClose, onSave }: {
   onSave: (data: Partial<Trip> & { name: string; start_date: string; end_date: string; visibility: TripVisibility }, inviteIds: string[]) => Promise<void>;
 }) {
   const [name, setName] = useState(existing?.name || '');
-  const [location, setLocation] = useState(existing?.location || '');
+  const [lakeId, setLakeId] = useState<string | null>(existing?.lake_id || null);
+  const [selectedLake, setSelectedLake] = useState<Lake | null>(null);
+  const [showLakePicker, setShowLakePicker] = useState(false);
+  // Hydrate selectedLake from lake_id on mount (when editing an existing trip).
+  useEffect(() => {
+    if (!lakeId || selectedLake) return;
+    let cancelled = false;
+    db.getLake(lakeId).then(l => { if (!cancelled && l) setSelectedLake(l); });
+    return () => { cancelled = true; };
+  }, [lakeId, selectedLake]);
   const [startDate, setStartDate] = useState(existing?.start_date ? isoToLocalDateInput(existing.start_date) : todayLocalDateInput());
   const [endDate, setEndDate]     = useState(existing?.end_date   ? isoToLocalDateInput(existing.end_date)   : tomorrowLocalDateInput());
   const [notes, setNotes] = useState(existing?.notes || '');
+  const [showNotes, setShowNotes] = useState(!!existing?.notes);
   const [visibility, setVisibility] = useState<TripVisibility>(existing?.visibility || 'invited_only');
   const [wagerEnabled, setWagerEnabled] = useState(existing?.wager_enabled || false);
   const [wagerDescription, setWagerDescription] = useState(existing?.wager_description || '');
@@ -2115,7 +2130,10 @@ function AddTripModal({ existing, me, onClose, onSave }: {
       await onSave({
         ...(existing ? { id: existing.id } : {}),
         name: name.trim(),
-        location: location.trim() || null,
+        // Prefer the picked lake's name as display location; fall back to
+        // whatever legacy text the existing trip already had.
+        location: selectedLake?.name || existing?.location || null,
+        lake_id: lakeId,
         start_date: new Date(startDate + 'T00:00:00').toISOString(),
         end_date: new Date(endDate + 'T23:59:59').toISOString(),
         notes: notes.trim() || null,
@@ -2130,8 +2148,50 @@ function AddTripModal({ existing, me, onClose, onSave }: {
     <VaulModalShell title={existing ? 'Edit trip' : 'New trip'} onClose={onClose}>
       <label className="label">Name</label>
       <input className="input" placeholder="e.g. France 2026" value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 16 }} />
-      <label className="label">Location</label>
-      <input className="input" placeholder="e.g. Étang du Moulin, Burgundy" value={location} onChange={(e) => setLocation(e.target.value)} style={{ marginBottom: 16 }} />
+      <label className="label">Lake</label>
+      {selectedLake ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 14, background: 'rgba(212,182,115,0.10)', border: '1px solid var(--gold)', marginBottom: 16 }}>
+          <MapPinned size={16} style={{ color: 'var(--gold-2)', flexShrink: 0 }} />
+          <span style={{ flex: 1, fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text)' }}>{selectedLake.name}</span>
+          <button type="button" onClick={() => { setLakeId(null); setSelectedLake(null); }} aria-label="Clear lake" style={{
+            width: 28, height: 28, padding: 0, borderRadius: 999, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-3)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}>
+            <X size={14} />
+          </button>
+        </div>
+      ) : existing?.location ? (
+        <button type="button" onClick={() => setShowLakePicker(true)} className="tap" style={{
+          width: '100%', padding: '12px 14px', borderRadius: 14,
+          background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.14)',
+          color: 'var(--text)', textAlign: 'left', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit',
+          display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16,
+        }}>
+          <MapPin size={14} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
+          <span style={{ flex: 1, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{existing.location}</span>
+          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>Change</span>
+        </button>
+      ) : (
+        <button type="button" onClick={() => setShowLakePicker(true)} className="tap" style={{
+          width: '100%', padding: '14px 16px', borderRadius: 14,
+          background: 'rgba(10,24,22,0.55)', border: '1px dashed rgba(234,201,136,0.22)',
+          color: 'var(--text-3)', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 16,
+        }}>
+          <Plus size={14} /> Pick a lake
+        </button>
+      )}
+      {showLakePicker && (
+        <AddLakeModal
+          stackLevel={1}
+          onClose={() => setShowLakePicker(false)}
+          onPicked={(lake) => {
+            setLakeId(lake.id);
+            setSelectedLake(lake);
+            setShowLakePicker(false);
+          }}
+        />
+      )}
       <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
         <div style={{ flex: 1 }}>
           <label className="label">Start</label>
@@ -2165,8 +2225,21 @@ function AddTripModal({ existing, me, onClose, onSave }: {
           );
         })}
       </div>
-      <label className="label">Notes</label>
-      <textarea className="input" rows={3} placeholder="Lake conditions, expectations, plan…" value={notes} onChange={(e) => setNotes(e.target.value)} style={{ marginBottom: 16, resize: 'vertical', fontFamily: 'inherit' }} />
+      {showNotes ? (
+        <>
+          <label className="label">Notes</label>
+          <textarea className="input" rows={3} placeholder="Lake conditions, expectations, plan…" value={notes} onChange={(e) => setNotes(e.target.value)} style={{ marginBottom: 16, resize: 'vertical', fontFamily: 'inherit' }} autoFocus={!existing?.notes} />
+        </>
+      ) : (
+        <button onClick={() => setShowNotes(true)} className="tap" style={{
+          width: '100%', padding: '14px 16px', borderRadius: 14,
+          background: 'rgba(10,24,22,0.55)', border: '1px dashed rgba(234,201,136,0.22)',
+          color: 'var(--text-3)', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 16,
+        }}>
+          <Plus size={14} /> Add notes
+        </button>
+      )}
 
       {/* Invite anglers (creation only) */}
       {!existing && (
@@ -2775,6 +2848,7 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
   const [rig, setRig] = useState(existing?.rig || '');
   const [hook, setHook] = useState(existing?.hook || '');
   const [notes, setNotes] = useState(existing?.notes || '');
+  const [showNotes, setShowNotes] = useState(!!existing?.notes);
   // Per-field privacy map. Anything not in the map (or 'public') is visible
   // to friends. 'private' renders as "Hidden by angler" for non-creator viewers.
   const [fieldVis, setFieldVis] = useState<import('@/lib/types').FieldVisibility>(existing?.field_visibility || {});
@@ -3213,9 +3287,22 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
           <div style={{ marginBottom: 14 }}><GearItemPicker type="rig" value={rig} onChange={setRig} meId={me.id} /></div>
           <label className="label">Hook</label>
           <div style={{ marginBottom: 14 }}><GearItemPicker type="hook" value={hook} onChange={setHook} meId={me.id} /></div>
-          <PrivacyLabel text="Notes" hidden={fieldVis.notes === 'private'} onToggle={() => toggleFieldVis('notes')} />
-          <textarea className="input" placeholder="Any details about the session, the fight, the conditions…" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
-            style={{ marginBottom: 8, resize: 'vertical', fontFamily: 'inherit' }} />
+          {showNotes ? (
+            <>
+              <PrivacyLabel text="Notes" hidden={fieldVis.notes === 'private'} onToggle={() => toggleFieldVis('notes')} />
+              <textarea className="input" placeholder="Any details about the session, the fight, the conditions…" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
+                style={{ marginBottom: 8, resize: 'vertical', fontFamily: 'inherit' }} autoFocus={!existing?.notes} />
+            </>
+          ) : (
+            <button onClick={() => setShowNotes(true)} className="tap" style={{
+              width: '100%', padding: '14px 16px', borderRadius: 14,
+              background: 'rgba(10,24,22,0.55)', border: '1px dashed rgba(234,201,136,0.22)',
+              color: 'var(--text-3)', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 8,
+            }}>
+              <Plus size={14} /> Add notes
+            </button>
+          )}
         </div>
       )}
 

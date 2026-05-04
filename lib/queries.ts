@@ -236,6 +236,8 @@ function totalOzLocal(c: Catch) { return c.lbs * 16 + c.oz; }
 export function useLakesEnriched() {
   const catches = useCatches().data || [];
   const lakes = useLakes().data || [];
+  const trips = useTrips().data || [];
+  const me = useMe().data || null;
   // We don't list annotations for every lake here; the badge just reflects
   // whatever the cache currently knows about. This is intentionally
   // best-effort — it only matters for the "Add notes" badge hint.
@@ -244,9 +246,26 @@ export function useLakesEnriched() {
   return useMemo<EnrichedLake[]>(() => {
     const byKey: Record<string, EnrichedLake & { _baits: Record<string, number> }> = {};
 
-    // Seed from the lakes table — this picks up OSM venues even when the
-    // user has zero catches at them.
-    lakes.forEach(l => {
+    // Determine which lakes "belong" to the user. db.listLakes() returns
+    // all lakes globally (no RLS), so without scoping we'd surface every
+    // OSM venue any user has ever discovered. Sources of ownership:
+    //   - lakes referenced by any catch I've logged (lake_id or by-name)
+    //   - lakes referenced by any trip I'm a member of (trips.lake_id)
+    //   - lakes I created (lakes.created_by = me.id)
+    const myLakeIds = new Set<string>();
+    const myLakeNames = new Set<string>();
+    catches.forEach(c => {
+      if ((c as any).lake_id) myLakeIds.add((c as any).lake_id);
+      if (c.lake) myLakeNames.add(norm(c.lake));
+    });
+    trips.forEach(t => { if (t.lake_id) myLakeIds.add(t.lake_id); });
+    if (me) lakes.forEach(l => { if (l.created_by === me.id) myLakeIds.add(l.id); });
+
+    const myLakes = lakes.filter(l => myLakeIds.has(l.id) || myLakeNames.has(norm(l.name)));
+
+    // Seed from MY lakes (subset of lakes table). Picks up trip-reserved
+    // lakes and manually-saved lakes even when the user has zero catches.
+    myLakes.forEach(l => {
       const key = l.id;
       byKey[key] = {
         key,
@@ -264,7 +283,8 @@ export function useLakesEnriched() {
         _baits: {},
       };
     });
-    // Index lake rows by lowercased name for catch-side joins.
+    // Index ALL lake rows by lowercased name so catch-side merges resolve
+    // even when a catch references a lake my filter would have skipped.
     const lakeByName: Record<string, Lake> = {};
     lakes.forEach(l => { lakeByName[norm(l.name)] = l; });
 

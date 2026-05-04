@@ -1,13 +1,12 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { ChevronRight, List as ListIcon, Loader2, Map as MapIcon, MapPin, MapPinned, Search } from 'lucide-react';
+import { List as ListIcon, Loader2, Map as MapIcon, MapPinned } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import * as db from '@/lib/db';
 import { useCatches, useLakes, useLakesEnriched, useUserLocationOnce, prefetchLake, type EnrichedLake } from '@/lib/queries';
 import { formatWeight, totalOz } from '@/lib/util';
 
-const DiscoverVenues = dynamic(() => import('./DiscoverVenues'), { ssr: false });
 const LakesMapInner = dynamic(() => import('./LakesMapInner'), {
   ssr: false,
   loading: () => (
@@ -64,7 +63,6 @@ export default function LakesView({ onOpenLake }: { onOpenLake: (name: string) =
   const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<Sort>('count');
   const [viewMode, setViewMode] = useState<ViewMode>('list');
-  const [showDiscover, setShowDiscover] = useState(false);
 
   useEffect(() => { setViewMode(readViewPref()); }, []);
 
@@ -121,31 +119,6 @@ export default function LakesView({ onOpenLake }: { onOpenLake: (name: string) =
     );
   }
 
-  // Discover button (shared by hero + empty state).
-  const discoverButton = (
-    <button onClick={() => setShowDiscover(true)} className="card tap" style={{
-      padding: 14,
-      display: 'flex', alignItems: 'center', gap: 12,
-      background: 'rgba(212,182,115,0.08)',
-      border: '1px solid rgba(234,201,136,0.3)',
-      cursor: 'pointer', width: '100%', textAlign: 'left', fontFamily: 'inherit',
-      color: 'var(--text)',
-    }}>
-      <div style={{
-        width: 40, height: 40, borderRadius: 12, flexShrink: 0,
-        background: 'rgba(212,182,115,0.18)', border: '1px solid rgba(234,201,136,0.4)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <MapPin size={18} style={{ color: 'var(--gold-2)' }} />
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>Find venues nearby</div>
-        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>Discover fishing spots via OpenStreetMap</div>
-      </div>
-      <ChevronRight size={16} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
-    </button>
-  );
-
   // Brand-new user empty state
   if (enriched.length === 0) {
     return (
@@ -154,22 +127,15 @@ export default function LakesView({ onOpenLake }: { onOpenLake: (name: string) =
           <MapPinned size={48} style={{ color: 'var(--text-3)', opacity: 0.4, margin: '0 auto 14px' }} />
           <h3 className="display-font" style={{ fontSize: 18, fontWeight: 500, margin: '0 0 6px' }}>No lakes yet</h3>
           <p style={{ color: 'var(--text-3)', fontSize: 13, lineHeight: 1.5, margin: '0 0 18px' }}>
-            Log your first catch to start building your venue history, or discover spots nearby.
+            Tap the <strong>+</strong> button to add your first lake, log a catch, or plan a trip.
           </p>
         </div>
-        {discoverButton}
-        {showDiscover && <DiscoverVenues onClose={() => setShowDiscover(false)} />}
       </div>
     );
   }
 
   return (
     <div style={{ padding: '8px 20px 20px' }}>
-      {/* DISCOVER BUTTON */}
-      <div style={{ marginBottom: 16 }}>
-        {discoverButton}
-      </div>
-
       {/* FILTER CHIPS */}
       <div className="scrollbar-thin" style={{ display: 'flex', gap: 6, marginBottom: 12, overflowX: 'auto', paddingBottom: 4 }}>
         {([
@@ -261,7 +227,6 @@ export default function LakesView({ onOpenLake }: { onOpenLake: (name: string) =
         </>
       )}
 
-      {showDiscover && <DiscoverVenues onClose={() => setShowDiscover(false)} />}
     </div>
   );
 }
@@ -296,7 +261,6 @@ function LakeCard({ lake, myCoords, onOpen, onPrefetch }: {
   onPrefetch: () => void;
 }) {
   const isSaved = lake.catchCount === 0;
-  const showAddNotesBadge = !lake.hasAnnotations && lake.catchCount > 0;
   const distance = (myCoords && lake.latitude != null && lake.longitude != null)
     ? haversineKm(myCoords, { lat: lake.latitude, lng: lake.longitude })
     : null;
@@ -307,30 +271,10 @@ function LakeCard({ lake, myCoords, onOpen, onPrefetch }: {
         display: 'flex', flexDirection: 'column', gap: 8,
         background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
         cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', color: 'var(--text)',
-        position: 'relative',
       }}>
-      {showAddNotesBadge && (
-        <span title="No annotations yet" style={{
-          position: 'absolute', top: 10, right: 10,
-          fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-          padding: '2px 6px', borderRadius: 999,
-          background: 'rgba(220,107,88,0.10)', color: 'var(--danger)',
-          border: '1px solid rgba(220,107,88,0.3)',
-        }}>Add notes</span>
-      )}
-
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
         <MapPinned size={18} style={{ color: isSaved ? 'var(--sage)' : 'var(--gold)', flexShrink: 0 }} />
         <h3 className="display-font" style={{ fontSize: 18, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{lake.name}</h3>
-        {lake.source === 'osm' && (
-          <span title="From OpenStreetMap" style={{
-            fontSize: 9, fontWeight: 700, letterSpacing: '0.05em',
-            padding: '2px 6px', borderRadius: 999,
-            background: 'rgba(141,191,157,0.15)', color: 'var(--sage)',
-            border: '1px solid rgba(141,191,157,0.4)',
-            flexShrink: 0,
-          }}>OSM</span>
-        )}
       </div>
 
       <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
