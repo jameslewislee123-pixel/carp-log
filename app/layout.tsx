@@ -1,6 +1,6 @@
 import './globals.css';
 import type { Metadata, Viewport } from 'next';
-import UnderwaterScene from '@/components/UnderwaterScene';
+import UnderwaterLottie from '@/components/UnderwaterLottie';
 import ServiceWorkerRegister from '@/components/ServiceWorkerRegister';
 import Providers from './providers';
 
@@ -49,7 +49,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <ServiceWorkerRegister />
-        <UnderwaterScene />
+        <UnderwaterLottie />
         <Providers>{children}</Providers>
       </body>
     </html>

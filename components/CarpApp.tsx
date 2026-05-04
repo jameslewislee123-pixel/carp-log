@@ -22,7 +22,7 @@ import GearItemPicker from './GearItemPicker';
 import GearManager from './GearManager';
 import LakeDetail from './LakeDetail';
 import PushSettings from './PushSettings';
-import { loadBgPrefs, saveBgPrefs } from './UnderwaterScene';
+import { readBgAnimationEnabled, writeBgAnimationEnabled } from './UnderwaterLottie';
 import type { TripSwimRoll } from '@/lib/types';
 import { Dices } from 'lucide-react';
 
@@ -3146,7 +3146,7 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
 
 function BgAnimationToggle() {
   const [enabled, setEnabled] = useState(true);
-  useEffect(() => { setEnabled(loadBgPrefs().enabled); }, []);
+  useEffect(() => { setEnabled(readBgAnimationEnabled()); }, []);
   return (
     <label className="tap" style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -3154,11 +3154,14 @@ function BgAnimationToggle() {
       background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
       cursor: 'pointer', marginBottom: 24,
     }}>
-      <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-2)' }}>Background animation</span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-2)' }}>Background animation</div>
+        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>Underwater scene behind the app</div>
+      </div>
       <input type="checkbox" checked={enabled} onChange={(e) => {
         const next = e.target.checked;
         setEnabled(next);
-        saveBgPrefs({ enabled: next });
+        writeBgAnimationEnabled(next);
       }} style={{ accentColor: 'var(--gold)' }} />
     </label>
   );

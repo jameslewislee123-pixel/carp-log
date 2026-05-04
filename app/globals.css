@@ -45,92 +45,9 @@ body {
   position: relative;
 }
 
-/* ============================================================
-   Underwater scene — looking up from beneath the surface.
-   All layers: pointer-events:none, fixed inset:0, z-index:0.
-   App content sits at z-index:1 above. ============================ */
-
-/* Static depth gradient — top is brighter (light from above), bottom dark. */
-.bg-water-base {
-  position: fixed; inset: 0; pointer-events: none; z-index: 0;
-  background:
-    radial-gradient(ellipse 90% 50% at 50% 0%, rgba(132, 198, 196, 0.16), transparent 70%),
-    linear-gradient(180deg, #0F3530 0%, #082724 35%, #050E0D 70%, #03080A 100%);
-}
-
-/* God rays — vertical light beams piercing the water. Each beam drifts
-   laterally over a long cycle and has a separate scaleY pulse to feel
-   organic. Heavy blur softens them so they read as volumetric light. */
-.bg-water-beams {
-  position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;
-  mix-blend-mode: screen;
-}
-.bg-water-beams span {
-  position: absolute; top: -10%; height: 130%;
-  background: linear-gradient(180deg,
-    transparent 0%,
-    rgba(220, 240, 245, 0.06) 25%,
-    rgba(220, 240, 245, 0.09) 50%,
-    rgba(220, 240, 245, 0.04) 75%,
-    transparent 100%);
-  filter: blur(40px);
-  transform-origin: 50% 0%;
-  animation:
-    beam-drift var(--drift, 80s) ease-in-out infinite alternate,
-    beam-pulse var(--pulse, 12s) ease-in-out infinite alternate;
-  will-change: transform;
-}
-@keyframes beam-drift {
-  from { transform: translateX(-12vw) skewX(-3deg); }
-  to   { transform: translateX(12vw)  skewX(3deg); }
-}
-@keyframes beam-pulse {
-  from { transform: scaleY(1)    scaleX(1); opacity: 0.85; }
-  to   { transform: scaleY(1.08) scaleX(1.05); opacity: 1; }
-}
-
-/* Caustics — soft cyan turbulence pattern, very low opacity, slow lateral
-   drift so the shimmer feels alive without distracting. */
-.bg-water-caustics {
-  position: fixed; inset: 0; pointer-events: none; z-index: 0;
-  opacity: 0.06;
-  mix-blend-mode: screen;
-  animation: caustic-drift 30s linear infinite;
-}
-@keyframes caustic-drift {
-  from { transform: translate3d(0, 0, 0); }
-  to   { transform: translate3d(-5%, 2%, 0); }
-}
-.bg-water-caustics svg {
-  width: 110%; height: 110%; display: block;
-}
-
-/* Floating particles — tiny dust motes drifting upward through the column. */
-.bg-water-particles {
-  position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;
-}
-.bg-water-particles span {
-  position: absolute; bottom: -2vh;
-  border-radius: 999px;
-  background: rgba(220, 240, 245, 0.9);
-  animation: particle-rise var(--dur, 30s) linear infinite;
-  will-change: transform, opacity;
-  opacity: 0;
-}
-@keyframes particle-rise {
-  0%   { transform: translate3d(0, 0, 0);                          opacity: 0; }
-  10%  { opacity: 1; }
-  90%  { opacity: 1; }
-  100% { transform: translate3d(var(--sway, 0), -110vh, 0);        opacity: 0; }
-}
-
-/* Honour reduced-motion: freeze beams/particles, leave the static gradient. */
-@media (prefers-reduced-motion: reduce) {
-  .bg-water-beams span,
-  .bg-water-caustics,
-  .bg-water-particles span { animation: none !important; }
-  .bg-water-particles span { opacity: 0.25; }
-}
+/* Underwater background is now a Lottie animation rendered by
+   <UnderwaterLottie/>. The previous CSS keyframe-based scene
+   (god rays + caustics + particles) has been removed entirely. */
 
 .app-root {
   font-family: 'Manrope', system-ui, sans-serif;
