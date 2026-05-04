@@ -9,7 +9,6 @@ import {
   Clock, Tent, MapPinned, Star, Users as UsersIcon, Lock, LogOut, UserPlus, Mail,
   Activity as ActivityIcon, Map as MapIcon, MessageSquare, ThumbsUp, Search,
 } from 'lucide-react';
-import { motion } from 'framer-motion';
 import { Drawer } from 'vaul';
 import InvitePicker from './InvitePicker';
 import TripChat from './TripChat';
@@ -3242,9 +3241,9 @@ function TelegramSetup({ notify, onSaveNotify }: { notify: NotifyConfig | null; 
 }
 
 // ============ SHELL ============
-// Module-scoped store: ModalShell increments while mounted; BottomNav + FAB
-// subscribe and hide themselves when count > 0. Stacks naturally if multiple
-// modals open simultaneously — they only reappear once every modal has closed.
+// Module-scoped store: VaulModalShell increments while mounted; BottomNav
+// and FAB subscribe and hide themselves when count > 0. Stacks naturally if
+// multiple modals are open — they only reappear once the last has closed.
 let modalOpenCount = 0;
 const modalListeners = new Set<() => void>();
 function subscribeModal(cb: () => void) { modalListeners.add(cb); return () => { modalListeners.delete(cb); }; }
@@ -3295,104 +3294,12 @@ function useScrollDim() {
   return React.useSyncExternalStore(subscribeDim, getDimSnapshot, getDimServerSnapshot);
 }
 
-function ModalShell({ title, onClose, hideTitle, headerAction, stackLevel = 0, children }: { title?: string; onClose: () => void; hideTitle?: boolean; headerAction?: React.ReactNode; stackLevel?: number; children: React.ReactNode }) {
-  useEffect(() => { document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = ''; }; }, []);
-  useEffect(() => {
-    modalOpenCount++;
-    modalListeners.forEach(l => l());
-    return () => {
-      modalOpenCount--;
-      modalListeners.forEach(l => l());
-    };
-  }, []);
-  // Each stackLevel adds 10 to z-index so a stacked modal sits above its parent.
-  const z = 100 + stackLevel * 10;
-  return (
-    <motion.div
-      style={{
-        position: 'fixed', inset: 0, zIndex: z,
-        background: 'rgba(3, 10, 9, 0.7)',
-        backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-      }}
-      onClick={onClose}
-    >
-      <motion.div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: '100%', maxWidth: 480,
-          // Use dvh so iOS Safari's URL bar / home indicator are accounted for.
-          // Falls back to 92vh on browsers that don't support dvh.
-          maxHeight: '92vh' as any,
-          height: 'min(92vh, calc(100dvh - 24px))' as any,
-          background: 'rgba(10, 24, 22, 0.92)',
-          backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-          borderRadius: '28px 28px 0 0', border: '1px solid rgba(234,201,136,0.14)', borderBottom: 'none',
-          position: 'relative',
-          boxShadow: '0 -10px 40px rgba(0,0,0,0.45)',
-          display: 'flex', flexDirection: 'column', minHeight: 0,
-        }}
-        initial={{ y: '100%' }}
-        animate={{ y: 0 }}
-        exit={{ y: '100%' }}
-        transition={{ type: 'spring', stiffness: 260, damping: 30 }}
-      >
-        {/* Decorative handle pill — purely visual, no drag interaction. */}
-        <div style={{
-          height: 28, flexShrink: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }} aria-hidden="true">
-          <div style={{ width: 44, height: 5, borderRadius: 999, background: 'rgba(255,255,255,0.22)' }} />
-        </div>
-
-        {/* HEADER — pinned outside the scroll region so it never moves with content. */}
-        <div style={{
-          flexShrink: 0,
-          padding: hideTitle ? '0 20px 8px' : '0 20px 12px',
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
-        }}>
-          {!hideTitle && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-              <h2 className="display-font" style={{ fontSize: 22, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h2>
-              {headerAction}
-            </div>
-          )}
-          {hideTitle ? (
-            <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6, padding: 4, fontFamily: 'inherit', fontSize: 14, cursor: 'pointer' }}>
-              <ArrowLeft size={18} /> Back
-            </button>
-          ) : (
-            <button onClick={onClose} aria-label="Close" style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 12, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-2)', flexShrink: 0, padding: 0 }}>
-              <X size={18} />
-            </button>
-          )}
-        </div>
-
-        {/* SCROLLABLE BODY — only this region scrolls; handle + header stay locked above. */}
-        <div style={{
-          flex: 1, minHeight: 0,
-          overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain',
-          touchAction: 'pan-y',
-          WebkitOverflowScrolling: 'touch' as any,
-          // Bottom padding accounts for the iOS home indicator AND a 24px breathing
-          // margin so the last row isn't flush against the dock area.
-          padding: '0 20px max(40px, calc(env(safe-area-inset-bottom) + 24px))',
-        }}>
-          {children}
-        </div>
-      </motion.div>
-    </motion.div>
-  );
-}
-
 // ============================================================
-// VaulModalShell — vaul-backed drop-in replacement for ModalShell.
-// Same visual language (handle pill, sticky header, scrollable body) but
-// vaul handles drag-to-dismiss properly: drag is constrained to the handle
-// area via `handleOnly`, body scrolling is uninterrupted, and snap-back
-// physics are spring-based. Used by every modal in the app. The legacy
-// ModalShell below is kept temporarily as a no-drag fallback in case any
-// regression surfaces; once we're confident, it can be deleted.
+// VaulModalShell — vaul-backed sheet used by every modal in the app.
+// Same visual language as iOS sheets (handle pill, sticky header,
+// scrollable body) but vaul handles drag-to-dismiss properly: drag is
+// constrained to the handle area via `handleOnly`, body scrolling is
+// uninterrupted, and snap-back physics are spring-based.
 // ============================================================
 function VaulModalShell({ title, onClose, hideTitle, headerAction, stackLevel = 0, children }: {
   title?: string; onClose: () => void; hideTitle?: boolean;
