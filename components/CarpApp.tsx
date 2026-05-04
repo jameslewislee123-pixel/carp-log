@@ -4352,8 +4352,12 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
               userSelect: 'none', WebkitUserSelect: 'none',
               cursor: 'grab',
               // Override vaul's default tiny-pill look (the wrapper paints
-              // its own visual pill below).
-              width: 'auto', background: 'transparent', margin: 0,
+              // its own visual pill below). vaul auto-injects CSS for
+              // [data-vaul-handle] including height:5px and width:32px —
+              // both must be explicitly overridden inline or the wrapper
+              // collapses to 5px and clips everything inside.
+              width: 'auto', height: 'auto',
+              background: 'transparent', margin: 0,
               display: 'block',
               // Vertical breathing room is what last sprint accidentally
               // collapsed: 8px above the pill, padding-bottom on the
