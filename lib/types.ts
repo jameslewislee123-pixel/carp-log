@@ -208,16 +208,25 @@ export type GearItem = {
   updated_at?: string;
 };
 
-export type LakeSource = 'manual' | 'osm' | 'imported';
+export type LakeSource = 'manual' | 'osm' | 'imported' | 'nominatim';
+export type LakePhotoSource = 'wikipedia' | 'satellite';
 export type Lake = {
   id: string;
   name: string;
   latitude: number | null;
   longitude: number | null;
   created_by: string | null;
-  // Provenance: 'manual' = user-typed, 'osm' = imported from OpenStreetMap.
-  // Column added via SQL migration; defaults to 'manual' for legacy rows.
+  // Provenance: 'manual' = user-typed, 'osm' = imported from
+  // OpenStreetMap (Overpass nearby), 'nominatim' = global name search.
   source: LakeSource;
+  // Search metadata (added 0011). All optional — legacy rows have null.
+  osm_id?: number | null;
+  osm_type?: string | null;
+  country?: string | null;
+  region?: string | null;
+  importance?: number | null;
+  photo_url?: string | null;
+  photo_source?: LakePhotoSource | null;
   created_at?: string;
 };
 

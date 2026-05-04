@@ -99,13 +99,51 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
           </button>
         </div>
 
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--gold-2)', fontWeight: 700, marginBottom: 4 }}>Lake</div>
-          <h2 className="display-font" style={{ fontSize: 28, margin: 0, fontWeight: 500, lineHeight: 1.1, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            <MapPinned size={20} style={{ color: 'var(--gold)' }} />
-            {lake.name}
-          </h2>
-        </div>
+        {lake.photo_url ? (
+          <div style={{
+            position: 'relative', width: '100%', height: 200, marginBottom: 14,
+            borderRadius: 18, overflow: 'hidden',
+            border: '1px solid rgba(234,201,136,0.18)',
+            background: 'rgba(10,24,22,0.6)',
+          }}>
+            <img src={lake.photo_url} alt="" style={{
+              width: '100%', height: '100%', objectFit: 'cover', display: 'block',
+            }} />
+            <div style={{
+              position: 'absolute', inset: 0,
+              background: 'linear-gradient(180deg, rgba(5,14,13,0.0) 30%, rgba(5,14,13,0.85) 100%)',
+            }} />
+            {lake.photo_source === 'satellite' && (
+              <span style={{
+                position: 'absolute', top: 10, left: 10,
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
+                padding: '3px 7px', borderRadius: 6,
+                background: 'rgba(5,14,13,0.85)', color: 'rgba(234,201,136,0.85)',
+                border: '1px solid rgba(234,201,136,0.25)',
+              }}>Satellite</span>
+            )}
+            <div style={{ position: 'absolute', left: 14, right: 14, bottom: 14 }}>
+              <div style={{ fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--gold-2)', fontWeight: 700, marginBottom: 4, textShadow: '0 1px 4px rgba(0,0,0,0.6)' }}>Lake</div>
+              <h2 className="display-font" style={{ fontSize: 26, margin: 0, fontWeight: 500, lineHeight: 1.1, color: 'var(--text)', textShadow: '0 2px 12px rgba(0,0,0,0.7)', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <MapPinned size={18} style={{ color: 'var(--gold)' }} />
+                {lake.name}
+              </h2>
+              {(lake.region || lake.country) && (
+                <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4, textShadow: '0 1px 4px rgba(0,0,0,0.6)' }}>
+                  {[lake.region, lake.country].filter(Boolean).join(', ')}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--gold-2)', fontWeight: 700, marginBottom: 4 }}>Lake</div>
+            <h2 className="display-font" style={{ fontSize: 28, margin: 0, fontWeight: 500, lineHeight: 1.1, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <MapPinned size={20} style={{ color: 'var(--gold)' }} />
+              {lake.name}
+            </h2>
+          </div>
+        )}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 14 }}>
           <Stat label="Fish" value={stats.count} />

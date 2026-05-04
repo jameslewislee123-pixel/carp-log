@@ -12,6 +12,7 @@ import {
   osmCacheKey, readOsmCache, writeOsmCache,
   fetchOverpassVenues, openDirections, type OSMVenue,
 } from '@/lib/osm';
+import { searchLakesGlobal, type GlobalLakeResult } from '@/lib/nominatim';
 import type { Lake } from '@/lib/types';
 import { VaulModalShell } from './CarpApp';
 
@@ -46,6 +47,37 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
     if (!q) return savedLakes.slice(0, 30);
     return savedLakes.filter(l => l.name.toLowerCase().includes(q)).slice(0, 30);
   }, [savedLakes, query]);
+
+  // Global Nominatim search — debounced, 3+ chars, single in-flight at a time.
+  const [globalResults, setGlobalResults] = useState<GlobalLakeResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchedQuery, setSearchedQuery] = useState('');
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < 3) {
+      setGlobalResults([]);
+      setSearching(false);
+      setSearchedQuery('');
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const results = await searchLakesGlobal(trimmed);
+        if (cancelled) return;
+        setGlobalResults(results);
+        setSearchedQuery(trimmed);
+      } catch {
+        if (cancelled) return;
+        setGlobalResults([]);
+        setSearchedQuery(trimmed);
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    }, 500);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [query]);
 
   const [center, setCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
@@ -158,44 +190,100 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
     } finally { setSavingManual(false); }
   }
 
+  async function pickGlobal(g: GlobalLakeResult) {
+    try {
+      const created = await db.createLakeFromGlobal({
+        osm_id: g.osm_id,
+        osm_type: g.osm_type,
+        name: g.name,
+        latitude: g.lat,
+        longitude: g.lon,
+        country: g.country || null,
+        region: g.region,
+        importance: g.importance,
+        photo_url: g.photo_url,
+        photo_source: g.photo_source,
+      });
+      qc.invalidateQueries({ queryKey: QK.lakes.all });
+      onPicked?.(created);
+      onClose();
+    } catch (e: any) {
+      alert(e?.message || 'Failed to add lake');
+    }
+  }
+
   return (
     <VaulModalShell title="Add a lake" onClose={onClose} stackLevel={stackLevel}>
-      {/* Search input */}
-      <div style={{ position: 'relative', marginBottom: 12 }}>
+      {/* Search input — global. Spinner shows while debounced fetch is in flight. */}
+      <div style={{ position: 'relative', marginBottom: 10 }}>
         <Search size={14} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-3)' }} />
         <input
           className="input"
-          placeholder="Search saved lakes…"
+          placeholder="Search lakes worldwide…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           autoCapitalize="words"
-          style={{ paddingLeft: 38, fontSize: 14 }}
+          style={{ paddingLeft: 38, paddingRight: 36, fontSize: 14 }}
         />
+        {searching && (
+          <Loader2 size={14} className="spin" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-3)' }} />
+        )}
       </div>
 
-      {/* Saved lakes list */}
-      {filteredSaved.length > 0 && (
+      <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 14, lineHeight: 1.4 }}>
+        Type 3+ characters to search OpenStreetMap. Wikipedia photos when available, satellite tile otherwise.
+      </div>
+
+      {/* Saved matches — only when query is non-empty and matches saved lakes */}
+      {query.trim() && filteredSaved.length > 0 && (
         <>
-          <div className="label" style={{ marginTop: 6 }}>Saved</div>
+          <div className="label" style={{ marginTop: 0 }}>Your saved lakes</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
             {filteredSaved.map(l => (
               <button key={l.id} onClick={() => pickSaved(l)} className="tap" style={{
                 display: 'flex', alignItems: 'center', gap: 10, padding: 10, borderRadius: 12,
-                background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
+                background: 'rgba(212,182,115,0.10)', border: '1px solid rgba(234,201,136,0.3)',
                 color: 'var(--text)', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
               }}>
-                <MapPinned size={14} style={{ color: l.source === 'osm' ? 'var(--sage)' : 'var(--gold-2)', flexShrink: 0 }} />
+                <MapPinned size={14} style={{ color: 'var(--gold-2)', flexShrink: 0 }} />
                 <span style={{ flex: 1, fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.name}</span>
+                <span style={{ fontSize: 10, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Saved</span>
               </button>
             ))}
           </div>
         </>
       )}
 
-      {filteredSaved.length === 0 && query.trim() && (
-        <div style={{ padding: '14px 0 18px', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
-          No saved lakes match "{query}".
-        </div>
+      {/* Worldwide cards */}
+      {query.trim().length >= 3 && (
+        <>
+          <div className="label">Worldwide</div>
+          {searching && globalResults.length === 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+              {[0, 1, 2].map(i => (
+                <div key={i} className="card" style={{ padding: 10, display: 'flex', alignItems: 'center', gap: 10, opacity: 0.5 }}>
+                  <div style={{ width: 80, height: 80, borderRadius: 10, background: 'rgba(10,24,22,0.6)', flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ height: 14, width: '60%', background: 'rgba(10,24,22,0.6)', borderRadius: 4, marginBottom: 6 }} />
+                    <div style={{ height: 11, width: '40%', background: 'rgba(10,24,22,0.6)', borderRadius: 4 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {!searching && globalResults.length === 0 && searchedQuery && (
+            <div style={{ padding: '14px 0', textAlign: 'center', color: 'var(--text-3)', fontSize: 12, marginBottom: 6 }}>
+              No matches worldwide. Add a custom lake below.
+            </div>
+          )}
+          {globalResults.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+              {globalResults.map(g => (
+                <GlobalResultCard key={`${g.osm_type}-${g.osm_id}`} result={g} onAdd={() => pickGlobal(g)} />
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {/* Manual entry */}
@@ -341,5 +429,51 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
         </a>
       </div>
     </VaulModalShell>
+  );
+}
+
+function GlobalResultCard({ result, onAdd }: { result: GlobalLakeResult; onAdd: () => void }) {
+  const [imgErr, setImgErr] = useState(false);
+  const subtitle = [result.region, result.country].filter(Boolean).join(', ');
+  return (
+    <div className="card" style={{ padding: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{
+        position: 'relative', width: 80, height: 80, borderRadius: 10, overflow: 'hidden',
+        flexShrink: 0, background: 'rgba(10,24,22,0.7)',
+      }}>
+        {!imgErr && result.photo_url && (
+          <img src={result.photo_url} alt="" onError={() => setImgErr(true)}
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+        )}
+        {imgErr && (
+          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <MapPinned size={20} style={{ color: 'var(--text-3)' }} />
+          </div>
+        )}
+        {result.photo_source === 'satellite' && !imgErr && (
+          <span style={{
+            position: 'absolute', top: 4, left: 4,
+            fontSize: 9, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
+            padding: '2px 5px', borderRadius: 4,
+            background: 'rgba(5,14,13,0.85)', color: 'rgba(234,201,136,0.85)',
+          }}>Sat</span>
+        )}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{result.name}</div>
+        {subtitle && (
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle}</div>
+        )}
+      </div>
+      <button onClick={onAdd} className="tap" aria-label="Add"
+        style={{
+          padding: '8px 12px', borderRadius: 999, flexShrink: 0,
+          background: 'var(--gold)', color: '#1A1004', border: 'none',
+          fontFamily: 'inherit', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+        }}>
+        <Plus size={12} /> Add
+      </button>
+    </div>
   );
 }

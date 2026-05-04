@@ -652,6 +652,49 @@ export async function getLakeByName(name: string): Promise<Lake | null> {
   return (data as Lake) || null;
 }
 
+// Persist a lake picked from the global Nominatim search. Carries the
+// rich metadata (osm_id, country, region, importance, photo_url, etc.)
+// so we don't have to re-resolve next time. Dedupes by osm_id — if the
+// user picks a lake they (or anyone) already added, we return the
+// existing row instead of creating a duplicate.
+export async function createLakeFromGlobal(input: {
+  osm_id: number;
+  osm_type: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  country: string | null;
+  region: string | null;
+  importance: number | null;
+  photo_url: string | null;
+  photo_source: 'wikipedia' | 'satellite' | null;
+}): Promise<Lake> {
+  // Dedupe by osm_id (any source — could already be saved as 'osm' from
+  // the nearby-discovery flow).
+  const { data: existing } = await supabase()
+    .from('lakes').select('*').eq('osm_id', input.osm_id).limit(1).maybeSingle();
+  if (existing) return existing as Lake;
+
+  const { data: { user } } = await supabase().auth.getUser();
+  const payload: any = {
+    name: input.name.trim(),
+    latitude: input.latitude,
+    longitude: input.longitude,
+    created_by: user?.id || null,
+    source: 'nominatim',
+    osm_id: input.osm_id,
+    osm_type: input.osm_type,
+    country: input.country,
+    region: input.region,
+    importance: input.importance,
+    photo_url: input.photo_url,
+    photo_source: input.photo_source,
+  };
+  const { data, error } = await supabase().from('lakes').insert(payload).select().single();
+  if (error) throw error;
+  return data as Lake;
+}
+
 // Manually-created lake (no OSM source). User typed a name, optionally
 // dropped a pin. Source='manual'. If a row with this name already
 // exists (case-insensitive) we return it instead of erroring on the
