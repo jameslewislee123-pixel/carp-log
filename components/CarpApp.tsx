@@ -539,10 +539,32 @@ function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenT
     return trips.find(t => +new Date(t.start_date) <= now && +new Date(t.end_date) >= now - 86400000);
   }, [trips]);
 
-  // Quick-select helpers for the simple pills row. Friend-by-friend
-  // filtering lives entirely inside FeedFilterModal now.
+  // Quick-select helpers for the simple pills row. Multi-friend selection
+  // happens via FeedFilterModal; tapping a friend pill removes that one
+  // friend from the active selection.
   function selectAll() { applyFilter({ ...filter, scope: 'all', selectedAnglerIds: [] }); }
   function selectMine() { applyFilter({ ...filter, scope: 'mine', selectedAnglerIds: [] }); }
+  function removeSelectedFriend(id: string) {
+    const next = filter.selectedAnglerIds.filter(x => x !== id);
+    if (next.length === 0) {
+      // Last friend removed → fall back to All so the feed isn't empty.
+      applyFilter({ ...filter, scope: 'all', selectedAnglerIds: [] });
+    } else {
+      applyFilter({ ...filter, selectedAnglerIds: next });
+    }
+  }
+
+  // Resolved profile objects for the pills row, in the order they were
+  // selected. Up to 2 are shown inline; the rest collapse into a "+N more"
+  // pill that opens the full filter modal.
+  const selectedFriendProfiles = useMemo(() => {
+    if (filter.scope !== 'selected') return [] as Profile[];
+    return filter.selectedAnglerIds
+      .map(id => profilesById[id])
+      .filter((p): p is Profile => !!p);
+  }, [filter.scope, filter.selectedAnglerIds, profilesById]);
+  const friendPillsToRender = selectedFriendProfiles.slice(0, 2);
+  const friendOverflowCount = Math.max(0, selectedFriendProfiles.length - 2);
 
   const fCount = activeFilterCount(filter);
 
@@ -553,6 +575,19 @@ function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenT
       <div className="scrollbar-thin" style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 16, paddingBottom: 4 }}>
         <Chip active={filter.scope === 'all'} onClick={selectAll}>All</Chip>
         <Chip active={filter.scope === 'mine'} onClick={selectMine}>Mine</Chip>
+        {friendPillsToRender.map(p => {
+          const label = p.display_name.length > 12 ? `${p.display_name.slice(0, 12)}…` : p.display_name;
+          return (
+            <Chip key={p.id} active onClick={() => removeSelectedFriend(p.id)}>
+              {label}
+            </Chip>
+          );
+        })}
+        {friendOverflowCount > 0 && (
+          <Chip active onClick={() => setFilterModalOpen(true)}>
+            +{friendOverflowCount} more
+          </Chip>
+        )}
         <button onClick={() => setFilterModalOpen(true)} className="tap" style={{
           flexShrink: 0, padding: '8px 14px', borderRadius: 999,
           border: `1px solid ${fCount > 0 ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
