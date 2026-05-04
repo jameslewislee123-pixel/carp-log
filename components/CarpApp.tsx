@@ -503,24 +503,6 @@ function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenT
   // Hydrate from localStorage on mount.
   useEffect(() => { setFilter(readFilter()); }, []);
 
-  // Three-pill simple selector ("All" / "Mine" / a friend) — purely a UX
-  // shortcut. Tapping a friend pill switches scope to 'selected' with that
-  // single id. The full FilterModal is the only way to multi-select.
-  const friendIdsWithRecentActivity = useMemo(() => {
-    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    const lastByAngler: Record<string, number> = {};
-    for (const c of catches) {
-      if (c.angler_id === me.id) continue;
-      const t = +new Date(c.date);
-      if (t < cutoff) continue;
-      if (!lastByAngler[c.angler_id] || t > lastByAngler[c.angler_id]) lastByAngler[c.angler_id] = t;
-    }
-    return Object.entries(lastByAngler).sort((a, b) => b[1] - a[1]).map(([id]) => id).slice(0, 3);
-  }, [catches, me.id]);
-  const topFriends = friendIdsWithRecentActivity
-    .map(id => profilesById[id])
-    .filter((p): p is Profile => !!p);
-
   // Filter chain. Apply each dimension in turn. Sort by date desc.
   const filtered = useMemo(() => {
     const sorted = [...catches].sort((a, b) => +new Date(b.date) - +new Date(a.date));
@@ -557,15 +539,10 @@ function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenT
     return trips.find(t => +new Date(t.start_date) <= now && +new Date(t.end_date) >= now - 86400000);
   }, [trips]);
 
-  // Quick-select helpers for the simple pills row.
+  // Quick-select helpers for the simple pills row. Friend-by-friend
+  // filtering lives entirely inside FeedFilterModal now.
   function selectAll() { applyFilter({ ...filter, scope: 'all', selectedAnglerIds: [] }); }
   function selectMine() { applyFilter({ ...filter, scope: 'mine', selectedAnglerIds: [] }); }
-  function selectFriend(id: string) {
-    applyFilter({ ...filter, scope: 'selected', selectedAnglerIds: [id] });
-  }
-  // True when the current scope is "exactly this one friend".
-  const isOnlyFriend = (id: string) =>
-    filter.scope === 'selected' && filter.selectedAnglerIds.length === 1 && filter.selectedAnglerIds[0] === id;
 
   const fCount = activeFilterCount(filter);
 
@@ -576,9 +553,6 @@ function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenT
       <div className="scrollbar-thin" style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 16, paddingBottom: 4 }}>
         <Chip active={filter.scope === 'all'} onClick={selectAll}>All</Chip>
         <Chip active={filter.scope === 'mine'} onClick={selectMine}>Mine</Chip>
-        {topFriends.map(p => (
-          <Chip key={p.id} active={isOnlyFriend(p.id)} onClick={() => selectFriend(p.id)}>{p.display_name}</Chip>
-        ))}
         <button onClick={() => setFilterModalOpen(true)} className="tap" style={{
           flexShrink: 0, padding: '8px 14px', borderRadius: 999,
           border: `1px solid ${fCount > 0 ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
