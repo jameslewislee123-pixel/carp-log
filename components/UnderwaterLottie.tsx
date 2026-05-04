@@ -6,8 +6,8 @@ import type { LottieRefCurrentProps } from 'lottie-react';
 // SSR-disabled because lottie-react touches `window` on import.
 const Lottie = dynamic(() => import('lottie-react'), { ssr: false });
 
-// 0.4x of native 30fps → the 8s native loop plays over ~20s.
-const PLAYBACK_SPEED = 0.4;
+// 0.3x of native 30fps → the 8s native loop plays over ~27s.
+const PLAYBACK_SPEED = 0.3;
 
 const STORAGE_KEY = 'bg_animation_enabled';
 const TOGGLE_EVENT = 'bg-animation-toggle';
