@@ -34,7 +34,8 @@ import { hasSupabase, supabase } from '@/lib/supabase/client';
 import * as db from '@/lib/db';
 import {
   useMe, useCatches, useTrips, useMyNotifyConfig, useUnreadCount,
-  useProfilesByIds, useCommentCounts, useLakes, prefetchTrip, prefetchLake, prefetchNotifications,
+  useProfilesByIds, useCommentCounts, useLakes, useLakeStatsTiles,
+  prefetchTrip, prefetchLake, prefetchNotifications,
 } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
 import type {
@@ -1755,13 +1756,14 @@ function Stats({ catches, profilesById, me, onOpen }: {
   catches: CatchT[]; profilesById: Record<string, Profile>; me: Profile;
   onOpen: (c: CatchT) => void;
 }) {
-  const [tab, setTab] = useState<'personal' | 'crew' | 'time' | 'bait'>('personal');
+  const [tab, setTab] = useState<'personal' | 'crew' | 'time' | 'bait' | 'lakes'>('personal');
   if (catches.length === 0) return <div style={{ padding: '40px 20px' }}><EmptyState /></div>;
   const tabs = [
     { id: 'personal' as const, label: 'Personal', icon: Sparkles },
     { id: 'crew' as const,     label: 'Crew',     icon: Trophy },
     { id: 'time' as const,     label: 'Time',     icon: Clock },
     { id: 'bait' as const,     label: 'Bait',     icon: BarChart3 },
+    { id: 'lakes' as const,    label: 'Lakes',    icon: MapPinned },
   ];
   return (
     <div style={{ padding: '8px 20px' }}>
@@ -1787,6 +1789,54 @@ function Stats({ catches, profilesById, me, onOpen }: {
       {tab === 'crew' && <StatsCrew catches={catches} profilesById={profilesById} me={me} onOpen={onOpen} />}
       {tab === 'time' && <StatsTime catches={catches} />}
       {tab === 'bait' && <StatsBait catches={catches} />}
+      {tab === 'lakes' && <StatsLakesTab />}
+    </div>
+  );
+}
+
+// Stats → Lakes sub-tab. The 4 hero tiles previously sat at the top of the
+// Lakes top-level page; they live here now so Stats remains the home for
+// "what does my year look like" summaries while the Lakes tab is purely
+// venue management. Both surfaces read from useLakeStatsTiles so the
+// numbers stay in sync.
+function StatsLakesTab() {
+  const t = useLakeStatsTiles();
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+      <LakeStatTile label="Lakes fished" value={t.lakesFished} />
+      <LakeStatTile label="Saved venues" value={t.savedVenues} />
+      <LakeStatTile
+        label="Biggest fish at"
+        value={t.biggestLakeName || '—'}
+        sub={t.biggest ? formatWeight(t.biggest.lbs, t.biggest.oz) : undefined}
+        small
+      />
+      <LakeStatTile
+        label="Most productive"
+        value={t.productiveName || '—'}
+        sub={t.productiveCount > 0 ? `${t.productiveCount} catches` : undefined}
+        small
+      />
+    </div>
+  );
+}
+
+function LakeStatTile({ label, value, sub, small }: { label: string; value: string | number; sub?: string; small?: boolean }) {
+  return (
+    <div style={{
+      background: 'rgba(10,24,22,0.55)',
+      border: '1px solid rgba(234,201,136,0.14)',
+      borderRadius: 14, padding: 12,
+      backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+      minHeight: 78,
+    }}>
+      <div style={{ fontSize: 10, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600 }}>{label}</div>
+      <div className="display-font" style={{
+        fontSize: small ? 16 : 24, color: 'var(--gold-2)', fontWeight: 500,
+        marginTop: 4, lineHeight: 1.1,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: small ? 'nowrap' : 'normal',
+      }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>}
     </div>
   );
 }

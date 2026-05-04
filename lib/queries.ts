@@ -268,6 +268,37 @@ export function useLakesEnriched() {
   }, [catches, lakes]);
 }
 
+// Single source of truth for the four lake-summary tiles. Used by both the
+// Lakes top-level page (previously) and the Stats → Lakes sub-tab. Keeps the
+// numbers identical across both surfaces.
+export type LakeStatsTiles = {
+  lakesFished: number;
+  savedVenues: number;
+  biggest: Catch | null;
+  biggestLakeName: string | null;
+  productiveName: string | null;
+  productiveCount: number;
+};
+export function useLakeStatsTiles(): LakeStatsTiles {
+  const enriched = useLakesEnriched();
+  return useMemo(() => {
+    const lakesFished = enriched.filter(l => l.catchCount > 0).length;
+    const savedVenues = enriched.filter(l => l.catchCount === 0 && l.source === 'osm').length;
+    const allMyPbs = enriched.filter(l => l.pbCatch).map(l => l.pbCatch!);
+    const biggest = allMyPbs.reduce<Catch | null>((m, c) => !m || (c.lbs * 16 + c.oz) > (m.lbs * 16 + m.oz) ? c : m, null);
+    const biggestLake = biggest ? enriched.find(l => l.pbCatch?.id === biggest.id) || null : null;
+    const productive = [...enriched].sort((a, b) => b.catchCount - a.catchCount)[0] || null;
+    return {
+      lakesFished,
+      savedVenues,
+      biggest,
+      biggestLakeName: biggestLake?.name || null,
+      productiveName: (productive && productive.catchCount > 0) ? productive.name : null,
+      productiveCount: (productive && productive.catchCount > 0) ? productive.catchCount : 0,
+    };
+  }, [enriched]);
+}
+
 // One-shot GPS fetch with cached result. Used by the "Closest to me" sort
 // in LakesView. Resolves to null if the user denies / the device has no GPS.
 export function useUserLocationOnce(): { coords: { lat: number; lng: number } | null; ready: boolean } {

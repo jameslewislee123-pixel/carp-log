@@ -111,22 +111,6 @@ export default function LakesView({ onOpenLake }: { onOpenLake: (name: string) =
     return arr;
   }, [filtered, sort, myCoords]);
 
-  // Hero stats — derived from the FULL enriched set (filter doesn't affect them).
-  const hero = useMemo(() => {
-    const fishedCount = enriched.filter(l => l.catchCount > 0).length;
-    const savedCount = enriched.filter(l => l.catchCount === 0 && l.source === 'osm').length;
-    const allMyPbs = enriched.filter(l => l.pbCatch).map(l => l.pbCatch!);
-    const biggest = allMyPbs.reduce<typeof allMyPbs[0] | null>((m, c) => !m || totalOz(c.lbs, c.oz) > totalOz(m.lbs, m.oz) ? c : m, null);
-    const biggestLake = biggest ? enriched.find(l => l.pbCatch?.id === biggest.id) || null : null;
-    const productive = [...enriched].sort((a, b) => b.catchCount - a.catchCount)[0] || null;
-    return {
-      fishedCount,
-      savedCount,
-      biggest, biggestLakeName: biggestLake?.name || null,
-      productive: (productive && productive.catchCount > 0) ? productive : null,
-    };
-  }, [enriched]);
-
   const isInitialLoad = !lakesQuery.isFetched && !catchesQuery.isFetched;
 
   if (isInitialLoad) {
@@ -181,30 +165,6 @@ export default function LakesView({ onOpenLake }: { onOpenLake: (name: string) =
 
   return (
     <div style={{ padding: '8px 20px 20px' }}>
-      {/* HERO STATS — 2x2 grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 16 }}>
-        <HeroTile
-          label="Lakes fished"
-          value={hero.fishedCount}
-        />
-        <HeroTile
-          label="Saved venues"
-          value={hero.savedCount}
-        />
-        <HeroTile
-          label="Biggest fish at"
-          value={hero.biggestLakeName || '—'}
-          sub={hero.biggest ? formatWeight(hero.biggest.lbs, hero.biggest.oz) : undefined}
-          small
-        />
-        <HeroTile
-          label="Most productive"
-          value={hero.productive?.name || '—'}
-          sub={hero.productive ? `${hero.productive.catchCount} catches` : undefined}
-          small
-        />
-      </div>
-
       {/* DISCOVER BUTTON */}
       <div style={{ marginBottom: 16 }}>
         {discoverButton}
@@ -302,26 +262,6 @@ export default function LakesView({ onOpenLake }: { onOpenLake: (name: string) =
       )}
 
       {showDiscover && <DiscoverVenues onClose={() => setShowDiscover(false)} />}
-    </div>
-  );
-}
-
-function HeroTile({ label, value, sub, small }: { label: string; value: string | number; sub?: string; small?: boolean }) {
-  return (
-    <div style={{
-      background: 'rgba(10,24,22,0.55)',
-      border: '1px solid rgba(234,201,136,0.14)',
-      borderRadius: 14, padding: 12,
-      backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-      minHeight: 78,
-    }}>
-      <div style={{ fontSize: 10, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600 }}>{label}</div>
-      <div className="display-font" style={{
-        fontSize: small ? 16 : 24, color: 'var(--gold-2)', fontWeight: 500,
-        marginTop: 4, lineHeight: 1.1,
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: small ? 'nowrap' : 'normal',
-      }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>}
     </div>
   );
 }
