@@ -563,8 +563,11 @@ function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenT
       .map(id => profilesById[id])
       .filter((p): p is Profile => !!p);
   }, [filter.scope, filter.selectedAnglerIds, profilesById]);
-  const friendPillsToRender = selectedFriendProfiles.slice(0, 2);
-  const friendOverflowCount = Math.max(0, selectedFriendProfiles.length - 2);
+  // Spec: up to 3 inline; 4+ collapses everything beyond 2 into "+N more"
+  // so the row stays clean.
+  const inlineCount = selectedFriendProfiles.length <= 3 ? selectedFriendProfiles.length : 2;
+  const friendPillsToRender = selectedFriendProfiles.slice(0, inlineCount);
+  const friendOverflowCount = Math.max(0, selectedFriendProfiles.length - inlineCount);
 
   const fCount = activeFilterCount(filter);
 
