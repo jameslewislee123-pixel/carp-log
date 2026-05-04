@@ -5,6 +5,18 @@ import { useMemo } from 'react';
 import type { Catch, LakeAnnotation, Profile } from '@/lib/types';
 import { formatWeight } from '@/lib/util';
 
+// Tear-drop pin for the lake itself. Gold, distinct from the angler-coloured
+// catch pins and the round annotation badges. Always rendered at `center`
+// so a freshly-bookmarked seed lake with zero catches/annotations still
+// shows where it is.
+function lakeCenterIcon() {
+  return L.divIcon({
+    className: 'lake-center-pin',
+    html: `<div style="width:34px;height:34px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:linear-gradient(180deg,#EAC988,#D4B673);border:2px solid #1A1004;box-shadow:0 6px 14px rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;"><span style="transform:rotate(45deg);font-size:16px;">🎣</span></div>`,
+    iconSize: [34, 34], iconAnchor: [17, 34], popupAnchor: [0, -30],
+  });
+}
+
 const COLORS = ['#C9A961', '#7BA888', '#D8826B', '#9A8FBF', '#7AA8C4', '#B07A3F'];
 function colorFor(seed: string) {
   let h = 0; for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
@@ -40,7 +52,7 @@ function ClickCapture({ enabled, onPick }: { enabled: boolean; onPick: (lat: num
 }
 
 export default function LakeMapInner({
-  center, catches, annotations, profilesById, dropMode, onDropPick, onOpenCatch, onOpenAnnotation,
+  center, catches, annotations, profilesById, dropMode, onDropPick, onOpenCatch, onOpenAnnotation, lakeName,
 }: {
   center: { lat: number; lng: number };
   catches: Catch[];
@@ -50,6 +62,7 @@ export default function LakeMapInner({
   onDropPick: (lat: number, lng: number) => void;
   onOpenCatch: (c: Catch) => void;
   onOpenAnnotation: (a: LakeAnnotation) => void;
+  lakeName?: string;
 }) {
   const bounds = useMemo(() => {
     const pts: [number, number][] = [];
@@ -70,6 +83,19 @@ export default function LakeMapInner({
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>'
         />
         <ClickCapture enabled={dropMode} onPick={onDropPick} />
+
+        <Marker position={[center.lat, center.lng]} icon={lakeCenterIcon()}>
+          <Popup>
+            <div style={{ minWidth: 140 }}>
+              <div style={{ fontFamily: 'Fraunces, serif', fontSize: 16, color: '#EAC988', lineHeight: 1.2 }}>
+                {lakeName || 'Lake'}
+              </div>
+              <div style={{ fontSize: 11, color: '#B5B6A6', marginTop: 2 }}>
+                {center.lat.toFixed(4)}, {center.lng.toFixed(4)}
+              </div>
+            </div>
+          </Popup>
+        </Marker>
 
         {catches.filter(c => c.latitude != null && c.longitude != null).map(c => {
           const p = profilesById[c.angler_id];

@@ -224,6 +224,7 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
             onDropPick={(lat, lng) => { setPendingDrop({ lat, lng }); setDropMode(false); }}
             onOpenCatch={onOpenCatch}
             onOpenAnnotation={setOpenAnno}
+            lakeName={lake.name}
           />
         )}
 
