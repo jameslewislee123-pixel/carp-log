@@ -541,9 +541,13 @@ function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenT
   // Hydrate from localStorage on mount.
   useEffect(() => { setFilter(readFilter()); }, []);
 
-  // Filter chain. Apply each dimension in turn. Sort by date desc.
+  // Filter chain. Apply each dimension in turn. Sort by upload time desc
+  // (created_at, not catch date) so a freshly-logged catch with an old
+  // date still surfaces at the top — the feed is "what's new in the
+  // app", not "what was caught most recently in the world".
   const filtered = useMemo(() => {
-    const sorted = [...catches].sort((a, b) => +new Date(b.date) - +new Date(a.date));
+    const ts = (c: CatchT) => +new Date(c.created_at || c.date);
+    const sorted = [...catches].sort((a, b) => ts(b) - ts(a));
     return sorted.filter(c => {
       // Scope
       if (filter.scope === 'mine') { if (c.angler_id !== me.id) return false; }
@@ -3698,32 +3702,34 @@ export function CatchDetail({ catchData, me, profilesById, trips, stackLevel, on
         </button>
       )}
 
-      <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-        {(() => {
-          const fv = catchData.field_visibility || {};
-          // For each privacy-aware field, render either the value, "Hidden by
-          // angler" (non-creator view of a private field), or nothing if the
-          // field is empty.
-          const renderField = (key: 'lake' | 'swim' | 'bait' | 'rig', label: string, icon?: React.ReactNode) => {
-            const value = catchData[key];
-            const isPrivate = fv[key] === 'private';
-            if (!value && !isPrivate) return null;
-            if (isPrivate && !isMyCatch) {
-              return <DetailRow icon={<Lock size={14} />} label={label} value="Hidden by angler" muted />;
-            }
-            if (!value) return null;
-            return <DetailRow icon={icon} label={label} value={value} privateBadge={isPrivate} />;
-          };
-          return (
-            <>
-              {renderField('lake', 'Lake', <MapPin size={14} />)}
-              {renderField('swim', 'Swim', <MapPin size={14} />)}
-              {renderField('bait', 'Bait')}
-              {renderField('rig', 'Rig')}
-            </>
-          );
-        })()}
-      </div>
+      {(() => {
+        const fv = catchData.field_visibility || {};
+        // For each privacy-aware field, render either the value, "Hidden by
+        // angler" (non-creator view of a private field), or nothing if the
+        // field is empty.
+        const renderField = (key: 'lake' | 'swim' | 'bait' | 'rig', label: string, icon?: React.ReactNode) => {
+          const value = catchData[key];
+          const isPrivate = fv[key] === 'private';
+          if (!value && !isPrivate) return null;
+          if (isPrivate && !isMyCatch) {
+            return <DetailRow key={key} icon={<Lock size={14} />} label={label} value="Hidden by angler" muted />;
+          }
+          if (!value) return null;
+          return <DetailRow key={key} icon={icon} label={label} value={value} privateBadge={isPrivate} />;
+        };
+        const rows = [
+          renderField('lake', 'Lake', <MapPin size={14} />),
+          renderField('swim', 'Swim', <MapPin size={14} />),
+          renderField('bait', 'Bait'),
+          renderField('rig', 'Rig'),
+        ].filter(Boolean);
+        if (rows.length === 0) return null;
+        return (
+          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+            {rows}
+          </div>
+        );
+      })()}
 
       {weather && (weather.tempC != null || weather.conditions || weather.wind || weather.pressure != null) && (
         <div className="card" style={{ padding: 16, marginBottom: 16 }}>
