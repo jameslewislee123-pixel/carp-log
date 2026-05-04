@@ -36,7 +36,9 @@ export async function searchLakesGlobal(query: string): Promise<GlobalLakeResult
   const trimmed = query.trim();
   if (trimmed.length < 3) return [];
 
-  const cacheKey = `lake_search:${trimmed.toLowerCase()}`;
+  // v2 prefix: filter bug in v1 cached empty arrays for queries that
+  // should have returned results. Bumping invalidates those entries.
+  const cacheKey = `lake_search_v2:${trimmed.toLowerCase()}`;
   if (typeof window !== 'undefined') {
     try {
       const cached = window.localStorage.getItem(cacheKey);
@@ -76,29 +78,34 @@ export async function searchLakesGlobal(query: string): Promise<GlobalLakeResult
     if (!response.ok) throw new Error(`Nominatim ${response.status}`);
     const raw = await response.json();
 
+    // Permissive water-feature filter. Nominatim's jsonv2 response classifies
+    // lakes as `category: 'water', type: 'lake'` — NOT `category: 'natural'`
+    // as the older docs imply. We accept any of: category match, top-level
+    // type match, addresstype match, or `extratags.natural` set to water/wetland.
+    const waterTypes = ['water', 'lake', 'pond', 'reservoir', 'basin', 'wetland', 'bay', 'lagoon', 'oxbow'];
     const lakes: Raw[] = (Array.isArray(raw) ? raw : [])
       .filter((r: any) => {
-        // Filter to water-body features. Nominatim returns class/type like:
-        //   class=natural type=water        — lakes, ponds, reservoirs
-        //   class=natural type=wetland|bay
-        //   class=landuse type=reservoir    — older reservoir tagging
-        //   class=waterway type=...         — rivers (skip)
-        const cls = r.class as string | undefined;
-        const type = r.type as string | undefined;
-        if (!cls || !type) return false;
-        if (cls === 'natural' && ['water', 'wetland', 'bay'].includes(type)) return true;
-        if (cls === 'landuse' && type === 'reservoir') return true;
-        if (['lake', 'pond', 'reservoir', 'basin'].includes(type)) return true;
-        return false;
+        const type = (r.type || '').toLowerCase();
+        const category = (r.category || r.class || '').toLowerCase();
+        const addresstype = (r.addresstype || '').toLowerCase();
+        const naturalTag = (r.extratags?.natural || '').toLowerCase();
+        return (
+          category === 'water' ||
+          category === 'natural' ||
+          waterTypes.includes(type) ||
+          waterTypes.includes(addresstype) ||
+          naturalTag === 'water' || naturalTag === 'wetland'
+        );
       })
       .map((r: any): Raw => {
         const lat = parseFloat(r.lat);
         const lon = parseFloat(r.lon);
         const wikipedia = r.extratags?.wikipedia as string | undefined;
         const wikidata = r.extratags?.wikidata as string | undefined;
-        const name: string = (r.namedetails?.name as string | undefined)
-          || (r.display_name as string | undefined)?.split(',')[0]?.trim()
-          || 'Unnamed water';
+        const englishName = r.namedetails?.['name:en'] as string | undefined;
+        const localName = r.namedetails?.name as string | undefined;
+        const displayFirst = (r.display_name as string | undefined)?.split(',')[0]?.trim();
+        const name: string = englishName || (r.name as string | undefined) || localName || displayFirst || 'Unnamed water';
         return {
           osm_id: Number(r.osm_id),
           osm_type: r.osm_type,
