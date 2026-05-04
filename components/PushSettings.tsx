@@ -14,6 +14,7 @@ const TYPES: { key: string; label: string; help: string }[] = [
   { key: 'friend_request',    label: 'Friend requests',       help: 'When someone wants to be your friend' },
   { key: 'friend_accepted',   label: 'Friend accepted',       help: 'When someone accepts your request' },
   { key: 'comment_on_catch',  label: 'Comments on your catches', help: 'When someone comments on a fish you banked' },
+  { key: 'catch_liked',       label: 'Likes on your catches',    help: 'When someone likes a fish you banked' },
 ];
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {

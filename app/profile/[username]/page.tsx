@@ -54,6 +54,10 @@ export default function ProfilePage() {
   const isMe = me?.id === profile.id;
   const isFriend = friendship?.status === 'accepted';
   const isPending = friendship?.status === 'pending';
+  // 'sent' = current user sent the request (we can cancel it)
+  // 'incoming' = profile owner sent us a request (we can accept/decline)
+  const sentByMe = friendship?.requester_id === me?.id && isPending;
+  const incomingFromThem = friendship?.requester_id === profile.id && isPending;
 
   const stats = (() => {
     const landed = catches.filter(c => !c.lost);
@@ -69,6 +73,45 @@ export default function ProfilePage() {
     try {
       await db.requestFriend(profile.id);
       // Cache invalidate — the friendships query refetches itself in the background.
+      friendshipsQuery.refetch();
+    } catch (e: any) { alert(e?.message || 'Failed'); }
+    finally { setBusy(false); }
+  }
+
+  async function unfriend() {
+    if (!profile) return;
+    if (!confirm(`Unfriend ${profile.display_name}?`)) return;
+    setBusy(true);
+    try {
+      await db.deleteFriendshipWith(profile.id);
+      friendshipsQuery.refetch();
+    } catch (e: any) { alert(e?.message || 'Failed'); }
+    finally { setBusy(false); }
+  }
+  async function cancelRequest() {
+    if (!profile) return;
+    if (!confirm(`Cancel friend request to ${profile.display_name}?`)) return;
+    setBusy(true);
+    try {
+      await db.deleteFriendshipWith(profile.id);
+      friendshipsQuery.refetch();
+    } catch (e: any) { alert(e?.message || 'Failed'); }
+    finally { setBusy(false); }
+  }
+  async function acceptIncoming() {
+    if (!friendship) return;
+    setBusy(true);
+    try {
+      await db.acceptFriend(friendship.id);
+      friendshipsQuery.refetch();
+    } catch (e: any) { alert(e?.message || 'Failed'); }
+    finally { setBusy(false); }
+  }
+  async function declineIncoming() {
+    if (!friendship) return;
+    setBusy(true);
+    try {
+      await db.declineFriend(friendship.id);
       friendshipsQuery.refetch();
     } catch (e: any) { alert(e?.message || 'Failed'); }
     finally { setBusy(false); }
@@ -98,17 +141,35 @@ export default function ProfilePage() {
         {!isMe && (
           <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
             {isFriend ? (
-              <button disabled style={{
+              <button onClick={unfriend} disabled={busy} className="tap" style={{
                 flex: 1, padding: '12px', borderRadius: 14, border: '1px solid var(--sage)',
                 background: 'rgba(141,191,157,0.12)', color: 'var(--sage)', fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-              }}><Check size={14} /> Friends</button>
-            ) : isPending ? (
-              <button disabled style={{
+                cursor: busy ? 'wait' : 'pointer',
+              }}>
+                {busy ? <Loader2 size={14} className="spin" /> : <><Check size={14} /> Friends</>}
+              </button>
+            ) : sentByMe ? (
+              <button onClick={cancelRequest} disabled={busy} className="tap" style={{
                 flex: 1, padding: '12px', borderRadius: 14, border: '1px solid rgba(234,201,136,0.3)',
                 background: 'rgba(212,182,115,0.08)', color: 'var(--gold-2)', fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-              }}><Clock size={14} /> Pending</button>
+                cursor: busy ? 'wait' : 'pointer',
+              }}>
+                {busy ? <Loader2 size={14} className="spin" /> : <><Clock size={14} /> Request sent</>}
+              </button>
+            ) : incomingFromThem ? (
+              <>
+                <button onClick={acceptIncoming} disabled={busy} className="btn btn-primary tap" style={{ flex: 1, fontSize: 14 }}>
+                  {busy ? <Loader2 size={14} className="spin" /> : <Check size={14} />} Accept
+                </button>
+                <button onClick={declineIncoming} disabled={busy} className="tap" style={{
+                  flex: '0 0 auto', padding: '12px 16px', borderRadius: 14,
+                  border: '1px solid rgba(234,201,136,0.18)', background: 'transparent',
+                  color: 'var(--text-3)', fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
+                  cursor: busy ? 'wait' : 'pointer',
+                }}>Decline</button>
+              </>
             ) : (
               <button onClick={addFriend} disabled={busy} className="btn btn-primary tap" style={{ flex: 1, fontSize: 14 }}>
                 {busy ? <Loader2 size={14} className="spin" /> : <UserPlus size={14} />} Add friend

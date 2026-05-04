@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AtSign, Bell, Check, Fish, Loader2, MessageCircle, Tent, UserPlus, X } from 'lucide-react';
+import { AtSign, Bell, Check, Fish, Loader2, MessageCircle, Tent, ThumbsUp, UserPlus, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as db from '@/lib/db';
 import type { AppNotification, Catch as CatchT, Profile, Trip } from '@/lib/types';
@@ -162,7 +162,8 @@ export default function NotificationsPage() {
   function handleNotifClick(n: AppNotification, trip?: Trip, actor?: Profile) {
     switch (n.type) {
       case 'trip_new_catch':
-      case 'comment_on_catch': {
+      case 'comment_on_catch':
+      case 'catch_liked': {
         const catchId = n.payload?.catch_id;
         if (catchId) {
           // Mount CatchDetail INLINE on this page (no route change). Closing
@@ -280,15 +281,20 @@ export default function NotificationsPage() {
                   </NotifCard>
                 );
               }
-              if (notif.type === 'trip_new_catch' || notif.type === 'comment_on_catch') {
+              if (notif.type === 'trip_new_catch' || notif.type === 'comment_on_catch' || notif.type === 'catch_liked') {
                 const lbs = notif.payload?.lbs ?? 0;
                 const oz = notif.payload?.oz ?? 0;
+                const icon = notif.type === 'catch_liked'
+                  ? <ThumbsUp size={16} style={{ color: 'var(--gold-2)' }} />
+                  : <Fish size={16} style={{ color: 'var(--gold-2)' }} />;
                 return (
-                  <NotifCard key={notif.id} clickable onClick={handleClick} icon={<Fish size={16} style={{ color: 'var(--gold-2)' }} />}>
+                  <NotifCard key={notif.id} clickable onClick={handleClick} icon={icon}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
                         {notif.type === 'comment_on_catch' ? (
                           <>{actor ? <><strong>{actor.display_name}</strong> commented on your catch</> : 'New comment on your catch'}</>
+                        ) : notif.type === 'catch_liked' ? (
+                          <>{actor ? <><strong>{actor.display_name}</strong> liked your catch</> : 'Your catch was liked'}</>
                         ) : (
                           <>{actor ? <><strong>{actor.display_name}</strong> banked </> : 'New catch '}
                           <strong>{lbs}lb{oz ? ` ${oz}oz` : ''}</strong>{trip ? <> on <strong>{trip.name}</strong></> : null}</>

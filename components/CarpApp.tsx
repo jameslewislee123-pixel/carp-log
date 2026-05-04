@@ -8,7 +8,7 @@ import {
   Cloud, Wind, Thermometer, MessageCircle, Bell, Send, Anchor, BarChart3,
   Clock, Tent, MapPinned, Star, Users as UsersIcon, Lock, LogOut, UserPlus, Mail,
   Activity as ActivityIcon, Map as MapIcon, MessageSquare, ThumbsUp, Search,
-  Eye, EyeOff, SlidersHorizontal,
+  Eye, EyeOff, SlidersHorizontal, Box,
 } from 'lucide-react';
 import { Drawer } from 'vaul';
 import nextDynamic from 'next/dynamic';
@@ -332,17 +332,32 @@ export default function CarpApp() {
           </PullToRefresh>
         )}
         {view === 'trips' && (
-          <TripsView
-            me={me} trips={trips} catches={catches} profilesById={profilesById}
-            onOpenTrip={setDetailTrip}
-            onAddTrip={() => { setEditTrip(null); setShowAddTrip(true); }}
-          />
+          <PullToRefresh onRefresh={async () => {
+            await qc.invalidateQueries({ queryKey: QK.trips.all });
+          }}>
+            <TripsView
+              me={me} trips={trips} catches={catches} profilesById={profilesById}
+              onOpenTrip={setDetailTrip}
+              onAddTrip={() => { setEditTrip(null); setShowAddTrip(true); }}
+            />
+          </PullToRefresh>
         )}
         {view === 'stats' && (
-          <Stats catches={catches} profilesById={profilesById} me={me} onOpen={setDetailCatch} />
+          <PullToRefresh onRefresh={async () => {
+            await qc.invalidateQueries({ queryKey: QK.catches.all });
+          }}>
+            <Stats catches={catches} profilesById={profilesById} me={me} onOpen={setDetailCatch} />
+          </PullToRefresh>
         )}
         {view === 'lakes' && (
-          <LakesView onOpenLake={(name) => setDetailLakeName(name)} />
+          <PullToRefresh onRefresh={async () => {
+            await Promise.all([
+              qc.invalidateQueries({ queryKey: QK.lakes.all }),
+              qc.invalidateQueries({ queryKey: QK.catches.all }),
+            ]);
+          }}>
+            <LakesView onOpenLake={(name) => setDetailLakeName(name)} />
+          </PullToRefresh>
         )}
       </div>
 
@@ -761,10 +776,10 @@ function ForecastCarousel({ catches }: { catches: CatchT[] }) {
           overflowX: 'auto', scrollSnapType: 'x mandatory',
           touchAction: 'pan-x pan-y',
         }}>
-        <TappableSlide onTap={() => setExpanded('bite')} style={{ scrollSnapAlign: 'center', height: 92 }}>
+        <TappableSlide onTap={() => setExpanded('bite')} style={{ scrollSnapAlign: 'center', minHeight: 92 }}>
           <BiteForecastCard coords={coords} compact />
         </TappableSlide>
-        <TappableSlide onTap={() => setExpanded('weather')} style={{ scrollSnapAlign: 'center', height: 92 }}>
+        <TappableSlide onTap={() => setExpanded('weather')} style={{ scrollSnapAlign: 'center', minHeight: 92 }}>
           <WeatherForecastCard coords={coords} compact />
         </TappableSlide>
       </div>
@@ -837,14 +852,15 @@ function BiteForecastCard({ coords, compact }: { coords: { lat: number; lng: num
   const { phaseInfo, ill, rating, windows, cur, upcoming } = data;
   const showExpansion = open && !compact;
   return (
-    <div onClick={() => !compact && setOpen(o => !o)} className="fade-in" style={{
+    <div onClick={() => !compact && setOpen(o => !o)} className="fade-in card" style={{
+      // Mirror the Weather card's container exactly (className="card" supplies
+      // the glass background + border + radius + backdrop blur). Inline
+      // height/padding only — no extra gradient overlay or overflow:hidden,
+      // both of which were clipping the bottom of the bite widget content
+      // on shorter phones.
       height: compact ? '100%' : 'auto',
-      padding: 14, borderRadius: 22,
-      background: 'linear-gradient(135deg, rgba(234,201,136,0.18), rgba(212,182,115,0.06))',
-      border: '1px solid rgba(234, 201, 136, 0.35)',
-      backdropFilter: 'blur(28px) saturate(180%)', WebkitBackdropFilter: 'blur(28px) saturate(180%)',
-      cursor: compact ? 'default' : 'pointer', position: 'relative', overflow: 'hidden',
-      boxShadow: '0 10px 30px -10px rgba(212,182,115,0.25)',
+      padding: 14,
+      cursor: compact ? 'default' : 'pointer',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div style={{ fontSize: 36, lineHeight: 1, filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.4))' }}>{phaseInfo.emoji}</div>
@@ -1692,23 +1708,7 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
   const [latestRoll, setLatestRoll] = useState<TripSwimRoll | null>(null);
   const [rollViewer, setRollViewer] = useState<{ roll: TripSwimRoll; mode: 'animate' | 'replay' } | null>(null);
   const [rolling, setRolling] = useState(false);
-  const [discoverFromTrip, setDiscoverFromTrip] = useState<{ center: { lat: number; lng: number } | null; ready: boolean } | null>(null);
   const isOwner = trip.owner_id === me.id;
-
-  async function openTripDiscover() {
-    setDiscoverFromTrip({ center: null, ready: false });
-    if (trip.location) {
-      try {
-        const { geocodeLake } = await import('@/lib/weather');
-        const g = await geocodeLake(trip.location);
-        setDiscoverFromTrip({ center: g, ready: true });
-      } catch {
-        setDiscoverFromTrip({ center: null, ready: true });
-      }
-    } else {
-      setDiscoverFromTrip({ center: null, ready: true });
-    }
-  }
 
   async function refreshMembers() {
     const m = await db.listTripMembers(trip.id);
@@ -2017,29 +2017,7 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
       )}
 
       {tab === 'map' && (
-        <>
-          <button onClick={openTripDiscover} className="card tap" style={{
-            padding: 12, marginBottom: 12,
-            display: 'flex', alignItems: 'center', gap: 10,
-            background: 'rgba(212,182,115,0.08)',
-            border: '1px solid rgba(234,201,136,0.3)',
-            cursor: 'pointer', width: '100%', textAlign: 'left', fontFamily: 'inherit',
-            color: 'var(--text)',
-          }}>
-            <Search size={14} style={{ color: 'var(--gold-2)', flexShrink: 0 }} />
-            <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>Find more venues nearby</span>
-            <ChevronRight size={14} style={{ color: 'var(--text-3)' }} />
-          </button>
-          <TripMap trip={trip} catches={tripCatches} profilesById={memberProfiles} onOpenCatch={onOpenCatch} />
-        </>
-      )}
-
-      {discoverFromTrip?.ready && (
-        <DiscoverVenues
-          initialCenter={discoverFromTrip.center}
-          sourceLabel={discoverFromTrip.center ? `Searching near ${trip.name}` : 'Searching near you'}
-          onClose={() => setDiscoverFromTrip(null)}
-        />
+        <TripMap trip={trip} catches={tripCatches} profilesById={memberProfiles} onOpenCatch={onOpenCatch} />
       )}
 
       {tab === 'chat' && (
@@ -2830,29 +2808,71 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
     if (remaining <= 0) { alert(`Up to ${MAX_PHOTOS} photos per catch`); return; }
     const accepted = files.slice(0, remaining);
     const wasEmpty = photoSlots.length === 0;
+    const firstFile = accepted[0];
     setPhotoLoading(true);
     try {
+      // Extract EXIF from the first file BEFORE compression (compression
+      // strips EXIF on the way through canvas). Library photos commonly
+      // have DateTimeOriginal + GPS — apply both as form overrides only
+      // when this is the catch's cover (slots were empty).
+      let exifDate: Date | null = null;
+      let exifCoords: { lat: number; lng: number } | null = null;
+      if (wasEmpty && firstFile) {
+        try {
+          const exifr = (await import('exifr')).default;
+          const exif = await exifr.parse(firstFile, ['DateTimeOriginal', 'latitude', 'longitude']);
+          if (exif?.DateTimeOriginal) {
+            const d = new Date(exif.DateTimeOriginal);
+            if (!Number.isNaN(d.getTime())) {
+              exifDate = d;
+              setDate(isoToLocalDateTimeInput(d.toISOString()));
+            }
+          }
+          if (typeof exif?.latitude === 'number' && typeof exif?.longitude === 'number') {
+            exifCoords = { lat: exif.latitude, lng: exif.longitude };
+            setCoords(exifCoords);
+            setLakeCoordOverride(exifCoords);
+          }
+        } catch (err) {
+          // Silent fail — not all photos carry EXIF (e.g. screenshots,
+          // photos stripped by sharing apps).
+          // eslint-disable-next-line no-console
+          console.warn('[exif] extraction failed:', err);
+        }
+      }
+
       const compressedList = await Promise.all(accepted.map(f => compressImage(f)));
       setPhotoSlots(curr => [...curr, ...compressedList.map(d => ({ dataUrl: d }))]);
       if (files.length > remaining) {
         alert(`Added ${remaining} of ${files.length} photos. Max ${MAX_PHOTOS} per catch.`);
       }
-      // Mirror handleFile's first-photo-only autofill on the cover image.
-      if (wasEmpty && compressedList.length > 0) await runAutofillForCover(compressedList[0]);
+      if (wasEmpty && compressedList.length > 0) {
+        await runAutofillForCover(compressedList[0], {
+          dateOverride: exifDate,
+          coordsOverride: exifCoords,
+        });
+      }
     } catch { alert('Failed to process images'); }
     finally { setPhotoLoading(false); }
   }
 
   // Shared helper extracted from handleFile so the multi-pick path doesn't
-  // duplicate the AI + weather detection logic.
-  async function runAutofillForCover(compressed: string) {
+  // duplicate the AI + weather detection logic. Overrides let callers
+  // (e.g. EXIF auto-populate on library uploads) pass an authoritative
+  // date + coords without round-tripping through React state.
+  async function runAutofillForCover(compressed: string, overrides?: {
+    dateOverride?: Date | null;
+    coordsOverride?: { lat: number; lng: number } | null;
+  }) {
     setAutoStatus({ wx: 'fetching', sp: 'detecting' });
     Promise.all([
       (async () => {
         try {
-          let c: { lat: number; lng: number } | null = null;
-          const cached = localStorage.getItem(LOC_KEY);
-          if (cached) { try { c = JSON.parse(cached); } catch {} }
+          let c: { lat: number; lng: number } | null = overrides?.coordsOverride || null;
+          if (!c) {
+            const cached = localStorage.getItem(LOC_KEY);
+            if (cached) { try { c = JSON.parse(cached); } catch {} }
+          }
           if (!c) {
             const gps = await getCurrentLocation();
             if (gps) { c = gps; localStorage.setItem(LOC_KEY, JSON.stringify(gps)); }
@@ -2860,7 +2880,8 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
           if (!c && lake.trim()) c = await geocodeLake(lake);
           if (!c) { setAutoStatus(s => ({ ...s, wx: 'failed' })); return; }
           setCoords(c);
-          const w = await fetchWeatherFor(new Date(date), c.lat, c.lng);
+          const wxDate = overrides?.dateOverride || new Date(date);
+          const w = await fetchWeatherFor(wxDate, c.lat, c.lng);
           if (!w) { setAutoStatus(s => ({ ...s, wx: 'failed' })); return; }
           if (w.tempC != null) setTempC(String(w.tempC));
           if (w.pressure != null) setPressure(String(w.pressure));
@@ -3988,10 +4009,7 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
   onSaveNotify: (n: { token: string | null; chat_id: string | null; enabled: boolean }) => Promise<void>;
 }) {
   const router = useRouter();
-  const [editing, setEditing] = useState(false);
-  const [draftDisplay, setDraftDisplay] = useState(me.display_name);
-  const [draftBio, setDraftBio] = useState(me.bio || '');
-  const [publicProfile, setPublicProfile] = useState(me.public_profile);
+  const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [showNotify, setShowNotify] = useState(false);
   const [showTackleBox, setShowTackleBox] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
@@ -4040,34 +4058,23 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
       </div>
 
       <div className="label">Profile</div>
-      {!editing ? (
-        <button onClick={() => setEditing(true)} className="tap" style={{ width: '100%', padding: 14, borderRadius: 14, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, marginBottom: 24 }}>
-          <span>Edit display name & bio</span>
-          <ChevronRight size={16} />
-        </button>
-      ) : (
-        <div style={{ marginBottom: 24 }}>
-          <label className="label">Display name</label>
-          <input className="input" value={draftDisplay} maxLength={40} onChange={(e) => setDraftDisplay(e.target.value)} style={{ marginBottom: 12 }} />
-          <label className="label">Bio</label>
-          <textarea className="input" rows={3} maxLength={200} placeholder="A line about you" value={draftBio} onChange={(e) => setDraftBio(e.target.value)}
-            style={{ marginBottom: 6, resize: 'vertical', fontFamily: 'inherit' }} />
-          <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 12 }}>{draftBio.length}/200</div>
-          <label className="tap" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderRadius: 12, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', marginBottom: 12, cursor: 'pointer' }}>
-            <span style={{ fontSize: 14, fontWeight: 600 }}>Public profile</span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12, color: publicProfile ? 'var(--sage)' : 'var(--text-3)' }}>
-              <input type="checkbox" checked={publicProfile} onChange={(e) => setPublicProfile(e.target.checked)} style={{ accentColor: 'var(--gold)' }} />
-              {publicProfile ? 'Anyone can see' : 'Friends only'}
-            </span>
-          </label>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-ghost" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)' }} onClick={() => { setDraftDisplay(me.display_name); setDraftBio(me.bio || ''); setPublicProfile(me.public_profile); setEditing(false); }}>Cancel</button>
-            <button className="btn btn-primary" style={{ flex: 1 }}
-              onClick={async () => { await onSaveProfile({ display_name: draftDisplay.trim().slice(0, 40), bio: draftBio.trim() || null, public_profile: publicProfile }); setEditing(false); }}>
-              Save
-            </button>
-          </div>
-        </div>
+      <button onClick={() => setShowProfileEdit(true)} className="tap" style={{
+        width: '100%', padding: 14, borderRadius: 14,
+        background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
+        color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 12,
+        cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
+        marginBottom: 24,
+      }}>
+        <Edit2 size={16} style={{ color: 'var(--gold-2)', flexShrink: 0 }} />
+        <span style={{ flex: 1, textAlign: 'left' }}>Edit display name & bio</span>
+        <ChevronRight size={16} style={{ color: 'var(--text-3)' }} />
+      </button>
+      {showProfileEdit && (
+        <EditProfileModal
+          me={me}
+          onClose={() => setShowProfileEdit(false)}
+          onSave={async (patch) => { await onSaveProfile(patch); setShowProfileEdit(false); }}
+        />
       )}
 
       <div className="label">Push notifications</div>
@@ -4077,13 +4084,19 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
 
       <div className="label">My tackle box</div>
       <button onClick={() => setShowTackleBox(true)} className="tap" style={{
+        // Same shape as the Edit profile row above so Settings reads as a
+        // consistent list of action rows: leading icon, label, trailing
+        // chevron — gold accent on the icon to match the bottom-nav idiom
+        // where active items are gold.
         width: '100%', padding: 14, borderRadius: 14,
         background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
-        color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, marginBottom: 24,
+        color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 12,
+        cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
+        marginBottom: 24,
       }}>
-        <span>Edit my tackle box</span>
-        <ChevronRight size={16} />
+        <Box size={16} style={{ color: 'var(--gold-2)', flexShrink: 0 }} />
+        <span style={{ flex: 1, textAlign: 'left' }}>Edit my tackle box</span>
+        <ChevronRight size={16} style={{ color: 'var(--text-3)' }} />
       </button>
       {showTackleBox && (
         <VaulModalShell title="My Tackle Box" onClose={() => setShowTackleBox(false)} stackLevel={1}>
@@ -4127,6 +4140,53 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
       <div style={{ marginTop: 24, padding: '16px 0', borderTop: '1px solid rgba(234,201,136,0.1)', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
         {catches.length} catches · {trips.length} trips
       </div>
+    </VaulModalShell>
+  );
+}
+
+// Profile editor used by the Settings entry. Was inline; promoted to its
+// own vaul drawer (stackLevel:1 above SettingsModal) so the form has its
+// own focused space and the keyboard never pushes Settings around.
+function EditProfileModal({ me, onClose, onSave }: {
+  me: Profile;
+  onClose: () => void;
+  onSave: (patch: Partial<Profile>) => Promise<void>;
+}) {
+  const [draftDisplay, setDraftDisplay] = useState(me.display_name);
+  const [draftBio, setDraftBio] = useState(me.bio || '');
+  const [publicProfile, setPublicProfile] = useState(me.public_profile);
+  const [saving, setSaving] = useState(false);
+  return (
+    <VaulModalShell title="Edit profile" onClose={onClose} stackLevel={1}>
+      <label className="label">Display name</label>
+      <input className="input" autoFocus value={draftDisplay} maxLength={40} onChange={(e) => setDraftDisplay(e.target.value)} style={{ marginBottom: 12 }} />
+      <label className="label">Bio</label>
+      <textarea className="input" rows={3} maxLength={200} placeholder="A line about you" value={draftBio} onChange={(e) => setDraftBio(e.target.value)}
+        style={{ marginBottom: 6, resize: 'vertical', fontFamily: 'inherit' }} />
+      <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 12 }}>{draftBio.length}/200</div>
+      <label className="tap" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderRadius: 12, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', marginBottom: 16, cursor: 'pointer' }}>
+        <span style={{ fontSize: 14, fontWeight: 600 }}>Public profile</span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12, color: publicProfile ? 'var(--sage)' : 'var(--text-3)' }}>
+          <input type="checkbox" checked={publicProfile} onChange={(e) => setPublicProfile(e.target.checked)} style={{ accentColor: 'var(--gold)' }} />
+          {publicProfile ? 'Anyone can see' : 'Friends only'}
+        </span>
+      </label>
+      <button
+        disabled={saving}
+        onClick={async () => {
+          setSaving(true);
+          try {
+            await onSave({
+              display_name: draftDisplay.trim().slice(0, 40),
+              bio: draftBio.trim() || null,
+              public_profile: publicProfile,
+            });
+          } finally { setSaving(false); }
+        }}
+        className="btn btn-primary"
+        style={{ width: '100%', padding: 14, fontSize: 14 }}>
+        {saving ? <Loader2 size={16} className="spin" /> : <Check size={16} />} Save
+      </button>
     </VaulModalShell>
   );
 }
@@ -4311,7 +4371,7 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
   const z = 100 + stackLevel * 10;
 
   return (
-    <Drawer.Root open onOpenChange={(o) => { if (!o) onClose(); }} handleOnly repositionInputs={false}>
+    <Drawer.Root open onOpenChange={(o) => { if (!o) onClose(); }} handleOnly>
       <Drawer.Portal>
         <Drawer.Overlay style={{
           position: 'fixed', inset: 0, zIndex: z,
@@ -4328,11 +4388,11 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
           }}>
           <div style={{
             width: '100%', maxWidth: 480,
-            // --app-vh shrinks when the iOS keyboard opens (visualViewport),
-            // so the sheet auto-clamps to the visible area instead of being
-            // pushed off-screen by the keyboard.
-            maxHeight: 'min(92vh, calc(var(--app-vh, 100dvh) - 24px))' as any,
-            height: 'min(92vh, calc(var(--app-vh, 100dvh) - 24px))' as any,
+            // 100dvh is the dynamic-viewport-height — iOS 16.4+ shrinks it
+            // automatically when the soft keyboard opens, so we no longer
+            // need a manual visualViewport handler.
+            maxHeight: 'min(92vh, calc(100dvh - 24px))' as any,
+            height: 'min(92vh, calc(100dvh - 24px))' as any,
             background: 'rgba(10, 24, 22, 0.92)',
             backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
             borderRadius: '28px 28px 0 0', border: '1px solid rgba(234,201,136,0.14)', borderBottom: 'none',

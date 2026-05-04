@@ -157,7 +157,7 @@ export type NotifyConfig = {
   enabled: boolean;
 };
 
-export type NotificationType = 'friend_request' | 'friend_accepted' | 'trip_invite' | 'comment_on_catch' | 'trip_new_catch' | 'trip_new_member' | 'trip_chat_mention' | 'trip_chat';
+export type NotificationType = 'friend_request' | 'friend_accepted' | 'trip_invite' | 'comment_on_catch' | 'trip_new_catch' | 'trip_new_member' | 'trip_chat_mention' | 'trip_chat' | 'catch_liked';
 
 // Comments are now a dedicated table. The legacy `Comment` type (jsonb shape)
 // stays for back-compat — the in-DB array used to look like this.

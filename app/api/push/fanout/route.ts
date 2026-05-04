@@ -123,6 +123,17 @@ async function buildPayload(n: NotifRow): Promise<{ title: string; body: string;
         tag: `catch-comment-${cat?.id || n.id}`,
       };
     }
+    case 'catch_liked': {
+      const angler = p.angler_id ? await fetchProfile(p.angler_id) : null;
+      const cat = p.catch_id ? await fetchCatch(p.catch_id) : null;
+      const w = cat ? `${fmtWeight(cat.lbs, cat.oz)}${cat.species ? ` ${cat.species}` : ''}` : 'your catch';
+      return {
+        title: `${angler?.display_name || 'Someone'} liked your ${w}`,
+        body: 'Tap to view',
+        url: `/?catch=${cat?.id || ''}`,
+        tag: `catch-liked-${cat?.id || n.id}`,
+      };
+    }
     case 'trip_chat_mention': {
       const angler = p.angler_id ? await fetchProfile(p.angler_id) : null;
       const trip = p.trip_id ? await fetchTrip(p.trip_id) : null;

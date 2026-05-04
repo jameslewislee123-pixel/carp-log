@@ -73,6 +73,17 @@ export async function declineFriend(friendshipId: string): Promise<void> {
   const { error } = await supabase().from('friendships').delete().eq('id', friendshipId);
   if (error) throw error;
 }
+// Delete the friendship row between the current user and `otherUserId`,
+// regardless of which direction the request was originally made. Used by
+// both the "unfriend" and "cancel sent request" actions on profile pages.
+export async function deleteFriendshipWith(otherUserId: string): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return;
+  await supabase().from('friendships').delete().or(
+    `and(requester_id.eq.${user.id},addressee_id.eq.${otherUserId}),and(requester_id.eq.${otherUserId},addressee_id.eq.${user.id})`
+  );
+}
+
 export async function removeFriend(friendshipId: string): Promise<void> {
   const { error } = await supabase().from('friendships').delete().eq('id', friendshipId);
   if (error) throw error;
@@ -387,6 +398,7 @@ const DEFAULT_PREFS: Record<string, boolean> = {
   trip_new_catch: true, trip_new_member: true, trip_invite: true,
   trip_chat: false, trip_chat_mention: true,
   friend_request: true, friend_accepted: true, comment_on_catch: true,
+  catch_liked: true,
 };
 
 export async function getMyNotifPrefs(): Promise<NotifPrefRow> {
