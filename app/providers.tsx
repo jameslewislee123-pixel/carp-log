@@ -1,7 +1,7 @@
 'use client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   // useState ensures a single QueryClient lives across React's strict-mode double mounts.
@@ -16,13 +16,29 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     },
   }));
 
-  // Note: we previously had a window-level visualViewport handler that
-  // wrote --app-vh into the modal heights, plus a focusin → scrollIntoView
-  // helper. Both have been removed. Modals now use 100dvh which already
-  // tracks the visible viewport on iOS 16.4+, and vaul's repositionInputs
-  // is re-enabled so the keyboard avoidance is back to the platform's
-  // native behaviour. Keeping the JS handler caused the modal to be
-  // shifted DOWN when typing because it doubled-counted the keyboard.
+  // Global focused-input scroll-into-view. Modals are sized with 100vh so
+  // they DON'T resize when the iOS keyboard opens — the keyboard simply
+  // overlays the bottom portion (Instagram / iMessage pattern). When a
+  // user focuses an input that ends up under the keyboard, scrollIntoView
+  // brings it into view inside the modal's own scrollable body. 350ms
+  // delay lets iOS finish animating the keyboard in first.
+  // (The previously-paired visualViewport → --app-vh handler is
+  // intentionally NOT here — it was double-counting the keyboard and
+  // pushing modals around.)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onFocus = (e: FocusEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const tag = target.tagName;
+      if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') return;
+      window.setTimeout(() => {
+        try { target.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
+      }, 350);
+    };
+    window.addEventListener('focusin', onFocus);
+    return () => window.removeEventListener('focusin', onFocus);
+  }, []);
 
   return (
     <QueryClientProvider client={client}>

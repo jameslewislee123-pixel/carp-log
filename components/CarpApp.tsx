@@ -4371,7 +4371,7 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
   const z = 100 + stackLevel * 10;
 
   return (
-    <Drawer.Root open onOpenChange={(o) => { if (!o) onClose(); }} handleOnly>
+    <Drawer.Root open onOpenChange={(o) => { if (!o) onClose(); }} handleOnly repositionInputs={false}>
       <Drawer.Portal>
         <Drawer.Overlay style={{
           position: 'fixed', inset: 0, zIndex: z,
@@ -4388,14 +4388,17 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
           }}>
           <div style={{
             width: '100%', maxWidth: 480,
-            // 100dvh handles the iOS keyboard automatically on 16.4+, but
-            // it includes the area BEHIND the status bar / notch. Subtract
-            // env(safe-area-inset-top) so the sheet's top edge never
-            // collides with the system clock + battery; subtract another
-            // 24px to leave a comfortable visual gap below them. The
-            // matching marginTop pushes the sheet's top below the inset.
-            maxHeight: 'calc(100dvh - env(safe-area-inset-top, 0px) - 24px)' as any,
-            height: 'calc(100dvh - env(safe-area-inset-top, 0px) - 24px)' as any,
+            // 100vh (NOT 100dvh) — the modal sizes ONCE at mount and never
+            // changes when the keyboard opens. iOS keyboard overlays the
+            // bottom portion of the modal; the focused input scrolls into
+            // view inside the modal's scrollable body via the global
+            // focusin handler in app/providers.tsx. Same pattern as
+            // Instagram / iMessage / Twitter sheets.
+            // Subtract env(safe-area-inset-top) so the sheet's top edge
+            // never collides with the system clock + battery; subtract
+            // 24px for a visual gap below them.
+            maxHeight: 'calc(100vh - env(safe-area-inset-top, 0px) - 24px)' as any,
+            height: 'calc(100vh - env(safe-area-inset-top, 0px) - 24px)' as any,
             marginTop: 'env(safe-area-inset-top, 0px)',
             background: 'rgba(10, 24, 22, 0.92)',
             backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
