@@ -1,9 +1,13 @@
 'use client';
 import dynamic from 'next/dynamic';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { LottieRefCurrentProps } from 'lottie-react';
 
 // SSR-disabled because lottie-react touches `window` on import.
 const Lottie = dynamic(() => import('lottie-react'), { ssr: false });
+
+// 0.4x of native 30fps → the 8s native loop plays over ~20s.
+const PLAYBACK_SPEED = 0.4;
 
 const STORAGE_KEY = 'bg_animation_enabled';
 const TOGGLE_EVENT = 'bg-animation-toggle';
@@ -14,6 +18,7 @@ export default function UnderwaterLottie() {
   const [animationData, setAnimationData] = useState<unknown>(null);
   const [enabled, setEnabled] = useState(true);
   const [reducedMotion, setReducedMotion] = useState(false);
+  const lottieRef = useRef<LottieRefCurrentProps>(null);
 
   // Honour the OS-level reduced-motion preference.
   useEffect(() => {
@@ -70,11 +75,11 @@ export default function UnderwaterLottie() {
     >
       {!showStatic && (
         <Lottie
+          lottieRef={lottieRef}
           animationData={animationData}
           loop
           autoplay
-          // 0.4x of native 30fps → the 8s native loop plays over ~20s.
-          speed={0.4}
+          onDOMLoaded={() => lottieRef.current?.setSpeed(PLAYBACK_SPEED)}
           rendererSettings={{
             // 'slice' = behave like CSS background-size: cover.
             preserveAspectRatio: 'xMidYMid slice',
