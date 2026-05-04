@@ -15,3 +15,11 @@ public/worker-*.js.map
 public/fallback-*.js
 supabase/.temp
 .env.prod-export
+
+# Scraper local artefacts (scripts/scrape-fishadviser.ts)
+.scrape/
+fisheries_uk.csv
+fisheries_france.csv
+
+# Don't mix npm lockfile into a pnpm repo
+package-lock.json
