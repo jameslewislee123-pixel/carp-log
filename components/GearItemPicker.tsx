@@ -68,19 +68,31 @@ export default function GearItemPicker({ type, value, onChange, meId }: {
 
   return (
     <>
-      <button onClick={() => setOpen(true)} className="tap" style={{
-        width: '100%', textAlign: 'left',
-        padding: '14px 16px', borderRadius: 14,
-        background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.14)',
-        color: value ? 'var(--text)' : 'var(--text-3)', fontFamily: 'inherit', fontSize: 15,
-        cursor: 'pointer',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-      }}>
-        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {value || LABELS[type].placeholder}
-        </span>
-        <ChevronDown size={16} style={{ color: 'var(--text-3)' }} />
-      </button>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+        <button onClick={() => setOpen(true)} className="tap" style={{
+          flex: 1, minWidth: 0, textAlign: 'left',
+          padding: '14px 16px', borderRadius: 14,
+          background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.14)',
+          color: value ? 'var(--text)' : 'var(--text-3)', fontFamily: 'inherit', fontSize: 15,
+          cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+        }}>
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {value || LABELS[type].placeholder}
+          </span>
+          <ChevronDown size={16} style={{ color: 'var(--text-3)' }} />
+        </button>
+        {value && (
+          <button onClick={() => onChange('')} aria-label={`Clear ${LABELS[type].single}`} className="tap" style={{
+            width: 44, flexShrink: 0, padding: 0, borderRadius: 14,
+            background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.14)',
+            color: 'var(--text-3)', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <X size={16} />
+          </button>
+        )}
+      </div>
 
       {open && (
         <div onClick={() => setOpen(false)} style={{
@@ -120,6 +132,18 @@ export default function GearItemPicker({ type, value, onChange, meId }: {
 
               {!loading && !adding && (
                 <>
+                  {!query.trim() && (
+                    <button onClick={() => { onChange(''); setOpen(false); }} className="tap" style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: 10, borderRadius: 12,
+                      background: !value ? 'rgba(212,182,115,0.10)' : 'rgba(10,24,22,0.5)',
+                      border: `1px solid ${!value ? 'var(--gold)' : 'rgba(234,201,136,0.14)'}`,
+                      color: 'var(--text-3)', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
+                      fontStyle: 'italic', width: '100%', marginBottom: 8,
+                    }}>
+                      <span style={{ flex: 1, fontSize: 13 }}>None</span>
+                      {!value && <Check size={14} style={{ color: 'var(--gold)' }} />}
+                    </button>
+                  )}
                   {mine.length > 0 && <div className="label" style={{ marginTop: 6 }}>Yours</div>}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
                     {mine.map(it => <PickRow key={it.id} item={it} active={it.name === value} onClick={() => pick(it)} />)}
