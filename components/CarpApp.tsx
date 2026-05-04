@@ -34,8 +34,9 @@ import { hasSupabase, supabase } from '@/lib/supabase/client';
 import * as db from '@/lib/db';
 import {
   useMe, useCatches, useTrips, useMyNotifyConfig, useUnreadCount,
-  useProfilesByIds, useCommentCounts, useLakes, useLakeStatsTiles,
+  useProfilesByIds, useCommentCounts, useLakes, useLakeStatsTiles, useLakesEnriched,
   prefetchTrip, prefetchLake, prefetchNotifications,
+  type EnrichedLake,
 } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
 import type {
@@ -2271,6 +2272,14 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
   const [date, setDate] = useState(existing?.date ? isoToLocalDateTimeInput(existing.date) : nowLocalDateTimeInput());
   const [trip_id, setTripId] = useState<string | null>(existing?.trip_id || activeTrips[0]?.id || null);
   const [lake, setLake] = useState(existing?.lake || '');
+  // Coords associated with the picked lake. Populated when the user chooses
+  // a saved lake from the autocomplete or browse picker; cleared when they
+  // edit the lake name freely (the override no longer represents truth).
+  const [lakeCoordOverride, setLakeCoordOverride] = useState<{ lat: number; lng: number } | null>(
+    existing?.latitude != null && existing?.longitude != null
+      ? { lat: existing.latitude, lng: existing.longitude }
+      : null,
+  );
   const [swim, setSwim] = useState(existing?.swim || '');
   const [bait, setBait] = useState(existing?.bait || '');
   const [rig, setRig] = useState(existing?.rig || '');
@@ -2363,9 +2372,11 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
         }
       } catch {}
 
-      // Resolve coordinates: explicit state, else cached location, else null.
-      let lat: number | null = coords?.lat ?? null;
-      let lng: number | null = coords?.lng ?? null;
+      // Coord priority: lake-pick override (when user chose a saved lake
+      // from the autocomplete) > existing catch row (edit case) > cached
+      // device location > null.
+      let lat: number | null = lakeCoordOverride?.lat ?? existing?.latitude ?? null;
+      let lng: number | null = lakeCoordOverride?.lng ?? existing?.longitude ?? null;
       if (lat == null || lng == null) {
         try {
           const cached = typeof window !== 'undefined' ? localStorage.getItem(LOC_KEY) : null;
@@ -2514,7 +2525,18 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
       {showMore && (
         <div className="fade-in" style={{ marginBottom: 6 }}>
           <label className="label">Lake</label>
-          <input className="input" placeholder="e.g. Étang du Moulin" value={lake} onChange={(e) => setLake(e.target.value)} style={{ marginBottom: 14 }} />
+          <LakeAutocomplete
+            value={lake}
+            onChange={(v) => { setLake(v); setLakeCoordOverride(null); }}
+            onPickLake={(l) => {
+              setLake(l.name);
+              if (l.latitude != null && l.longitude != null) {
+                setLakeCoordOverride({ lat: l.latitude, lng: l.longitude });
+              } else {
+                setLakeCoordOverride(null);
+              }
+            }}
+          />
           <label className="label">Swim / Peg</label>
           <input className="input" placeholder="e.g. 12" value={swim} onChange={(e) => setSwim(e.target.value)} style={{ marginBottom: 14 }} />
           <label className="label">Bait</label>
@@ -2585,6 +2607,172 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
         {saving ? <Loader2 size={18} className="spin" /> : <Check size={18} />}
         {existing ? 'Save changes' : (lost ? 'Log lost fish' : 'Bank this fish')}
       </button>
+    </VaulModalShell>
+  );
+}
+
+// ============================================================
+// LakeAutocomplete — text input that suggests saved lakes (manual + OSM)
+// as the user types, plus a "Browse saved" link that opens a full picker.
+// Pure UI; the parent owns the lake string state and the coord override.
+// ============================================================
+function LakeAutocomplete({ value, onChange, onPickLake }: {
+  value: string;
+  onChange: (v: string) => void;
+  onPickLake: (lake: EnrichedLake) => void;
+}) {
+  const enriched = useLakesEnriched();
+  const [focused, setFocused] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
+
+  const matches = useMemo(() => {
+    const q = value.trim().toLowerCase();
+    if (!q) return [] as EnrichedLake[];
+    return enriched
+      .filter(l => l.name.toLowerCase().includes(q))
+      .sort((a, b) => {
+        // Most-recently fished first; otherwise alphabetical.
+        const at = a.lastFishedAt?.getTime() || 0;
+        const bt = b.lastFishedAt?.getTime() || 0;
+        if (at !== bt) return bt - at;
+        return a.name.localeCompare(b.name);
+      })
+      .slice(0, 6);
+  }, [value, enriched]);
+
+  const showDropdown = focused && matches.length > 0;
+  // If the typed name exactly matches a saved lake we don't need to suggest
+  // it (the user is already there). Hide the dropdown in that case.
+  const exactMatch = matches.length === 1 && matches[0].name.toLowerCase() === value.trim().toLowerCase();
+
+  return (
+    <div style={{ position: 'relative', marginBottom: 14 }}>
+      <input
+        className="input"
+        placeholder="e.g. Étang du Moulin"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        // Defer blur so a tap on a dropdown row registers before we hide it.
+        onBlur={() => setTimeout(() => setFocused(false), 150)}
+      />
+      {showDropdown && !exactMatch && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 5,
+          maxHeight: 240, overflowY: 'auto',
+          background: 'rgba(10, 24, 22, 0.96)',
+          backdropFilter: 'blur(28px) saturate(180%)', WebkitBackdropFilter: 'blur(28px) saturate(180%)',
+          border: '1px solid rgba(234,201,136,0.18)',
+          borderRadius: 14,
+          boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
+          padding: 4,
+        }}>
+          {matches.map(l => (
+            <LakeAutocompleteRow key={l.key} lake={l} onPick={() => onPickLake(l)} />
+          ))}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={() => setShowPicker(true)}
+        className="tap"
+        style={{
+          marginTop: 6,
+          background: 'transparent', border: 'none', padding: '4px 0',
+          color: 'var(--gold-2)', fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
+          cursor: 'pointer',
+        }}
+      >Or browse saved lakes →</button>
+      {showPicker && (
+        <LakePicker
+          onSelect={(l) => { onPickLake(l); setShowPicker(false); }}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function LakeAutocompleteRow({ lake, onPick }: { lake: EnrichedLake; onPick: () => void }) {
+  // onMouseDown fires before the input's onBlur, so the dropdown isn't
+  // hidden by the time the click handler runs.
+  return (
+    <button
+      type="button"
+      onMouseDown={(e) => { e.preventDefault(); onPick(); }}
+      onTouchStart={(e) => { e.preventDefault(); onPick(); }}
+      className="tap"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        width: '100%', padding: '10px 10px',
+        background: 'transparent', border: 'none', borderRadius: 10,
+        color: 'var(--text)', textAlign: 'left', fontFamily: 'inherit',
+        cursor: 'pointer',
+      }}
+    >
+      <MapPinned size={14} style={{ color: lake.catchCount > 0 ? 'var(--gold)' : 'var(--sage)', flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lake.name}</div>
+        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1 }}>
+          {lake.catchCount > 0 ? `${lake.catchCount} catch${lake.catchCount === 1 ? '' : 'es'}` : 'Saved venue'}
+        </div>
+      </div>
+      {lake.source === 'osm' && (
+        <span style={{
+          fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 999,
+          background: 'rgba(141,191,157,0.15)', color: 'var(--sage)',
+          border: '1px solid rgba(141,191,157,0.4)', flexShrink: 0,
+        }}>OSM</span>
+      )}
+    </button>
+  );
+}
+
+// Full saved-lakes picker with sort. Opens as a stacked vaul drawer over
+// the AddCatch modal. Used when the user wants to scan their full venue
+// list rather than start typing.
+function LakePicker({ onSelect, onClose }: { onSelect: (l: EnrichedLake) => void; onClose: () => void }) {
+  const enriched = useLakesEnriched();
+  const [sort, setSort] = useState<'recent' | 'alpha'>('recent');
+  const sorted = useMemo(() => {
+    const arr = [...enriched];
+    if (sort === 'recent') {
+      arr.sort((a, b) => (b.lastFishedAt?.getTime() || 0) - (a.lastFishedAt?.getTime() || 0));
+    } else {
+      arr.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return arr;
+  }, [enriched, sort]);
+  return (
+    <VaulModalShell title="Saved lakes" onClose={onClose} stackLevel={1}>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+        {([
+          { id: 'recent' as const, label: 'Recent' },
+          { id: 'alpha' as const,  label: 'A → Z' },
+        ]).map(s => {
+          const active = sort === s.id;
+          return (
+            <button key={s.id} onClick={() => setSort(s.id)} className="tap" style={{
+              flex: 1, padding: '8px 10px', borderRadius: 10,
+              border: `1px solid ${active ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
+              background: active ? 'rgba(212,182,115,0.15)' : 'rgba(10,24,22,0.5)',
+              color: active ? 'var(--gold-2)' : 'var(--text-2)',
+              fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+            }}>{s.label}</button>
+          );
+        })}
+      </div>
+      {sorted.length === 0 ? (
+        <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+          No saved lakes yet. Type a new lake name above, or use the Lakes tab to discover venues nearby.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {sorted.map(l => (
+            <LakeAutocompleteRow key={l.key} lake={l} onPick={() => onSelect(l)} />
+          ))}
+        </div>
+      )}
     </VaulModalShell>
   );
 }
