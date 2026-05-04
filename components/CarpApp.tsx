@@ -4364,15 +4364,17 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
               // past them when the sheet is mid-drag.
               borderTopLeftRadius: 28, borderTopRightRadius: 28, overflow: 'hidden',
             }}>
-                {/* Pill row — fixed height with bottom gap to the title. */}
+                {/* Pill row — natural height (no fixed height), 12px gap
+                    to the title row below. The previous explicit height
+                    + padding under box-sizing:border-box squashed the
+                    pill to nothing — leave it auto. */}
                 <div style={{
-                  height: 16,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  display: 'flex', justifyContent: 'center',
                   paddingBottom: 12,
                 }}>
                   <div style={{
-                    width: 44, height: 5, borderRadius: 999,
-                    background: 'rgba(255,255,255,0.22)',
+                    width: 36, height: 5, borderRadius: 999,
+                    background: 'rgba(239, 233, 217, 0.3)',
                   }} />
                 </div>
                 {/* Title + close row. min-height matches the close button so
