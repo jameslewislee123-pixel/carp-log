@@ -25,11 +25,14 @@ type Radius = typeof RADIUS_OPTIONS[number];
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const COOLDOWN_MS = 30 * 1000;
-// Tried in order. Primary first, kumi.systems mirror as fallback when the
-// primary returns a network error / 5xx / 429.
+// Fired in parallel via Promise.any — first 2xx wins and the rest are
+// aborted. Kumi (community mirror) is consistently fastest for our small
+// queries; main and mail.ru are fallbacks with independent capacity so
+// when one is busy another usually isn't.
 const OVERPASS_ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass-api.de/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ] as const;
 
 function cacheKey(lat: number, lng: number, radius: Radius) {
@@ -69,64 +72,67 @@ function distanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: numb
 
 function buildOverpassQuery(center: { lat: number; lng: number }, radiusKm: Radius): string {
   const r = radiusKm * 1000;
-  const half = Math.floor(r / 2);
   const { lat, lng } = center;
-  // The `out center;` clause makes ways (polygons) emit a centroid lat/lon
-  // alongside the geometry, which is all we need for pin placement.
-  return `[out:json][timeout:25];
+  // Strictly fishing-tagged venues — leisure=fishing or sport=fishing, on
+  // both nodes (point spots) and ways (polygon venues). Dropped the
+  // natural=water-with-name clause: it returned every river/ditch/ornamental
+  // pond and was the dominant cost in the query plan. `out center;` makes
+  // ways emit a centroid we can pin.
+  return `[out:json][timeout:15];
 (
   node["leisure"="fishing"](around:${r},${lat},${lng});
   node["sport"="fishing"](around:${r},${lat},${lng});
   way["leisure"="fishing"](around:${r},${lat},${lng});
   way["sport"="fishing"](around:${r},${lat},${lng});
-  way["natural"="water"]["name"](around:${half},${lat},${lng});
 );
 out center;`;
 }
 
-// Single attempt against one Overpass mirror. Throws with a descriptive
-// Error.message on network failure or non-2xx — the caller surfaces it.
-async function callOverpass(endpoint: string, query: string): Promise<any> {
+// Fire all mirrors in parallel and resolve with the first 2xx response.
+// Promise.any throws AggregateError only when EVERY attempt rejects.
+async function callOverpass(query: string, signal: AbortSignal): Promise<any> {
   const body = 'data=' + encodeURIComponent(query);
-  let res: Response;
-  try {
-    res = await fetch(endpoint, {
+  const attempts = OVERPASS_ENDPOINTS.map((url) =>
+    fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
-    });
-  } catch (e) {
-    // Network-level failure (offline, DNS, CORS preflight blocked, etc.)
-    throw new Error(`Network error reaching ${endpoint}: ${e instanceof Error ? e.message : String(e)}`);
+      signal,
+    }).then(async (res) => {
+      if (!res.ok) {
+        let detail = '';
+        try { detail = (await res.text()).slice(0, 200); } catch {}
+        throw new Error(`${url}: ${res.status} ${res.statusText}${detail ? ` — ${detail.replace(/\s+/g, ' ').trim()}` : ''}`);
+      }
+      return res.json();
+    }).catch((e) => {
+      // Re-throw with the URL prefixed so AggregateError attribution is clear.
+      if (e?.name === 'AbortError') throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(msg.startsWith('http') ? msg : `${url}: ${msg}`);
+    })
+  );
+  try {
+    return await Promise.any(attempts);
+  } catch (e: any) {
+    if (e instanceof AggregateError) {
+      const msgs = e.errors.map((er: any) => er instanceof Error ? er.message : String(er)).join('\n');
+      throw new Error(`All Overpass mirrors failed:\n${msgs}`);
+    }
+    throw e;
   }
-  if (!res.ok) {
-    // Try to peek at the response body for context — Overpass surfaces a
-    // useful textual error in non-2xx responses.
-    let detail = '';
-    try { detail = (await res.text()).slice(0, 200); } catch {}
-    throw new Error(`Overpass returned ${res.status} ${res.statusText}${detail ? ` — ${detail.replace(/\s+/g, ' ').trim()}` : ''}`);
-  }
-  return res.json();
 }
 
 async function fetchOverpass(center: { lat: number; lng: number }, radiusKm: Radius): Promise<OSMVenue[]> {
   const query = buildOverpassQuery(center, radiusKm);
-  let json: any | null = null;
-  let lastErr: Error | null = null;
-  for (let i = 0; i < OVERPASS_ENDPOINTS.length; i++) {
-    const endpoint = OVERPASS_ENDPOINTS[i];
-    try {
-      json = await callOverpass(endpoint, query);
-      break;
-    } catch (e) {
-      lastErr = e instanceof Error ? e : new Error(String(e));
-      // eslint-disable-next-line no-console
-      console.warn(`[discover] ${endpoint} failed:`, lastErr.message);
-      // 429 handling: if primary is rate-limiting, fall straight through to
-      // the next mirror (no 5s sleep — kumi has independent capacity).
-    }
+  const controller = new AbortController();
+  let json: any;
+  try {
+    json = await callOverpass(query, controller.signal);
+  } finally {
+    // Cancel any in-flight requests to the slower mirrors as soon as one wins.
+    controller.abort();
   }
-  if (!json) throw lastErr || new Error('All Overpass mirrors failed');
 
   const elements: any[] = json?.elements || [];
   const seen = new Set<string>();
@@ -176,7 +182,22 @@ export default function DiscoverVenues({
   const [focusId, setFocusId] = useState<string | null>(null);
   const [lastSearchAt, setLastSearchAt] = useState(0);
   const [now, setNow] = useState(Date.now());
+  // 0..2 — escalates the "Searching…" message at 3s and 8s while a request is in-flight.
+  const [loadingPhase, setLoadingPhase] = useState(0);
   const lastSearchedKey = useRef<string | null>(null);
+  const phaseTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  function clearPhaseTimers() {
+    phaseTimersRef.current.forEach(clearTimeout);
+    phaseTimersRef.current = [];
+  }
+  function startPhaseTimers() {
+    clearPhaseTimers();
+    setLoadingPhase(0);
+    phaseTimersRef.current.push(setTimeout(() => setLoadingPhase(1), 3000));
+    phaseTimersRef.current.push(setTimeout(() => setLoadingPhase(2), 8000));
+  }
+  useEffect(() => () => clearPhaseTimers(), []);
 
   // Tick "now" once a second so the cooldown countdown updates.
   useEffect(() => {
@@ -213,22 +234,25 @@ export default function DiscoverVenues({
     setErrorMsg(null);
     lastSearchedKey.current = key;
     setLastSearchAt(Date.now());
+    startPhaseTimers();
     let cancelled = false;
     fetchOverpass(center, radius)
       .then(results => {
         if (cancelled) return;
+        clearPhaseTimers();
         writeCache(key, results);
         setVenues(results);
         setStatus(results.length === 0 ? 'empty' : 'success');
       })
       .catch(err => {
         if (cancelled) return;
+        clearPhaseTimers();
         // eslint-disable-next-line no-console
         console.error('[discover] Overpass failed:', err);
         setStatus('error');
         setErrorMsg(err instanceof Error ? err.message : String(err));
       });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; clearPhaseTimers(); };
   }, [center, radius]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cooldownRemaining = Math.max(0, COOLDOWN_MS - (now - lastSearchAt));
@@ -243,9 +267,11 @@ export default function DiscoverVenues({
     setStatus('fetching');
     setErrorMsg(null);
     setLastSearchAt(Date.now());
+    startPhaseTimers();
     fetchOverpass(center, radius)
-      .then(results => { writeCache(key, results); setVenues(results); setStatus(results.length === 0 ? 'empty' : 'success'); })
+      .then(results => { clearPhaseTimers(); writeCache(key, results); setVenues(results); setStatus(results.length === 0 ? 'empty' : 'success'); })
       .catch(err => {
+        clearPhaseTimers();
         // eslint-disable-next-line no-console
         console.error('[discover] Overpass failed:', err);
         setStatus('error');
@@ -321,8 +347,11 @@ export default function DiscoverVenues({
       {center && status === 'fetching' && (
         <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
           <Loader2 size={18} className="spin" />
-          <div style={{ marginTop: 10 }}>Searching OpenStreetMap…</div>
-          <div style={{ fontSize: 11, marginTop: 4 }}>Overpass searches can take 5–15 seconds.</div>
+          <div style={{ marginTop: 10 }}>
+            {loadingPhase === 0 && 'Searching OpenStreetMap…'}
+            {loadingPhase === 1 && 'Searching OpenStreetMap… (this can take a few seconds)'}
+            {loadingPhase === 2 && 'Still searching… trying alternative servers'}
+          </div>
         </div>
       )}
 
