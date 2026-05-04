@@ -17,6 +17,41 @@ type RowData = {
   trip?: Trip;
 };
 
+// Triggers store the actor under a type-specific payload key (liker_*,
+// commenter_*, sender_*, etc.). These helpers pick the right field per
+// type and fall back to legacy keys (angler_id / angler_name) so older
+// rows written before the rename still render correctly.
+function actorIdForType(n: AppNotification): string | undefined {
+  const p: any = n.payload || {};
+  switch (n.type) {
+    case 'catch_liked':       return p.liker_id || p.angler_id;
+    case 'comment_on_catch':  return p.commenter_id || p.angler_id;
+    case 'trip_new_catch':    return p.angler_id;
+    case 'friend_request':    return p.requester_id;
+    case 'friend_accepted':   return p.addressee_id || p.accepter_id;
+    case 'trip_invite':       return p.invited_by || p.inviter_id;
+    case 'trip_chat':
+    case 'trip_chat_mention': return p.sender_id || p.angler_id;
+    case 'trip_new_member':   return p.joiner_id || p.angler_id;
+    default:                  return p.actor_id || p.angler_id;
+  }
+}
+function actorNameFromPayload(n: AppNotification): string | undefined {
+  const p: any = n.payload || {};
+  switch (n.type) {
+    case 'catch_liked':       return p.liker_name || p.angler_name;
+    case 'comment_on_catch':  return p.commenter_name || p.angler_name;
+    case 'trip_new_catch':    return p.angler_name;
+    case 'friend_request':    return p.requester_name;
+    case 'friend_accepted':   return p.accepter_name;
+    case 'trip_invite':       return p.inviter_name;
+    case 'trip_chat':
+    case 'trip_chat_mention': return p.sender_name || p.angler_name;
+    case 'trip_new_member':   return p.joiner_name || p.angler_name;
+    default:                  return p.angler_name;
+  }
+}
+
 export default function NotificationsPage() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -69,11 +104,8 @@ export default function NotificationsPage() {
     if (!notifs) return [] as string[];
     const set = new Set<string>();
     notifs.forEach(n => {
-      if (n.payload?.requester_id) set.add(n.payload.requester_id);
-      if (n.payload?.addressee_id) set.add(n.payload.addressee_id);
-      if (n.payload?.invited_by)   set.add(n.payload.invited_by);
-      if (n.payload?.actor_id)     set.add(n.payload.actor_id);
-      if (n.payload?.angler_id)    set.add(n.payload.angler_id);
+      const id = actorIdForType(n);
+      if (id) set.add(id);
     });
     return Array.from(set);
   }, [notifs]);
@@ -108,7 +140,7 @@ export default function NotificationsPage() {
 
   const rows: RowData[] | null = notifs ? notifs.map(n => ({
     notif: n,
-    actor: aMap[n.payload?.requester_id || n.payload?.invited_by || n.payload?.addressee_id || n.payload?.actor_id || n.payload?.angler_id || ''],
+    actor: aMap[actorIdForType(n) || ''],
     trip: tMap[n.payload?.trip_id || ''],
   })) : null;
 
@@ -221,12 +253,13 @@ export default function NotificationsPage() {
                 handleNotifClick(notif, trip, actor);
               };
               if (notif.type === 'friend_request') {
-                if (!actor) return null;
+                const actorName = actor?.display_name || actor?.username || actorNameFromPayload(notif);
+                if (!actorName) return null;
                 return (
                   <NotifCard key={notif.id} icon={<UserPlus size={16} style={{ color: 'var(--gold-2)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
-                        <strong>{actor.display_name || actor.username}</strong> wants to be friends
+                        <strong>{actorName}</strong> wants to be friends
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
                     </div>
@@ -244,12 +277,13 @@ export default function NotificationsPage() {
                 );
               }
               if (notif.type === 'friend_accepted') {
-                if (!actor) return null;
+                const actorName = actor?.display_name || actor?.username || actorNameFromPayload(notif);
+                if (!actorName) return null;
                 return (
                   <NotifCard key={notif.id} clickable onClick={handleClick} icon={<Check size={16} style={{ color: 'var(--sage)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
-                        <strong>{actor.display_name || actor.username}</strong> accepted your friend request
+                        <strong>{actorName}</strong> accepted your friend request
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
                     </div>
@@ -260,11 +294,12 @@ export default function NotificationsPage() {
                 );
               }
               if (notif.type === 'trip_invite') {
+                const actorName = actor?.display_name || actor?.username || actorNameFromPayload(notif);
                 return (
                   <NotifCard key={notif.id} icon={<Tent size={16} style={{ color: 'var(--gold-2)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
-                        {actor ? <><strong>{actor.display_name || actor.username}</strong> invited you to </> : 'Invited to '}
+                        {actorName ? <><strong>{actorName}</strong> invited you to </> : 'Invited to '}
                         <strong>{trip?.name || 'a trip'}</strong>
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
@@ -286,7 +321,7 @@ export default function NotificationsPage() {
                 const lbs = notif.payload?.lbs ?? 0;
                 const oz = notif.payload?.oz ?? 0;
                 const species = notif.payload?.species as string | undefined;
-                const actorName = actor?.display_name || actor?.username || (notif.payload?.angler_name as string | undefined);
+                const actorName = actor?.display_name || actor?.username || actorNameFromPayload(notif);
                 const icon = notif.type === 'catch_liked'
                   ? <ThumbsUp size={16} style={{ color: 'var(--gold-2)' }} />
                   : <Fish size={16} style={{ color: 'var(--gold-2)' }} />;
@@ -312,7 +347,7 @@ export default function NotificationsPage() {
                 );
               }
               if (notif.type === 'trip_new_member') {
-                const actorName = actor?.display_name || actor?.username || (notif.payload?.angler_name as string | undefined);
+                const actorName = actor?.display_name || actor?.username || actorNameFromPayload(notif);
                 return (
                   <NotifCard key={notif.id} clickable onClick={handleClick} icon={<UserPlus size={16} style={{ color: 'var(--sage)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -327,7 +362,7 @@ export default function NotificationsPage() {
                 );
               }
               if (notif.type === 'trip_chat') {
-                const actorName = actor?.display_name || actor?.username || (notif.payload?.angler_name as string | undefined);
+                const actorName = actor?.display_name || actor?.username || actorNameFromPayload(notif);
                 return (
                   <NotifCard key={notif.id} clickable onClick={handleClick} icon={<MessageCircle size={16} style={{ color: 'var(--text-2)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -344,7 +379,7 @@ export default function NotificationsPage() {
                 );
               }
               if (notif.type === 'trip_chat_mention') {
-                const actorName = actor?.display_name || actor?.username || (notif.payload?.angler_name as string | undefined);
+                const actorName = actor?.display_name || actor?.username || actorNameFromPayload(notif);
                 return (
                   <NotifCard key={notif.id} clickable onClick={handleClick} icon={<AtSign size={16} style={{ color: 'var(--gold-2)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>

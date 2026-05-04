@@ -58,97 +58,142 @@ function fmtDateRange(s: string, e: string) {
   return `${sd.getDate()} ${sd.toLocaleString('en', { month: 'short' })} – ${ed.getDate()} ${ed.toLocaleString('en', { month: 'short' })}`;
 }
 
+// Per-type payload field mapping. Triggers write the actor under a
+// type-specific key (liker_*, commenter_*, sender_*, etc.). Older rows
+// may only have angler_id / angler_name as a fallback.
+function payloadActorId(type: string, p: any): string | undefined {
+  switch (type) {
+    case 'catch_liked':       return p.liker_id || p.angler_id;
+    case 'comment_on_catch':  return p.commenter_id || p.angler_id;
+    case 'trip_new_catch':    return p.angler_id;
+    case 'friend_request':    return p.requester_id;
+    case 'friend_accepted':   return p.addressee_id || p.accepter_id;
+    case 'trip_invite':       return p.invited_by || p.inviter_id;
+    case 'trip_chat':
+    case 'trip_chat_mention': return p.sender_id || p.angler_id;
+    case 'trip_new_member':   return p.joiner_id || p.angler_id;
+    default:                  return p.actor_id || p.angler_id;
+  }
+}
+function payloadActorName(type: string, p: any): string | undefined {
+  switch (type) {
+    case 'catch_liked':       return p.liker_name || p.angler_name;
+    case 'comment_on_catch':  return p.commenter_name || p.angler_name;
+    case 'trip_new_catch':    return p.angler_name;
+    case 'friend_request':    return p.requester_name;
+    case 'friend_accepted':   return p.accepter_name;
+    case 'trip_invite':       return p.inviter_name;
+    case 'trip_chat':
+    case 'trip_chat_mention': return p.sender_name || p.angler_name;
+    case 'trip_new_member':   return p.joiner_name || p.angler_name;
+    default:                  return p.angler_name;
+  }
+}
+
+// Resolve the actor name for a notification: prefer the name embedded
+// in the trigger payload, fall back to fetching the profile by id.
+// Profile is also returned so friend_accepted can build the URL from
+// profile.username.
+async function resolveActor(n: NotifRow): Promise<{ name: string; profile: { id: string; username: string; display_name: string } | null }> {
+  const p = n.payload || {};
+  const namePayload = payloadActorName(n.type, p);
+  const id = payloadActorId(n.type, p);
+  const profile = id ? await fetchProfile(id) : null;
+  const name = namePayload || profile?.display_name || profile?.username || 'Someone';
+  return { name, profile };
+}
+
 async function buildPayload(n: NotifRow): Promise<{ title: string; body: string; url: string; tag?: string } | null> {
   const p = n.payload || {};
   switch (n.type) {
     case 'trip_new_catch': {
-      const angler = p.angler_id ? await fetchProfile(p.angler_id) : null;
+      const { name } = await resolveActor(n);
       const cat = p.catch_id ? await fetchCatch(p.catch_id) : null;
       const trip = cat?.trip_id ? await fetchTrip(cat.trip_id) : null;
-      const species = cat?.species || '';
+      const species = cat?.species || p.species || '';
       const w = cat ? fmtWeight(cat.lbs, cat.oz) : (p.lbs != null ? fmtWeight(p.lbs, p.oz || 0) : '');
       return {
-        title: `${angler?.display_name || angler?.username || 'Someone'} banked ${w}${species ? ` ${species}` : ''}`,
-        body: [cat?.lake, trip?.name].filter(Boolean).join(' · ') || 'New catch in your trip',
+        title: `${name} banked ${w}${species ? ` ${species}` : ''}`,
+        body: [cat?.lake, trip?.name].filter(Boolean).join(' · ') || (trip ? 'New catch in your trip' : 'Tap to view'),
         url: `/?catch=${cat?.id || ''}`,
         tag: `trip-catch-${cat?.id || n.id}`,
       };
     }
     case 'trip_new_member': {
-      const angler = p.angler_id ? await fetchProfile(p.angler_id) : null;
+      const { name } = await resolveActor(n);
       const trip = p.trip_id ? await fetchTrip(p.trip_id) : null;
       return {
-        title: `${angler?.display_name || angler?.username || 'Someone'} joined ${trip?.name || 'your trip'}`,
+        title: `${name} joined ${trip?.name || 'your trip'}`,
         body: 'Tap to open the trip',
         url: '/notifications',
         tag: `trip-member-${p.trip_id || n.id}`,
       };
     }
     case 'trip_invite': {
-      const angler = p.invited_by ? await fetchProfile(p.invited_by) : null;
+      const { name } = await resolveActor(n);
       const trip = p.trip_id ? await fetchTrip(p.trip_id) : null;
       return {
-        title: `${angler?.display_name || angler?.username || 'Someone'} invited you to ${trip?.name || 'a trip'}`,
+        title: `${name} invited you to ${trip?.name || 'a trip'}`,
         body: trip ? fmtDateRange(trip.start_date, trip.end_date) : 'Tap to view',
         url: '/notifications',
         tag: `trip-invite-${p.trip_id || n.id}`,
       };
     }
     case 'friend_request': {
-      const angler = p.requester_id ? await fetchProfile(p.requester_id) : null;
+      const { name } = await resolveActor(n);
       return {
-        title: `Friend request from ${angler?.display_name || 'someone'}`,
+        title: `Friend request from ${name}`,
         body: 'Tap to view',
         url: '/notifications',
         tag: `friend-req-${p.friendship_id || n.id}`,
       };
     }
     case 'friend_accepted': {
-      const angler = p.addressee_id ? await fetchProfile(p.addressee_id) : null;
+      const { name, profile } = await resolveActor(n);
       return {
-        title: `${angler?.display_name || angler?.username || 'Someone'} accepted your friend request`,
+        title: `${name} accepted your friend request`,
         body: 'Tap to see their profile',
-        url: angler ? `/profile/${angler.username}` : '/notifications',
+        url: profile?.username ? `/profile/${profile.username}` : '/notifications',
         tag: `friend-acc-${n.id}`,
       };
     }
     case 'comment_on_catch': {
-      const angler = p.angler_id ? await fetchProfile(p.angler_id) : null;
+      const { name } = await resolveActor(n);
       const cat = p.catch_id ? await fetchCatch(p.catch_id) : null;
       const w = cat ? `${fmtWeight(cat.lbs, cat.oz)}${cat.species ? ` ${cat.species}` : ''}` : 'your catch';
       return {
-        title: `${angler?.display_name || angler?.username || 'Someone'} commented on your ${w}`,
+        title: `${name} commented on your ${w}`,
         body: (p.snippet || p.preview || 'Tap to read').toString().slice(0, 100),
         url: `/?catch=${cat?.id || ''}`,
         tag: `catch-comment-${cat?.id || n.id}`,
       };
     }
     case 'catch_liked': {
-      const angler = p.angler_id ? await fetchProfile(p.angler_id) : null;
+      const { name } = await resolveActor(n);
       const cat = p.catch_id ? await fetchCatch(p.catch_id) : null;
       const w = cat ? `${fmtWeight(cat.lbs, cat.oz)}${cat.species ? ` ${cat.species}` : ''}` : 'your catch';
       return {
-        title: `${angler?.display_name || angler?.username || 'Someone'} liked your ${w}`,
+        title: `${name} liked your ${w}`,
         body: 'Tap to view',
         url: `/?catch=${cat?.id || ''}`,
         tag: `catch-liked-${cat?.id || n.id}`,
       };
     }
     case 'trip_chat_mention': {
-      const angler = p.angler_id ? await fetchProfile(p.angler_id) : null;
+      const { name } = await resolveActor(n);
       const trip = p.trip_id ? await fetchTrip(p.trip_id) : null;
       return {
-        title: `${angler?.display_name || angler?.username || 'Someone'} mentioned you${trip ? ` in ${trip.name}` : ''}`,
+        title: `${name} mentioned you${trip ? ` in ${trip.name}` : ''}`,
         body: (p.preview || 'Tap to view').toString().slice(0, 100),
         url: '/',
         tag: `chat-mention-${p.message_id || n.id}`,
       };
     }
     case 'trip_chat': {
-      const angler = p.angler_id ? await fetchProfile(p.angler_id) : null;
+      const { name } = await resolveActor(n);
       const trip = p.trip_id ? await fetchTrip(p.trip_id) : null;
       return {
-        title: `${angler?.display_name || angler?.username || 'Someone'}${trip ? ` in ${trip.name}` : ''}`,
+        title: `${name}${trip ? ` in ${trip.name}` : ''}`,
         body: (p.snippet || p.preview || '').toString().slice(0, 100),
         url: '/',
         tag: `chat-${p.trip_id || n.id}`,
