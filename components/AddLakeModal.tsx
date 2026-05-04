@@ -189,19 +189,28 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [radius]);
 
-  function pickSaved(l: Lake) {
-    onPicked?.(l);
+  // Bookmark + finish. Idempotent — calling on a lake the user already
+  // has saved is a no-op. Failure to bookmark isn't fatal: the lake row
+  // exists, the user can re-tap from saved/seed search to retry.
+  async function bookmarkAndFinish(lake: Lake) {
+    try { await db.saveLakeForUser(lake.id); }
+    catch (e) { console.error('[saveLake] bookmark failed', e); }
+    qc.invalidateQueries({ queryKey: QK.lakes.mySaved });
+    qc.invalidateQueries({ queryKey: QK.lakes.all });
+    onPicked?.(lake);
     onClose();
+  }
+
+  async function pickSaved(l: Lake) {
+    await bookmarkAndFinish(l);
   }
 
   async function pickOSM(v: OSMVenue) {
     if (v.added) return;
     try {
       const created = await db.createLakeFromOSM({ name: v.name, latitude: v.lat, longitude: v.lng });
-      qc.invalidateQueries({ queryKey: QK.lakes.all });
       setVenues(curr => curr ? curr.map(x => x.id === v.id ? { ...x, added: true } : x) : curr);
-      onPicked?.(created);
-      onClose();
+      await bookmarkAndFinish(created);
     } catch (e: any) {
       alert(e?.message || 'Failed to add lake');
     }
@@ -213,9 +222,7 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
     setSavingManual(true);
     try {
       const created = await db.createManualLake({ name, latitude: null, longitude: null });
-      qc.invalidateQueries({ queryKey: QK.lakes.all });
-      onPicked?.(created);
-      onClose();
+      await bookmarkAndFinish(created);
     } catch (e: any) {
       alert(e?.message || 'Failed to add lake');
     } finally { setSavingManual(false); }
@@ -235,9 +242,7 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
         photo_url: g.photo_url,
         photo_source: g.photo_source,
       });
-      qc.invalidateQueries({ queryKey: QK.lakes.all });
-      onPicked?.(created);
-      onClose();
+      await bookmarkAndFinish(created);
     } catch (e: any) {
       alert(e?.message || 'Failed to add lake');
     }

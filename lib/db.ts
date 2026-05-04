@@ -652,6 +652,37 @@ export async function getLakeByName(name: string): Promise<Lake | null> {
   return (data as Lake) || null;
 }
 
+// ============ USER-SAVED LAKES (bookmarks) ============
+// A user can bookmark any lake row, even ones they didn't create or fish.
+// The Lakes tab unions this set with catches/trips/created_by so seed
+// lakes (which have created_by IS NULL) and Nominatim picks all surface.
+export async function listMySavedLakeIds(): Promise<string[]> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return [];
+  const { data } = await supabase().from('user_saved_lakes').select('lake_id').eq('user_id', user.id);
+  return ((data || []) as { lake_id: string }[]).map((r) => r.lake_id);
+}
+
+export async function saveLakeForUser(lakeId: string): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  // Idempotent: PK is (user_id, lake_id). ignoreDuplicates makes re-saving
+  // an already-bookmarked lake a no-op.
+  const { error } = await supabase().from('user_saved_lakes').upsert(
+    { user_id: user.id, lake_id: lakeId },
+    { onConflict: 'user_id,lake_id', ignoreDuplicates: true },
+  );
+  if (error) throw error;
+}
+
+export async function unsaveLakeForUser(lakeId: string): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { error } = await supabase().from('user_saved_lakes').delete()
+    .eq('user_id', user.id).eq('lake_id', lakeId);
+  if (error) throw error;
+}
+
 // Server-side ILIKE search across the seed dataset (UK + France imports).
 // Bounded to source='seed' so we don't surface random user-created or
 // OSM-discovered rows here — those flow through the existing saved /

@@ -1,8 +1,11 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { ArrowLeft, Check, Loader2, MapPinned, Plus, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Bookmark, BookmarkCheck, Check, Fish, Loader2, MapPinned, Plus, Trash2, X } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import * as db from '@/lib/db';
+import { useMySavedLakeIds } from '@/lib/queries';
+import { QK } from '@/lib/queryKeys';
 import type { Catch, Lake, LakeAnnotation, LakeAnnotationType, Profile } from '@/lib/types';
 import { formatWeight, totalOz } from '@/lib/util';
 import { geocodeLake } from '@/lib/weather';
@@ -75,6 +78,37 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
   const myCatchesHere = lakeCatches.filter(c => c.angler_id === me.id).length;
   const canAnnotate = myCatchesHere > 0;
 
+  // Saved/Fishing status. Optimistic save/unsave via TanStack mutations.
+  const qc = useQueryClient();
+  const savedIdsQuery = useMySavedLakeIds();
+  const isSaved = (savedIdsQuery.data || []).includes(lake.id);
+  const saveMut = useMutation({
+    mutationFn: () => db.saveLakeForUser(lake.id),
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: QK.lakes.mySaved });
+      const prev = qc.getQueryData<string[]>(QK.lakes.mySaved);
+      qc.setQueryData<string[]>(QK.lakes.mySaved, (old) => (old || []).includes(lake.id) ? (old || []) : [...(old || []), lake.id]);
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(QK.lakes.mySaved, ctx.prev); },
+    onSettled: () => { qc.invalidateQueries({ queryKey: QK.lakes.mySaved }); qc.invalidateQueries({ queryKey: QK.lakes.all }); },
+  });
+  const unsaveMut = useMutation({
+    mutationFn: () => db.unsaveLakeForUser(lake.id),
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: QK.lakes.mySaved });
+      const prev = qc.getQueryData<string[]>(QK.lakes.mySaved);
+      qc.setQueryData<string[]>(QK.lakes.mySaved, (old) => (old || []).filter(id => id !== lake.id));
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(QK.lakes.mySaved, ctx.prev); },
+    onSettled: () => { qc.invalidateQueries({ queryKey: QK.lakes.mySaved }); qc.invalidateQueries({ queryKey: QK.lakes.all }); },
+  });
+  function handleUnsave() {
+    if (!confirm(`Remove "${lake.name}" from your saved lakes?`)) return;
+    unsaveMut.mutate();
+  }
+
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 100,
@@ -97,6 +131,35 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
           <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6, padding: 4, fontFamily: 'inherit', fontSize: 14, cursor: 'pointer' }}>
             <ArrowLeft size={18} /> Back
           </button>
+
+          {myCatchesHere > 0 ? (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+              background: 'rgba(141,191,157,0.14)', color: 'var(--sage)',
+              border: '1px solid rgba(141,191,157,0.4)',
+            }}>
+              <Fish size={12} /> Fishing here
+            </span>
+          ) : isSaved ? (
+            <button onClick={handleUnsave} disabled={unsaveMut.isPending} className="tap" style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
+              background: 'rgba(212,182,115,0.14)', color: 'var(--gold-2)',
+              border: '1px solid var(--gold)', cursor: 'pointer',
+            }}>
+              <BookmarkCheck size={12} /> Saved
+            </button>
+          ) : (
+            <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending} className="tap" style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
+              background: 'transparent', color: 'var(--gold-2)',
+              border: '1px dashed rgba(234,201,136,0.4)', cursor: 'pointer',
+            }}>
+              <Bookmark size={12} /> Save
+            </button>
+          )}
         </div>
 
         {lake.photo_url ? (

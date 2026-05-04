@@ -209,6 +209,15 @@ export function useLakes() {
   });
 }
 
+export function useMySavedLakeIds() {
+  return useQuery({
+    queryKey: QK.lakes.mySaved,
+    queryFn: db.listMySavedLakeIds,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
 // ============================================================
 // useLakesEnriched: union of (lakes the user has caught at) and (rows in
 // the lakes table — including 'osm' venues saved-but-unfished). Catches and
@@ -238,6 +247,7 @@ export function useLakesEnriched() {
   const lakes = useLakes().data || [];
   const trips = useTrips().data || [];
   const me = useMe().data || null;
+  const savedIds = useMySavedLakeIds().data || [];
   // We don't list annotations for every lake here; the badge just reflects
   // whatever the cache currently knows about. This is intentionally
   // best-effort — it only matters for the "Add notes" badge hint.
@@ -260,6 +270,10 @@ export function useLakesEnriched() {
     });
     trips.forEach(t => { if (t.lake_id) myLakeIds.add(t.lake_id); });
     if (me) lakes.forEach(l => { if (l.created_by === me.id) myLakeIds.add(l.id); });
+    // Bookmarks (user_saved_lakes) — fourth ownership signal. Lets seed
+    // and Nominatim picks (which have created_by IS NULL) appear in the
+    // Lakes tab without the user having to log a catch first.
+    savedIds.forEach(id => myLakeIds.add(id));
 
     const myLakes = lakes.filter(l => myLakeIds.has(l.id) || myLakeNames.has(norm(l.name)));
 
