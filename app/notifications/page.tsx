@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as db from '@/lib/db';
 import type { AppNotification, Profile, Trip } from '@/lib/types';
 import { PageHeader } from '@/components/AppFrame';
-import { useNotifications } from '@/lib/queries';
+import { useNotifications, useProfilesByIds } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
 
 type RowData = {
@@ -19,10 +19,11 @@ export default function NotificationsPage() {
   const router = useRouter();
   const qc = useQueryClient();
   const notifsQuery = useNotifications();
-  const notifs = notifsQuery.data;
+  // Belt-and-braces: TanStack Query in placeholder/initial state may yield
+  // undefined; a stale cache entry under a colliding key could yield non-array.
+  const notifs: AppNotification[] | undefined = Array.isArray(notifsQuery.data) ? notifsQuery.data : undefined;
 
   // Resolve actor profiles & referenced trips for this batch of notifications.
-  // These are also TanStack queries so they cache across visits.
   const actorIds = useMemo(() => {
     if (!notifs) return [] as string[];
     const set = new Set<string>();
@@ -41,12 +42,11 @@ export default function NotificationsPage() {
     return Array.from(set);
   }, [notifs]);
 
-  const actorsQuery = useQuery({
-    queryKey: ['profiles', 'ids', [...actorIds].sort().join(',')],
-    queryFn: () => db.listProfilesByIds(actorIds),
-    enabled: actorIds.length > 0,
-    staleTime: 5 * 60_000,
-  });
+  // Use the canonical useProfilesByIds hook from lib/queries (returns a
+  // Record<id, Profile> map). Defining a local useQuery with the same
+  // ['profiles','ids',...] key collided with that hook's cache shape and
+  // caused the production crash on this page.
+  const actorsQuery = useProfilesByIds(actorIds);
   const tripsQuery = useQuery({
     queryKey: ['notifs', 'trips', [...tripIds].sort().join(',')],
     queryFn: () => Promise.all(tripIds.map(id => db.getTrip(id))).then(arr => arr.filter((x): x is Trip => !!x)),
@@ -54,14 +54,13 @@ export default function NotificationsPage() {
     staleTime: 60_000,
   });
 
-  const aMap = useMemo(() => {
-    const m: Record<string, Profile> = {};
-    (actorsQuery.data || []).forEach(p => { m[p.id] = p; });
-    return m;
-  }, [actorsQuery.data]);
+  const aMap: Record<string, Profile> = (actorsQuery.data && typeof actorsQuery.data === 'object' && !Array.isArray(actorsQuery.data))
+    ? actorsQuery.data
+    : {};
   const tMap = useMemo(() => {
     const m: Record<string, Trip> = {};
-    (tripsQuery.data || []).forEach(t => { m[t.id] = t; });
+    const arr = Array.isArray(tripsQuery.data) ? tripsQuery.data : [];
+    arr.forEach(t => { m[t.id] = t; });
     return m;
   }, [tripsQuery.data]);
 

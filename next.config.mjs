@@ -56,10 +56,6 @@ const withPWA = withPWAInit({
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // TEMP: disable minification + enable source maps so unminified stack
-  // traces appear in the browser console. REVERT after debugging.
-  swcMinify: false,
-  productionBrowserSourceMaps: true,
   experimental: { serverActions: { bodySizeLimit: '10mb' } },
 };
 
