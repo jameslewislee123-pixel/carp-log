@@ -187,6 +187,10 @@ export type CatchInput = {
   // Optional per-field privacy map. Defaults to {} (everything public) when
   // omitted. Persisted to the catches.field_visibility JSONB column.
   field_visibility?: FieldVisibility;
+  // Ordered list of storage URLs for this catch. Pass through on update;
+  // for inserts the photos are uploaded after the row exists and a
+  // separate updateCatchPhotos call writes the array.
+  photo_urls?: string[];
   comments?: Comment[];
 };
 
@@ -282,6 +286,44 @@ export async function uploadPhotoFromDataUrl(catchId: string, dataUrl: string): 
   });
   if (error) throw error;
   return photoPublicUrl(user.id, catchId);
+}
+
+// Multi-photo upload. Each call appends a new file at
+// {anglerId}/{catchId}/{timestamp}-{rand}.jpg and returns the public URL.
+// Order is tracked by the caller via the catches.photo_urls array.
+export async function uploadCatchPhoto(catchId: string, dataUrl: string): Promise<string> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const blob = await (await fetch(dataUrl)).blob();
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+  const path = `${user.id}/${catchId}/${filename}`;
+  const { error } = await supabase().storage.from(BUCKET).upload(path, blob, {
+    contentType: 'image/jpeg', upsert: false, cacheControl: '3600',
+  });
+  if (error) throw error;
+  const { data } = supabase().storage.from(BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+
+// Delete a photo by its public URL. Best-effort — failures are swallowed
+// since a stuck file is far better than a stuck UI.
+export async function deleteCatchPhotoByUrl(url: string): Promise<void> {
+  // Public URL shape: .../object/public/<bucket>/<path>
+  const marker = `/object/public/${BUCKET}/`;
+  const idx = url.indexOf(marker);
+  if (idx < 0) return;
+  const path = url.slice(idx + marker.length).split('?')[0];
+  if (!path) return;
+  await supabase().storage.from(BUCKET).remove([path]);
+}
+
+// Persist the photo_urls array (and matching has_photo flag) for a catch
+// after photo uploads / deletions complete. Called once per save.
+export async function updateCatchPhotos(catchId: string, photoUrls: string[]): Promise<void> {
+  await supabase().from('catches').update({
+    photo_urls: photoUrls,
+    has_photo: photoUrls.length > 0,
+  }).eq('id', catchId);
 }
 
 // ============ PUSH NOTIFICATIONS (preferences) ============

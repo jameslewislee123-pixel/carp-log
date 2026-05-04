@@ -361,13 +361,22 @@ export default function NotificationsPage() {
             qc.invalidateQueries({ queryKey: QK.catches.all });
             setDetailCatch(null);
           }}
-          onUpdate={async (data, photoDataUrl) => {
+          onUpdate={async (data, slots) => {
             const saved = await db.upsertCatch({ ...data, id: detailCatch.id });
-            if (photoDataUrl) {
-              try { await db.uploadPhotoFromDataUrl(detailCatch.id, photoDataUrl); } catch {}
+            // Multi-photo reconciliation mirrors saveCatch in CarpApp.
+            const previous = (await db.getCatchById(saved.id))?.photo_urls || [];
+            const finalUrls: string[] = [];
+            for (const s of slots) {
+              if (s.url) finalUrls.push(s.url);
+              else if (s.dataUrl) {
+                try { finalUrls.push(await db.uploadCatchPhoto(saved.id, s.dataUrl)); } catch {}
+              }
             }
+            const keep = new Set(finalUrls);
+            await Promise.all(previous.filter((u: string) => !keep.has(u)).map((u: string) => db.deleteCatchPhotoByUrl(u).catch(() => {})));
+            await db.updateCatchPhotos(saved.id, finalUrls);
             qc.invalidateQueries({ queryKey: QK.catches.all });
-            setDetailCatch(saved);
+            setDetailCatch({ ...saved, photo_urls: finalUrls, has_photo: finalUrls.length > 0 });
           }}
           onOpenTrip={(t) => {
             setDetailCatch(null);

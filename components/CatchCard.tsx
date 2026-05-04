@@ -45,7 +45,12 @@ export default function CatchCard({
   const species = SPECIES.find(s => s.id === catchData.species);
   const commentCount = typeof commentCountProp === 'number' ? commentCountProp : 0;
   const [photoErr, setPhotoErr] = useState(false);
-  const photoUrl = catchData.has_photo && angler ? photoPublicUrl(angler.id, catchData.id) : null;
+  // Cover photo: prefer photo_urls[0]; fall back to the legacy derived path.
+  const photoUrl =
+    (catchData.photo_urls && catchData.photo_urls.length > 0)
+      ? catchData.photo_urls[0]
+      : (catchData.has_photo && angler ? photoPublicUrl(angler.id, catchData.id) : null);
+  const extraCount = (catchData.photo_urls?.length ?? 0) > 1 ? catchData.photo_urls!.length - 1 : 0;
   const qc = useQueryClient();
 
   if (catchData.lost) {
@@ -92,6 +97,16 @@ export default function CatchCard({
                 <Tent size={10} /> {trip.name}
               </span>
             </div>
+          )}
+          {extraCount > 0 && (
+            <span style={{
+              position: 'absolute', top: 12, right: 12,
+              padding: '4px 10px', borderRadius: 999,
+              background: 'rgba(5,14,13,0.75)', color: '#FFF',
+              border: '1px solid rgba(255,255,255,0.18)',
+              backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+              fontSize: 11, fontWeight: 700, letterSpacing: '0.04em',
+            }}>+{extraCount}</span>
           )}
           <div style={{ position: 'absolute', bottom: 14, left: 16, right: 16, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
             <div className="num-display" style={{ fontSize: 38, lineHeight: 0.95, color: 'var(--text)', textShadow: '0 2px 12px rgba(0,0,0,0.5)' }}>

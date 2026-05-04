@@ -139,6 +139,11 @@ export type Catch = {
   lake_id: string | null;
   visibility: CatchVisibility;
   field_visibility: FieldVisibility;
+  // Ordered list of public storage URLs. Index 0 is the cover. Always has
+  // length 0 for lost-fish records. For legacy single-photo catches this
+  // was backfilled by the migration to contain the one
+  // {angler_id}/{catch_id}.jpg URL.
+  photo_urls: string[];
   comments: Comment[];
   created_at?: string;
   updated_at?: string;

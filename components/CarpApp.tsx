@@ -26,6 +26,8 @@ import GearItemPicker from './GearItemPicker';
 import GearManager from './GearManager';
 import LakeDetail from './LakeDetail';
 import PushSettings from './PushSettings';
+import CatchPhotoCarousel from './CatchPhotoCarousel';
+import CatchPhotoLightbox from './CatchPhotoLightbox';
 import { readBgAnimationEnabled, writeBgAnimationEnabled } from './UnderwaterLottie';
 import type { TripSwimRoll } from '@/lib/types';
 import { Dices } from 'lucide-react';
@@ -211,11 +213,34 @@ export default function CarpApp() {
     return new Date(t.start_date).getTime() <= now && new Date(t.end_date).getTime() >= now - 86400000;
   }), [trips]);
 
-  async function saveCatch(input: db.CatchInput, photoDataUrl: string | null, isNew: boolean) {
+  async function saveCatch(input: db.CatchInput, slots: PhotoSlot[], isNew: boolean) {
     const saved = await db.upsertCatch(input);
-    if (photoDataUrl) {
-      try { await db.uploadPhotoFromDataUrl(saved.id, photoDataUrl); } catch (e) { console.warn('photo upload failed', e); }
+
+    // Multi-photo reconciliation. Each slot is either an existing remote
+    // URL (keep as-is) or a freshly-picked dataUrl (upload now). After
+    // uploads we delete any previously-attached URLs the user removed.
+    const previousUrls = (input.id && Array.isArray(input.photo_urls))
+      ? (await db.getCatchById(saved.id))?.photo_urls || []
+      : [];
+    const finalUrls: string[] = [];
+    for (const slot of slots) {
+      if (slot.url) {
+        finalUrls.push(slot.url);
+      } else if (slot.dataUrl) {
+        try { finalUrls.push(await db.uploadCatchPhoto(saved.id, slot.dataUrl)); }
+        catch (e) { console.warn('photo upload failed', e); }
+      }
     }
+    // Delete previous URLs the user removed during this save.
+    const finalSet = new Set(finalUrls);
+    await Promise.all(
+      previousUrls
+        .filter((u: string) => !finalSet.has(u))
+        .map((u: string) => db.deleteCatchPhotoByUrl(u).catch(() => {}))
+    );
+    // Persist the final array — has_photo derives from length.
+    await db.updateCatchPhotos(saved.id, finalUrls);
+
     // Realtime usually beats us to the cache, but invalidate for safety so
     // edits and photo-uploads always reconcile.
     qc.invalidateQueries({ queryKey: QK.catches.all });
@@ -242,7 +267,8 @@ export default function CarpApp() {
         }
       }
     }
-    return saved;
+    // Hand the caller the catch reflecting the post-upload photo_urls.
+    return { ...saved, photo_urls: finalUrls, has_photo: finalUrls.length > 0 };
   }
 
   async function deleteCatchHandler(id: string) {
@@ -427,6 +453,44 @@ function Header({ me, unread, onSettings, view }: { me: Profile | null; unread: 
 }
 
 // ============ FEED ============
+type ScopeMode = 'all' | 'mine' | 'selected';
+type FeedFilter = {
+  scope: ScopeMode;
+  selectedAnglerIds: string[];     // only consulted when scope === 'selected'
+  species: string[];                // empty = all
+  weightMinLbs: 0 | 20 | 30 | 40;
+  lakeName: string | null;          // null = all lakes
+  tripId: string | null | 'untripped'; // null = all, 'untripped' = no trip
+};
+const FILTER_KEY = 'feed_filter_v1';
+const DEFAULT_FILTER: FeedFilter = {
+  scope: 'all', selectedAnglerIds: [], species: [], weightMinLbs: 0,
+  lakeName: null, tripId: null,
+};
+function readFilter(): FeedFilter {
+  if (typeof window === 'undefined') return DEFAULT_FILTER;
+  try {
+    const raw = localStorage.getItem(FILTER_KEY);
+    if (!raw) return DEFAULT_FILTER;
+    const parsed = JSON.parse(raw);
+    return { ...DEFAULT_FILTER, ...parsed };
+  } catch { return DEFAULT_FILTER; }
+}
+function writeFilter(f: FeedFilter) {
+  try { localStorage.setItem(FILTER_KEY, JSON.stringify(f)); } catch {}
+}
+// How many filter dimensions differ from defaults — drives the badge count
+// shown on the Filter button.
+function activeFilterCount(f: FeedFilter): number {
+  let n = 0;
+  if (f.scope !== 'all') n++;
+  if (f.species.length > 0) n++;
+  if (f.weightMinLbs > 0) n++;
+  if (f.lakeName) n++;
+  if (f.tripId) n++;
+  return n;
+}
+
 function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenTrip }: {
   me: Profile;
   catches: CatchT[]; trips: Trip[]; profilesById: Record<string, Profile>;
@@ -434,43 +498,110 @@ function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenT
   onOpen: (c: CatchT) => void; onOpenTrip: (t: Trip) => void;
 }) {
   const pbByAngler = useMemo(() => computePBMap(catches), [catches]);
-  const [filter, setFilter] = useState<'all' | 'mine' | string>('all');
+  const [filter, setFilter] = useState<FeedFilter>(DEFAULT_FILTER);
+  const [filterModalOpen, setFilterModalOpen] = useState(false);
+  // Hydrate from localStorage on mount.
+  useEffect(() => { setFilter(readFilter()); }, []);
+
+  // Three-pill simple selector ("All" / "Mine" / a friend) — purely a UX
+  // shortcut. Tapping a friend pill switches scope to 'selected' with that
+  // single id. The full FilterModal is the only way to multi-select.
+  const friendIdsWithRecentActivity = useMemo(() => {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const lastByAngler: Record<string, number> = {};
+    for (const c of catches) {
+      if (c.angler_id === me.id) continue;
+      const t = +new Date(c.date);
+      if (t < cutoff) continue;
+      if (!lastByAngler[c.angler_id] || t > lastByAngler[c.angler_id]) lastByAngler[c.angler_id] = t;
+    }
+    return Object.entries(lastByAngler).sort((a, b) => b[1] - a[1]).map(([id]) => id).slice(0, 3);
+  }, [catches, me.id]);
+  const topFriends = friendIdsWithRecentActivity
+    .map(id => profilesById[id])
+    .filter((p): p is Profile => !!p);
+
+  // Filter chain. Apply each dimension in turn. Sort by date desc.
   const filtered = useMemo(() => {
     const sorted = [...catches].sort((a, b) => +new Date(b.date) - +new Date(a.date));
-    if (filter === 'all') return sorted;
-    if (filter === 'mine') return sorted.filter(c => c.angler_id === me.id);
-    return sorted.filter(c => c.angler_id === filter);
+    return sorted.filter(c => {
+      // Scope
+      if (filter.scope === 'mine') { if (c.angler_id !== me.id) return false; }
+      else if (filter.scope === 'selected') {
+        if (!filter.selectedAnglerIds.includes(c.angler_id)) return false;
+      }
+      // Species
+      if (filter.species.length > 0 && (!c.species || !filter.species.includes(c.species))) return false;
+      // Weight (total ounces ≥ minLbs * 16)
+      if (filter.weightMinLbs > 0) {
+        const oz = c.lbs * 16 + c.oz;
+        if (oz < filter.weightMinLbs * 16) return false;
+      }
+      // Lake (case-insensitive exact match)
+      if (filter.lakeName && c.lake?.trim().toLowerCase() !== filter.lakeName.trim().toLowerCase()) return false;
+      // Trip
+      if (filter.tripId === 'untripped') { if (c.trip_id) return false; }
+      else if (filter.tripId) { if (c.trip_id !== filter.tripId) return false; }
+      return true;
+    });
   }, [catches, filter, me.id]);
+
+  function applyFilter(next: FeedFilter) {
+    setFilter(next);
+    writeFilter(next);
+  }
+  function resetFilter() { applyFilter(DEFAULT_FILTER); }
 
   const activeTrip = useMemo(() => {
     const now = Date.now();
     return trips.find(t => +new Date(t.start_date) <= now && +new Date(t.end_date) >= now - 86400000);
   }, [trips]);
 
-  // chips show distinct anglers visible in the feed (sorted: me first, then others by recency)
-  const anglerChips = useMemo(() => {
-    const seen = new Set<string>();
-    const order: string[] = [];
-    for (const c of catches) {
-      if (!seen.has(c.angler_id)) { seen.add(c.angler_id); order.push(c.angler_id); }
-    }
-    return order
-      .map(id => profilesById[id])
-      .filter((p): p is Profile => !!p && p.id !== me.id);
-  }, [catches, profilesById, me.id]);
+  // Quick-select helpers for the simple pills row.
+  function selectAll() { applyFilter({ ...filter, scope: 'all', selectedAnglerIds: [] }); }
+  function selectMine() { applyFilter({ ...filter, scope: 'mine', selectedAnglerIds: [] }); }
+  function selectFriend(id: string) {
+    applyFilter({ ...filter, scope: 'selected', selectedAnglerIds: [id] });
+  }
+  // True when the current scope is "exactly this one friend".
+  const isOnlyFriend = (id: string) =>
+    filter.scope === 'selected' && filter.selectedAnglerIds.length === 1 && filter.selectedAnglerIds[0] === id;
+
+  const fCount = activeFilterCount(filter);
 
   return (
     <div style={{ padding: '8px 20px' }}>
       <ForecastCarousel catches={catches} />
       {activeTrip && <ActiveTripBanner trip={activeTrip} catches={catches} onClick={() => onOpenTrip(activeTrip)} />}
       <div className="scrollbar-thin" style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 16, paddingBottom: 4 }}>
-        <Chip active={filter === 'all'}  onClick={() => setFilter('all')}>All visible</Chip>
-        <Chip active={filter === 'mine'} onClick={() => setFilter('mine')}>My catches</Chip>
-        {anglerChips.map(p => (
-          <Chip key={p.id} active={filter === p.id} onClick={() => setFilter(p.id)}>{p.display_name}</Chip>
+        <Chip active={filter.scope === 'all'} onClick={selectAll}>All</Chip>
+        <Chip active={filter.scope === 'mine'} onClick={selectMine}>Mine</Chip>
+        {topFriends.map(p => (
+          <Chip key={p.id} active={isOnlyFriend(p.id)} onClick={() => selectFriend(p.id)}>{p.display_name}</Chip>
         ))}
+        <button onClick={() => setFilterModalOpen(true)} className="tap" style={{
+          flexShrink: 0, padding: '8px 14px', borderRadius: 999,
+          border: `1px solid ${fCount > 0 ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
+          background: fCount > 0 ? 'rgba(212,182,115,0.15)' : 'rgba(10,24,22,0.45)',
+          color: fCount > 0 ? 'var(--gold-2)' : 'var(--text-2)',
+          fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+        }}>
+          Filter{fCount > 0 ? ` (${fCount})` : ''}
+        </button>
       </div>
-      {filtered.length === 0 ? <EmptyState /> : (
+      {filtered.length === 0 ? (
+        fCount > 0 ? (
+          <div style={{ padding: '40px 0', textAlign: 'center' }}>
+            <p style={{ color: 'var(--text-3)', fontSize: 13, marginBottom: 12 }}>No catches match your filters.</p>
+            <button onClick={resetFilter} className="tap" style={{
+              padding: '10px 16px', borderRadius: 999,
+              background: 'var(--gold)', color: '#1A1004', border: 'none',
+              fontFamily: 'inherit', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+            }}>Clear filters</button>
+          </div>
+        ) : <EmptyState />
+      ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {filtered.map(c => (
             <CatchCard key={c.id} catchData={c}
@@ -481,6 +612,17 @@ function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenT
               onClick={() => onOpen(c)} />
           ))}
         </div>
+      )}
+      {filterModalOpen && (
+        <FeedFilterModal
+          me={me}
+          allCatches={catches}
+          profilesById={profilesById}
+          trips={trips}
+          current={filter}
+          onApply={(next) => { applyFilter(next); setFilterModalOpen(false); }}
+          onClose={() => setFilterModalOpen(false)}
+        />
       )}
     </div>
   );
@@ -674,6 +816,214 @@ function BiteForecastCard({ coords, compact }: { coords: { lat: number; lng: num
         </div>
       )}
     </div>
+  );
+}
+
+// ============ FEED FILTER MODAL ============
+// Drives every dimension of the feed filter. Local draft state so a user
+// can fiddle and then Apply (or Close to discard). All persistence happens
+// in the parent via writeFilter().
+function FeedFilterModal({ me, allCatches, profilesById, trips, current, onApply, onClose }: {
+  me: Profile;
+  allCatches: CatchT[];
+  profilesById: Record<string, Profile>;
+  trips: Trip[];
+  current: FeedFilter;
+  onApply: (next: FeedFilter) => void;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState<FeedFilter>(current);
+  const [friendQuery, setFriendQuery] = useState('');
+
+  // Friends list = every profile that's appeared in the feed (other than me).
+  const friends = useMemo<Profile[]>(() => {
+    const seen = new Set<string>();
+    const out: Profile[] = [];
+    for (const c of allCatches) {
+      if (seen.has(c.angler_id) || c.angler_id === me.id) continue;
+      seen.add(c.angler_id);
+      const p = profilesById[c.angler_id];
+      if (p) out.push(p);
+    }
+    return out.sort((a, b) => a.display_name.localeCompare(b.display_name));
+  }, [allCatches, profilesById, me.id]);
+  const filteredFriends = useMemo(() => {
+    const q = friendQuery.trim().toLowerCase();
+    if (!q) return friends;
+    return friends.filter(p =>
+      p.display_name.toLowerCase().includes(q) || p.username.toLowerCase().includes(q)
+    );
+  }, [friends, friendQuery]);
+
+  // Distinct lake names from cached catches (the fastest source of truth
+  // for lakes the user can actually filter to).
+  const lakeNames = useMemo(() => {
+    const set = new Set<string>();
+    allCatches.forEach(c => { if (c.lake?.trim()) set.add(c.lake.trim()); });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [allCatches]);
+
+  function toggleSpecies(id: string) {
+    setDraft(d => ({ ...d, species: d.species.includes(id) ? d.species.filter(s => s !== id) : [...d.species, id] }));
+  }
+  function toggleAngler(id: string) {
+    setDraft(d => ({ ...d, selectedAnglerIds: d.selectedAnglerIds.includes(id) ? d.selectedAnglerIds.filter(x => x !== id) : [...d.selectedAnglerIds, id] }));
+  }
+
+  return (
+    <VaulModalShell title="Filter feed" onClose={onClose} stackLevel={1}>
+      {/* SHOW CATCHES FROM */}
+      <div className="label">Show catches from</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 18 }}>
+        {([
+          { id: 'all' as const,      label: 'All friends' },
+          { id: 'mine' as const,     label: 'Just me' },
+          { id: 'selected' as const, label: 'Selected friends only' },
+        ]).map(opt => {
+          const active = draft.scope === opt.id;
+          return (
+            <button key={opt.id} onClick={() => setDraft(d => ({ ...d, scope: opt.id }))}
+              className="card tap" style={{
+                padding: 12, display: 'flex', alignItems: 'center', gap: 10,
+                background: active ? 'rgba(212,182,115,0.15)' : 'rgba(10,24,22,0.5)',
+                border: `1px solid ${active ? 'var(--gold)' : 'rgba(234,201,136,0.14)'}`,
+                cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+                color: active ? 'var(--gold-2)' : 'var(--text-2)',
+                fontSize: 13, fontWeight: 600,
+              }}>
+              <span style={{
+                width: 16, height: 16, borderRadius: 999,
+                border: `2px solid ${active ? 'var(--gold)' : 'rgba(234,201,136,0.3)'}`,
+                background: active ? 'var(--gold)' : 'transparent',
+                flexShrink: 0,
+              }} />
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* FRIENDS PICKER (only when 'selected') */}
+      {draft.scope === 'selected' && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div className="label" style={{ marginBottom: 0 }}>Friends</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={() => setDraft(d => ({ ...d, selectedAnglerIds: friends.map(f => f.id) }))}
+                className="tap" style={{
+                  background: 'transparent', border: '1px solid rgba(234,201,136,0.18)',
+                  color: 'var(--text-2)', padding: '4px 10px', borderRadius: 999,
+                  fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                }}>Select all</button>
+              <button onClick={() => setDraft(d => ({ ...d, selectedAnglerIds: [] }))}
+                className="tap" style={{
+                  background: 'transparent', border: '1px solid rgba(234,201,136,0.18)',
+                  color: 'var(--text-2)', padding: '4px 10px', borderRadius: 999,
+                  fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                }}>Clear</button>
+            </div>
+          </div>
+          <input className="input" placeholder="Search friends…" value={friendQuery} onChange={(e) => setFriendQuery(e.target.value)}
+            style={{ marginBottom: 8, fontSize: 13 }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 18, maxHeight: 280, overflowY: 'auto' }}>
+            {filteredFriends.length === 0 && (
+              <div style={{ padding: '14px 0', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
+                {friendQuery ? 'No matches' : 'No friends with catches yet'}
+              </div>
+            )}
+            {filteredFriends.map(p => {
+              const checked = draft.selectedAnglerIds.includes(p.id);
+              return (
+                <button key={p.id} onClick={() => toggleAngler(p.id)} className="tap" style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px',
+                  background: 'transparent', border: 'none', borderBottom: '1px solid rgba(234,201,136,0.08)',
+                  color: 'var(--text)', fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer',
+                }}>
+                  <span style={{
+                    width: 18, height: 18, borderRadius: 4,
+                    border: `1.5px solid ${checked ? 'var(--gold)' : 'rgba(234,201,136,0.3)'}`,
+                    background: checked ? 'var(--gold)' : 'transparent',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0,
+                  }}>{checked && <Check size={11} style={{ color: '#1A1004' }} />}</span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600 }}>{p.display_name}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-3)' }}>@{p.username}</span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* SPECIES */}
+      <div className="label">Species</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 18 }}>
+        {SPECIES.map(s => {
+          const active = draft.species.includes(s.id);
+          return (
+            <button key={s.id} onClick={() => toggleSpecies(s.id)} className="tap" style={{
+              padding: '8px 14px', borderRadius: 999,
+              border: `1px solid ${active ? s.hue : 'rgba(234,201,136,0.18)'}`,
+              background: active ? `${s.hue}33` : 'rgba(10,24,22,0.45)',
+              color: active ? s.hue : 'var(--text-2)',
+              fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+            }}>{s.label}</button>
+          );
+        })}
+      </div>
+
+      {/* WEIGHT */}
+      <div className="label">Weight</div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 18 }}>
+        {([
+          { v: 0  as const, label: 'All' },
+          { v: 20 as const, label: 'Over 20lb' },
+          { v: 30 as const, label: 'Over 30lb' },
+          { v: 40 as const, label: 'Over 40lb' },
+        ]).map(o => {
+          const active = draft.weightMinLbs === o.v;
+          return (
+            <button key={o.v} onClick={() => setDraft(d => ({ ...d, weightMinLbs: o.v }))} className="tap" style={{
+              flex: 1, padding: '8px 6px', borderRadius: 999,
+              border: `1px solid ${active ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
+              background: active ? 'rgba(212,182,115,0.15)' : 'rgba(10,24,22,0.45)',
+              color: active ? 'var(--gold-2)' : 'var(--text-2)',
+              fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+            }}>{o.label}</button>
+          );
+        })}
+      </div>
+
+      {/* LAKE */}
+      <div className="label">Lake</div>
+      <select className="input" value={draft.lakeName ?? ''}
+        onChange={(e) => setDraft(d => ({ ...d, lakeName: e.target.value || null }))}
+        style={{ marginBottom: 18, fontSize: 13, padding: '10px 12px', appearance: 'auto' }}>
+        <option value="">All lakes</option>
+        {lakeNames.map(n => <option key={n} value={n}>{n}</option>)}
+      </select>
+
+      {/* TRIP */}
+      <div className="label">Trip</div>
+      <select className="input" value={draft.tripId ?? ''}
+        onChange={(e) => setDraft(d => ({ ...d, tripId: e.target.value === '' ? null : e.target.value as any }))}
+        style={{ marginBottom: 22, fontSize: 13, padding: '10px 12px', appearance: 'auto' }}>
+        <option value="">All catches</option>
+        <option value="untripped">Untripped only</option>
+        {trips.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+      </select>
+
+      {/* FOOTER */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <button onClick={() => setDraft(DEFAULT_FILTER)} className="btn btn-ghost"
+          style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)', fontSize: 13 }}>
+          Clear filters
+        </button>
+        <button onClick={() => onApply(draft)} className="btn btn-primary" style={{ flex: 1, fontSize: 13 }}>
+          Apply
+        </button>
+      </div>
+    </VaulModalShell>
   );
 }
 
@@ -2258,14 +2608,27 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
 }
 
 // ============ ADD CATCH MODAL ============
+// A slot is either an existing remote URL, a freshly-picked local dataUrl,
+// or both during the brief upload window. Used by AddCatchModal to manage
+// up to MAX_PHOTOS photos before save.
+export type PhotoSlot = { url?: string; dataUrl?: string };
+export const MAX_PHOTOS = 5;
+
 export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, photoExisting }: {
   me: Profile; trips: Trip[]; activeTrips: Trip[];
   onClose: () => void;
-  onSave: (data: db.CatchInput, photoDataUrl: string | null) => Promise<void>;
+  onSave: (data: db.CatchInput, slots: PhotoSlot[]) => Promise<void>;
   existing?: CatchT; photoExisting?: string | null;
 }) {
   const [lost, setLost] = useState(existing?.lost || false);
-  const [photo, setPhoto] = useState<string | null>(photoExisting || null);
+  // Multi-photo state. Seeded from existing.photo_urls (preferred) or the
+  // legacy single-photo URL. New photos picked from camera/library are
+  // appended as { dataUrl } slots; existing remote photos are { url } slots.
+  const [photoSlots, setPhotoSlots] = useState<PhotoSlot[]>(() => {
+    if (existing?.photo_urls?.length) return existing.photo_urls.map(u => ({ url: u }));
+    if (photoExisting) return [{ url: photoExisting }];
+    return [];
+  });
   const [photoLoading, setPhotoLoading] = useState(false);
   const [lbs, setLbs] = useState<string>(existing ? String(existing.lbs) : '');
   const [oz, setOz] = useState<string>(existing ? String(existing.oz) : '');
@@ -2314,11 +2677,18 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    // Reset the input value so the user can re-pick the same file later.
+    if (e.target) e.target.value = '';
     if (!file) return;
+    if (photoSlots.length >= MAX_PHOTOS) { alert(`Up to ${MAX_PHOTOS} photos per catch`); return; }
     setPhotoLoading(true);
     try {
       const compressed = await compressImage(file);
-      setPhoto(compressed);
+      // The first photo a user adds is the cover and triggers AI / weather.
+      // Subsequent photos are just appended without re-running detection.
+      const isFirstPhoto = photoSlots.length === 0;
+      setPhotoSlots(curr => [...curr, { dataUrl: compressed }]);
+      if (!isFirstPhoto) return;
       setAutoStatus({ wx: 'fetching', sp: 'detecting' });
       Promise.all([
         (async () => {
@@ -2392,6 +2762,7 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
         } catch {}
       }
 
+      const slots = lost ? [] : photoSlots;
       const payload: db.CatchInput = {
         ...(existing ? { id: existing.id } : {}),
         lost, lbs: lost ? 0 : (parseInt(lbs) || 0), oz: lost ? 0 : (parseInt(oz) || 0),
@@ -2401,11 +2772,16 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
         bait: bait.trim() || null, rig: rig.trim() || null, hook: hook.trim() || null, notes: notes.trim() || null,
         weather, moon,
         latitude: lat, longitude: lng,
-        has_photo: !lost && !!photo,
+        // The parent saveCatch fills in photo_urls + has_photo after the
+        // upload phase. We pass the bare counts here for the optimistic
+        // realtime update; the post-upload UPDATE corrects has_photo if
+        // any uploads fail.
+        has_photo: slots.length > 0,
         visibility, field_visibility: fieldVis,
+        photo_urls: slots.filter(s => s.url).map(s => s.url!),
         comments: existing?.comments || [],
       };
-      await onSave(payload, !lost && photo && photo !== photoExisting ? photo : null);
+      await onSave(payload, slots);
     } finally { setSaving(false); }
   }
 
@@ -2433,36 +2809,72 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
           {/* Two hidden inputs: with-capture opens the camera, without-capture opens the photo library/file picker. */}
           <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: 'none' }} />
           <input ref={libraryInputRef} type="file" accept="image/*" onChange={handleFile} style={{ display: 'none' }} />
-          <div onClick={() => { if (!photo) setPhotoSourcePickerOpen(true); }} className="tap" style={{
-            width: '100%',
-            // Compact placeholder when empty so the form below stays reachable;
-            // expand to 4:3 once a photo is shown so the image isn't squished.
-            ...(photo || photoLoading
-              ? { aspectRatio: '4/3' as const }
-              : { height: 160 }),
-            borderRadius: 18,
-            background: photo ? 'transparent' : 'rgba(10,24,22,0.55)',
-            border: `2px dashed ${photo ? 'transparent' : 'rgba(234,201,136,0.3)'}`,
-            marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer', overflow: 'hidden', position: 'relative',
-          }}>
-            {photoLoading ? <Loader2 size={32} className="spin" style={{ color: 'var(--gold)' }} /> :
-             photo ? (
-              <>
-                <img src={photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                <button onClick={(e) => { e.stopPropagation(); setPhoto(null); }}
-                  style={{ position: 'absolute', top: 10, right: 10, background: 'rgba(5,14,13,0.85)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 999, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text)' }}>
-                  <X size={16} />
-                </button>
-              </>
-            ) : (
+          {photoSlots.length === 0 && !photoLoading ? (
+            // Empty-state large dashed placeholder.
+            <div onClick={() => setPhotoSourcePickerOpen(true)} className="tap" style={{
+              width: '100%', height: 160, borderRadius: 18,
+              background: 'rgba(10,24,22,0.55)',
+              border: '2px dashed rgba(234,201,136,0.3)',
+              marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', overflow: 'hidden', position: 'relative',
+            }}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: 'var(--text-3)' }}>
                 <Camera size={32} style={{ marginBottom: 8 }} />
                 <div style={{ fontSize: 14, fontWeight: 600 }}>Add a photo</div>
-                <div style={{ fontSize: 12, marginTop: 2 }}>Tap to capture or upload</div>
+                <div style={{ fontSize: 12, marginTop: 2 }}>Up to {MAX_PHOTOS} photos · first is the cover</div>
               </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            // Thumbnail strip + add tile.
+            <div className="scrollbar-thin" style={{ display: 'flex', gap: 6, marginBottom: 8, overflowX: 'auto', paddingBottom: 4 }}>
+              {photoSlots.map((s, i) => (
+                <div key={i} style={{
+                  position: 'relative',
+                  flex: '0 0 96px', height: 96, borderRadius: 14, overflow: 'hidden',
+                  background: 'rgba(10,24,22,0.5)',
+                  border: i === 0 ? '2px solid var(--gold)' : '1px solid rgba(234,201,136,0.18)',
+                }}>
+                  <img src={s.url || s.dataUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  {i === 0 && (
+                    <span style={{
+                      position: 'absolute', bottom: 4, left: 4,
+                      fontSize: 9, fontWeight: 700, padding: '2px 5px', borderRadius: 4,
+                      background: 'var(--gold)', color: '#1A1004', letterSpacing: '0.05em',
+                    }}>COVER</span>
+                  )}
+                  <button onClick={() => setPhotoSlots(curr => curr.filter((_, idx) => idx !== i))}
+                    aria-label="Remove photo"
+                    style={{
+                      position: 'absolute', top: 4, right: 4,
+                      width: 22, height: 22, borderRadius: 999,
+                      background: 'rgba(5,14,13,0.85)',
+                      border: '1px solid rgba(234,201,136,0.18)',
+                      color: 'var(--text)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer', padding: 0,
+                    }}><X size={12} /></button>
+                </div>
+              ))}
+              {photoLoading && (
+                <div style={{
+                  flex: '0 0 96px', height: 96, borderRadius: 14,
+                  background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}><Loader2 size={20} className="spin" style={{ color: 'var(--gold)' }} /></div>
+              )}
+              {photoSlots.length < MAX_PHOTOS && !photoLoading && (
+                <button onClick={() => setPhotoSourcePickerOpen(true)} className="tap" style={{
+                  flex: '0 0 96px', height: 96, borderRadius: 14,
+                  background: 'rgba(10,24,22,0.5)', border: '2px dashed rgba(234,201,136,0.3)',
+                  color: 'var(--gold-2)', cursor: 'pointer', fontFamily: 'inherit',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4,
+                }}>
+                  <Plus size={20} />
+                  <span style={{ fontSize: 10, fontWeight: 600 }}>Add</span>
+                </button>
+              )}
+            </div>
+          )}
           {photoSourcePickerOpen && (
             <PhotoSourceSheet
               onClose={() => setPhotoSourcePickerOpen(false)}
@@ -2891,7 +3303,7 @@ export function CatchDetail({ catchData, me, profilesById, trips, stackLevel, on
   catchData: CatchT; me: Profile; profilesById: Record<string, Profile>; trips: Trip[];
   stackLevel?: number;
   onClose: () => void; onDelete: () => void;
-  onUpdate: (data: db.CatchInput, photoDataUrl: string | null) => Promise<void>;
+  onUpdate: (data: db.CatchInput, slots: PhotoSlot[]) => Promise<void>;
   onOpenTrip: (t: Trip) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -2906,8 +3318,14 @@ export function CatchDetail({ catchData, me, profilesById, trips, stackLevel, on
   const trip = catchData.trip_id ? trips.find(t => t.id === catchData.trip_id) : null;
   const weather = catchData.weather;
   const moon = catchData.moon;
-  const photoUrl = catchData.has_photo && angler ? db.photoPublicUrl(angler.id, catchData.id) : null;
+  // Resolved photo URL list. Multi-photo catches read directly from
+  // photo_urls; legacy single-photo rows fall back to the derived path
+  // until the migration backfill catches them.
+  const photoUrls: string[] = (catchData.photo_urls && catchData.photo_urls.length > 0)
+    ? catchData.photo_urls
+    : (catchData.has_photo && angler ? [db.photoPublicUrl(angler.id, catchData.id)] : []);
   const [photoErr, setPhotoErr] = useState(false);
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
 
   async function refreshComments() {
     try {
@@ -2970,7 +3388,7 @@ export function CatchDetail({ catchData, me, profilesById, trips, stackLevel, on
     return (
       <AddCatchModal
         me={me} trips={trips} activeTrips={[]}
-        existing={catchData} photoExisting={photoUrl}
+        existing={catchData} photoExisting={photoUrls[0] || null}
         onClose={() => setEditing(false)}
         onSave={async (data, ph) => { await onUpdate(data, ph); setEditing(false); }}
       />
@@ -2990,10 +3408,21 @@ export function CatchDetail({ catchData, me, profilesById, trips, stackLevel, on
         </div>
       ) : (
         <>
-          {photoUrl && !photoErr && (
-            <div style={{ width: '100%', aspectRatio: '4/3', borderRadius: 18, overflow: 'hidden', marginBottom: 20, background: 'rgba(10,24,22,0.5)' }}>
-              <img src={photoUrl} alt="" onError={() => setPhotoErr(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          {photoUrls.length > 0 && !photoErr && (
+            <div style={{ marginBottom: 20 }}>
+              <CatchPhotoCarousel
+                urls={photoUrls}
+                onOpenLightbox={(i) => setLightboxIdx(i)}
+                onError={() => setPhotoErr(true)}
+              />
             </div>
+          )}
+          {lightboxIdx != null && (
+            <CatchPhotoLightbox
+              urls={photoUrls}
+              startIndex={lightboxIdx}
+              onClose={() => setLightboxIdx(null)}
+            />
           )}
           <div className="num-display" style={{ fontSize: 64, lineHeight: 0.9, color: 'var(--gold-2)', marginBottom: 4 }}>
             {catchData.lbs}<span style={{ fontSize: 32, color: 'var(--text)' }}>lb</span>
