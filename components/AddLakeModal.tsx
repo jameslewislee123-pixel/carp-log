@@ -48,7 +48,32 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
     return savedLakes.filter(l => l.name.toLowerCase().includes(q)).slice(0, 30);
   }, [savedLakes, query]);
 
-  // Global Nominatim search — debounced, 3+ chars, single in-flight at a time.
+  // Seed-table search (UK + France fisheries imports) — server-side ILIKE,
+  // debounced 300ms. Faster than the worldwide Nominatim trip and we own
+  // the data so we don't have to respect rate limits.
+  const [seedResults, setSeedResults] = useState<Lake[]>([]);
+  const [seedSearching, setSeedSearching] = useState(false);
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < 3) {
+      setSeedResults([]);
+      setSeedSearching(false);
+      return;
+    }
+    let cancelled = false;
+    setSeedSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const results = await db.searchSeedLakes(trimmed);
+        if (!cancelled) setSeedResults(results);
+      } finally {
+        if (!cancelled) setSeedSearching(false);
+      }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [query]);
+
+  // Global Nominatim search — debounced 500ms, 3+ chars, single in-flight at a time.
   const [globalResults, setGlobalResults] = useState<GlobalLakeResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchedQuery, setSearchedQuery] = useState('');
@@ -78,6 +103,12 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
     }, 500);
     return () => { cancelled = true; clearTimeout(t); };
   }, [query]);
+
+  // Seed lakes the user already has in their saved set (catches/trips/created)
+  // are surfaced via the "Your saved lakes" section, so suppress them here to
+  // avoid showing the same lake twice.
+  const savedIds = useMemo(() => new Set(savedLakes.map((l) => l.id)), [savedLakes]);
+  const seedToShow = useMemo(() => seedResults.filter((l) => !savedIds.has(l.id)), [seedResults, savedIds]);
 
   const [center, setCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
@@ -248,6 +279,37 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
                 <MapPinned size={14} style={{ color: 'var(--gold-2)', flexShrink: 0 }} />
                 <span style={{ flex: 1, fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.name}</span>
                 <span style={{ fontSize: 10, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Saved</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* UK & France fisheries (seed dataset) */}
+      {query.trim().length >= 3 && (seedSearching || seedToShow.length > 0) && (
+        <>
+          <div className="label">UK & France fisheries</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+            {seedSearching && seedToShow.length === 0 && (
+              <div style={{ padding: '8px 0', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
+                <Loader2 size={12} className="spin" /> Searching imports…
+              </div>
+            )}
+            {seedToShow.map((l) => (
+              <button key={l.id} onClick={() => pickSaved(l)} className="tap" style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: 10, borderRadius: 12,
+                background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
+                color: 'var(--text)', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
+              }}>
+                <MapPinned size={14} style={{ color: 'var(--gold-2)', flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.name}</div>
+                  {(l.region || l.country) && (
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {[l.region, l.country].filter(Boolean).join(', ')}
+                    </div>
+                  )}
+                </div>
               </button>
             ))}
           </div>

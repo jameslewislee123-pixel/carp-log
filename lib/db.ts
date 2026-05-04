@@ -652,6 +652,27 @@ export async function getLakeByName(name: string): Promise<Lake | null> {
   return (data as Lake) || null;
 }
 
+// Server-side ILIKE search across the seed dataset (UK + France imports).
+// Bounded to source='seed' so we don't surface random user-created or
+// OSM-discovered rows here — those flow through the existing saved /
+// worldwide sections. Backed by idx_lakes_lower_name for fast substring
+// scans at thousands of rows.
+export async function searchSeedLakes(query: string, limit = 12): Promise<Lake[]> {
+  const q = query.trim();
+  if (q.length < 3) return [];
+  // Escape ILIKE wildcards so a user typing % or _ doesn't blow the query open.
+  const safe = q.replace(/[%_\\]/g, (c) => '\\' + c);
+  const { data, error } = await supabase()
+    .from('lakes')
+    .select('*')
+    .eq('source', 'seed')
+    .ilike('name', `%${safe}%`)
+    .order('name')
+    .limit(limit);
+  if (error) return [];
+  return (data || []) as Lake[];
+}
+
 // Persist a lake picked from the global Nominatim search. Carries the
 // rich metadata (osm_id, country, region, importance, photo_url, etc.)
 // so we don't have to re-resolve next time. Dedupes by osm_id — if the

@@ -208,7 +208,7 @@ export type GearItem = {
   updated_at?: string;
 };
 
-export type LakeSource = 'manual' | 'osm' | 'imported' | 'nominatim';
+export type LakeSource = 'manual' | 'osm' | 'imported' | 'nominatim' | 'seed';
 export type LakePhotoSource = 'wikipedia' | 'satellite';
 export type Lake = {
   id: string;
