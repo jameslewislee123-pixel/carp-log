@@ -2400,7 +2400,13 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
         <>
           <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: 'none' }} />
           <div onClick={() => fileInputRef.current?.click()} className="tap" style={{
-            width: '100%', aspectRatio: '4/3', borderRadius: 18,
+            width: '100%',
+            // Compact placeholder when empty so the form below stays reachable;
+            // expand to 4:3 once a photo is shown so the image isn't squished.
+            ...(photo || photoLoading
+              ? { aspectRatio: '4/3' as const }
+              : { height: 160 }),
+            borderRadius: 18,
             background: photo ? 'transparent' : 'rgba(10,24,22,0.55)',
             border: `2px dashed ${photo ? 'transparent' : 'rgba(234,201,136,0.3)'}`,
             marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -3243,7 +3249,7 @@ function ModalShell({ title, onClose, hideTitle, headerAction, children }: { tit
         exit={{ y: '100%' }}
         transition={{ type: 'spring', stiffness: 260, damping: 30 }}
       >
-        {/* DRAG HANDLE — only the top 36px is draggable. Body below scrolls natively. */}
+        {/* DRAG HANDLE — locked to top of sheet, drag-to-dismiss only on this strip. */}
         <motion.div
           drag="y"
           dragConstraints={{ top: 0, bottom: 0 }}
@@ -3257,7 +3263,7 @@ function ModalShell({ title, onClose, hideTitle, headerAction, children }: { tit
             }
           }}
           style={{
-            position: 'relative', height: 36, flexShrink: 0,
+            position: 'relative', height: 28, flexShrink: 0,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             cursor: 'grab', touchAction: 'none',
           }}
@@ -3266,7 +3272,30 @@ function ModalShell({ title, onClose, hideTitle, headerAction, children }: { tit
           <div style={{ width: 44, height: 5, borderRadius: 999, background: 'rgba(255,255,255,0.22)' }} />
         </motion.div>
 
-        {/* SCROLLABLE BODY — native scroll, framer-motion drag is not on this layer. */}
+        {/* HEADER — pinned outside the scroll region so it never moves with content. */}
+        <div style={{
+          flexShrink: 0,
+          padding: hideTitle ? '0 20px 8px' : '0 20px 12px',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+        }}>
+          {!hideTitle && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+              <h2 className="display-font" style={{ fontSize: 22, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h2>
+              {headerAction}
+            </div>
+          )}
+          {hideTitle ? (
+            <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6, padding: 4, fontFamily: 'inherit', fontSize: 14, cursor: 'pointer' }}>
+              <ArrowLeft size={18} /> Back
+            </button>
+          ) : (
+            <button onClick={onClose} aria-label="Close" style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 12, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-2)', flexShrink: 0, padding: 0 }}>
+              <X size={18} />
+            </button>
+          )}
+        </div>
+
+        {/* SCROLLABLE BODY — only this region scrolls; handle + header stay locked above. */}
         <div style={{
           flex: 1, minHeight: 0,
           overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain',
@@ -3276,23 +3305,6 @@ function ModalShell({ title, onClose, hideTitle, headerAction, children }: { tit
           // margin so the last row isn't flush against the dock area.
           padding: '0 20px max(40px, calc(env(safe-area-inset-bottom) + 24px))',
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: hideTitle ? 8 : 16, paddingTop: 4, paddingBottom: 8, gap: 12 }}>
-            {!hideTitle && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-                <h2 className="display-font" style={{ fontSize: 22, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h2>
-                {headerAction}
-              </div>
-            )}
-            {hideTitle ? (
-              <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6, padding: 4, fontFamily: 'inherit', fontSize: 14, cursor: 'pointer' }}>
-                <ArrowLeft size={18} /> Back
-              </button>
-            ) : (
-              <button onClick={onClose} style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 12, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-2)', flexShrink: 0 }}>
-                <X size={18} />
-              </button>
-            )}
-          </div>
           {children}
         </div>
       </motion.div>
