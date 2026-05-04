@@ -3185,8 +3185,28 @@ function TelegramSetup({ notify, onSaveNotify }: { notify: NotifyConfig | null; 
 }
 
 // ============ SHELL ============
+// Module-scoped store: ModalShell increments while mounted; BottomNav + FAB
+// subscribe and hide themselves when count > 0. Stacks naturally if multiple
+// modals open simultaneously — they only reappear once every modal has closed.
+let modalOpenCount = 0;
+const modalListeners = new Set<() => void>();
+function subscribeModal(cb: () => void) { modalListeners.add(cb); return () => { modalListeners.delete(cb); }; }
+function getModalSnapshot() { return modalOpenCount; }
+function getModalServerSnapshot() { return 0; }
+function useAnyModalOpen() {
+  return React.useSyncExternalStore(subscribeModal, getModalSnapshot, getModalServerSnapshot) > 0;
+}
+
 function ModalShell({ title, onClose, hideTitle, children }: { title?: string; onClose: () => void; hideTitle?: boolean; children: React.ReactNode }) {
   useEffect(() => { document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = ''; }; }, []);
+  useEffect(() => {
+    modalOpenCount++;
+    modalListeners.forEach(l => l());
+    return () => {
+      modalOpenCount--;
+      modalListeners.forEach(l => l());
+    };
+  }, []);
   // Pull-to-dismiss: drag the sheet down; close on >150px or velocity > 500/s.
   const y = useMotionValue(0);
   const backdropOpacity = useTransform(y, [0, 200, 400], [0.7, 0.4, 0]);
@@ -3274,8 +3294,9 @@ function ModalShell({ title, onClose, hideTitle, children }: { title?: string; o
 }
 
 function FAB({ onClick }: { onClick: () => void }) {
+  const modalOpen = useAnyModalOpen();
   return (
-    <button onClick={onClick} className="tap" style={{
+    <button onClick={onClick} className="tap" aria-hidden={modalOpen} tabIndex={modalOpen ? -1 : 0} style={{
       position: 'fixed',
       bottom: 'calc(92px + env(safe-area-inset-bottom))',
       left: '50%', transform: 'translateX(-50%)',
@@ -3285,6 +3306,9 @@ function FAB({ onClick }: { onClick: () => void }) {
       boxShadow: '0 12px 28px rgba(212,182,115,0.4), 0 2px 6px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.5)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       color: '#1A1004', cursor: 'pointer', zIndex: 50,
+      opacity: modalOpen ? 0 : 1,
+      pointerEvents: modalOpen ? 'none' : 'auto',
+      transition: 'opacity 0.18s ease',
     }}>
       <Plus size={28} strokeWidth={2.5} />
     </button>
@@ -3294,6 +3318,7 @@ function FAB({ onClick }: { onClick: () => void }) {
 function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 'trips' | 'stats' | 'gallery') => void }) {
   // Dim while user is actively scrolling; restore after a short idle.
   const [dimmed, setDimmed] = useState(false);
+  const modalOpen = useAnyModalOpen();
   useEffect(() => {
     let t: ReturnType<typeof setTimeout> | null = null;
     const onScroll = () => {
@@ -3310,9 +3335,11 @@ function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 't
     { id: 'stats' as const,   label: 'Stats',  icon: Trophy },
     { id: 'gallery' as const, label: 'Photos', icon: Images },
   ];
+  const opacity = modalOpen ? 0 : (dimmed ? 0.5 : 1);
   return (
     <div
       onPointerEnter={() => setDimmed(false)}
+      aria-hidden={modalOpen}
       style={{
       position: 'fixed',
       bottom: 'calc(16px + env(safe-area-inset-bottom))',
@@ -3324,8 +3351,9 @@ function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 't
       padding: '10px 8px', zIndex: 40,
       display: 'flex', justifyContent: 'space-around',
       boxShadow: '0 12px 36px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.18)',
-      opacity: dimmed ? 0.5 : 1,
-      transition: dimmed ? 'opacity 0.2s ease' : 'opacity 0.3s ease',
+      opacity,
+      pointerEvents: modalOpen ? 'none' : 'auto',
+      transition: 'opacity 0.2s ease',
     }}>
       {items.map(item => {
         const Icon = item.icon;

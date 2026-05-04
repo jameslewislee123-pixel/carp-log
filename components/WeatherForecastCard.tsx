@@ -118,17 +118,14 @@ export default function WeatherForecastCard({ coords, compact }: { coords: { lat
             Feels like {c.apparent != null ? `${c.apparent}°C` : '—'}{c.windDir ? ` · Wind ${c.windDir}${c.windSpeed != null ? ` ${c.windSpeed}km/h` : ''}` : ''}
           </div>
         </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); setSearchOpen(true); }}
-          // Touch events must stop propagation BEFORE TappableSlide sees them,
-          // otherwise its touchstart→touchend distance check fires onTap (the
-          // expand modal) instead of letting our click handler open the search.
-          onTouchStart={(e) => e.stopPropagation()}
-          onTouchEnd={(e) => e.stopPropagation()}
-          aria-label="Search location"
-          style={{ width: 30, height: 30, borderRadius: 10, background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.18)', color: 'var(--text-2)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <Search size={13} />
-        </button>
+        {!compact && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setSearchOpen(true); }}
+            aria-label="Search location"
+            style={{ width: 30, height: 30, borderRadius: 10, background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.18)', color: 'var(--text-2)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <Search size={13} />
+          </button>
+        )}
         {!compact && <ChevronRight size={16} style={{ color: 'var(--text-3)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />}
       </div>
 
