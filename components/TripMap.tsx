@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import { MapPinned, Loader2 } from 'lucide-react';
 import type { Catch, Profile, Trip } from '@/lib/types';
 import { formatWeight } from '@/lib/util';
-import { photoPublicUrl } from '@/lib/db';
+import { catchCoverUrl } from '@/lib/db';
 import { geocodeLake } from '@/lib/weather';
 
 // Avatar palette → marker colors keyed by stable hash of angler_id
@@ -33,6 +33,7 @@ export type MarkerCatch = {
   species: string | null;
   date: string;
   has_photo: boolean;
+  cover_url: string | null;
   angler: Profile | null;
   color: string;
 };
@@ -52,6 +53,7 @@ export default function TripMap({ trip, catches, profilesById, onOpenCatch }: {
     .map(c => ({
       id: c.id, lat: c.latitude!, lng: c.longitude!,
       lbs: c.lbs, oz: c.oz, species: c.species, date: c.date, has_photo: c.has_photo,
+      cover_url: catchCoverUrl(c),
       angler: profilesById[c.angler_id] || null,
       color: colorFor(c.angler_id),
     })), [catches, profilesById]);
@@ -83,6 +85,7 @@ export default function TripMap({ trip, catches, profilesById, onOpenCatch }: {
           if (g) found.push({
             id: c.id, lat: g.lat, lng: g.lng,
             lbs: c.lbs, oz: c.oz, species: c.species, date: c.date, has_photo: c.has_photo,
+            cover_url: catchCoverUrl(c),
             angler: profilesById[c.angler_id] || null, color: colorFor(c.angler_id),
           });
         }
@@ -115,7 +118,7 @@ export default function TripMap({ trip, catches, profilesById, onOpenCatch }: {
       center={center}
       markers={markers}
       onOpenCatch={(id) => { const c = lookupCatch(id); if (c) onOpenCatch(c); }}
-      photoUrl={(m) => m.angler && m.has_photo ? photoPublicUrl(m.angler.id, m.id) : null}
+      photoUrl={(m) => m.cover_url}
     />
   );
 }

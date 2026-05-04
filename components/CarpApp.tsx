@@ -2659,7 +2659,7 @@ function StatsBait({ catches }: { catches: CatchT[] }) {
 }
 
 function HeroCatch({ catchData, angler, onClick }: { catchData: CatchT; angler: Profile | null; onClick: () => void }) {
-  const photoUrl = catchData.has_photo && angler ? db.photoPublicUrl(angler.id, catchData.id) : null;
+  const photoUrl = db.catchCoverUrl(catchData);
   return (
     <div className="card tap fade-in" onClick={onClick} style={{ overflow: 'hidden', cursor: 'pointer', position: 'relative' }}>
       <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 2 }}>

@@ -336,6 +336,16 @@ export function photoPublicUrl(anglerId: string, catchId: string): string {
   return data.publicUrl;
 }
 
+// Resolve the cover photo URL for a catch. Multi-photo catches store an
+// ordered photo_urls array (cover at index 0); legacy single-photo catches
+// only set has_photo and live at the derived {anglerId}/{catchId}.jpg path.
+// Returns null when the catch has no photo at all.
+export function catchCoverUrl(c: { photo_urls?: string[] | null; has_photo?: boolean | null; angler_id: string; id: string }): string | null {
+  if (c.photo_urls && c.photo_urls.length > 0) return c.photo_urls[0];
+  if (c.has_photo) return photoPublicUrl(c.angler_id, c.id);
+  return null;
+}
+
 export async function uploadPhotoFromDataUrl(catchId: string, dataUrl: string): Promise<string> {
   const { data: { user } } = await supabase().auth.getUser();
   if (!user) throw new Error('Not signed in');

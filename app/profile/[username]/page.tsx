@@ -11,7 +11,7 @@ import { PageHeader } from '@/components/AppFrame';
 import AvatarBubble from '@/components/AvatarBubble';
 import AvatarLightbox from '@/components/AvatarLightbox';
 import { SPECIES } from '@/components/CatchCard';
-import { photoPublicUrl } from '@/lib/db';
+import { catchCoverUrl } from '@/lib/db';
 import { useProfileByUsername, useCatchesForAngler, useFriendships } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
 
@@ -214,9 +214,10 @@ export default function ProfilePage() {
             {catches.map(c => (
               <Link key={c.id} href={`/?catch=${c.id}&back=${encodeURIComponent(`/profile/${profile.username}`)}`} className="tap"
                 style={{ aspectRatio: '1', borderRadius: 14, overflow: 'hidden', position: 'relative', background: 'rgba(10,24,22,0.5)', display: 'block', cursor: 'pointer' }}>
-                {c.has_photo && (
-                  <img src={photoPublicUrl(profile.id, c.id)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                )}
+                {(() => {
+                  const cover = catchCoverUrl(c);
+                  return cover ? <img src={cover} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : null;
+                })()}
                 <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 50%, rgba(5,14,13,0.92))' }} />
                 <div style={{ position: 'absolute', bottom: 8, left: 10, right: 10 }}>
                   {c.lost ? (
