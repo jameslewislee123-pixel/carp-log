@@ -688,7 +688,7 @@ function BiteForecastModal({ coords, onClose }: { coords: { lat: number; lng: nu
   const ratingTone = rating.stars >= 4 ? 'var(--sage)' : rating.stars >= 3 ? 'var(--gold-2)' : 'var(--text-3)';
 
   return (
-    <ModalShell title="Bite Forecast" onClose={onClose}>
+    <VaulModalShell title="Bite Forecast" onClose={onClose}>
       {/* Hero */}
       <div style={{ textAlign: 'center', padding: '12px 0 18px' }}>
         <div style={{ fontSize: 80, lineHeight: 1, filter: 'drop-shadow(0 6px 18px rgba(0,0,0,0.45))' }}>{phaseInfo.emoji}</div>
@@ -764,7 +764,7 @@ function BiteForecastModal({ coords, onClose }: { coords: { lat: number; lng: nu
       <p style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.6, margin: '0 0 10px' }}>
         Major windows: moon overhead or underfoot. Minor windows: moonrise / moonset. Best fishing typically lines up with new and full moons.
       </p>
-    </ModalShell>
+    </VaulModalShell>
   );
 }
 
@@ -812,7 +812,7 @@ function WeatherForecastModal({ coords, onClose }: { coords: { lat: number; lng:
 
   if (!data) {
     return (
-      <ModalShell title={locationName || 'Weather'} onClose={onClose} headerAction={headerSearchBtn}>
+      <VaulModalShell title={locationName || 'Weather'} onClose={onClose} headerAction={headerSearchBtn}>
         <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-3)', fontSize: 13 }}>
           <Loader2 size={18} className="spin" /> Loading forecast…
         </div>
@@ -824,7 +824,7 @@ function WeatherForecastModal({ coords, onClose }: { coords: { lat: number; lng:
             canReset={!!override}
           />
         )}
-      </ModalShell>
+      </VaulModalShell>
     );
   }
 
@@ -873,7 +873,7 @@ function WeatherForecastModal({ coords, onClose }: { coords: { lat: number; lng:
   })();
 
   return (
-    <ModalShell title={locationName || 'Weather'} onClose={onClose} headerAction={headerSearchBtn}>
+    <VaulModalShell title={locationName || 'Weather'} onClose={onClose} headerAction={headerSearchBtn}>
       {searchOpen && (
         <WeatherLocationSearch
           onClose={() => setSearchOpen(false)}
@@ -989,7 +989,7 @@ function WeatherForecastModal({ coords, onClose }: { coords: { lat: number; lng:
           </div>
         </div>
       </div>
-    </ModalShell>
+    </VaulModalShell>
   );
 }
 
@@ -1261,7 +1261,7 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
   ];
 
   return (
-    <ModalShell hideTitle onClose={onClose}>
+    <VaulModalShell hideTitle onClose={onClose}>
       <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--gold-2)', fontWeight: 700 }}>Trip</div>
         <TripStatusPill trip={trip} />
@@ -1525,7 +1525,7 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
           onReroll={async () => { setRollViewer(null); await startRoll(); }}
         />
       )}
-    </ModalShell>
+    </VaulModalShell>
   );
 }
 
@@ -1554,14 +1554,14 @@ function InviteAnglerModal({ me, tripId, existingMemberIds, onClose, onInvited }
     finally { setBusy(false); }
   }
   return (
-    <ModalShell title="Invite anglers" onClose={onClose}>
+    <VaulModalShell title="Invite anglers" onClose={onClose}>
       <InvitePicker meId={me.id} excludeIds={existingMemberIds} selected={selected} onChange={setSelected} />
       <button className="btn btn-primary" onClick={submit} disabled={busy || selected.length === 0}
         style={{ width: '100%', fontSize: 16, padding: 16, marginTop: 16 }}>
         {busy ? <Loader2 size={18} className="spin" /> : <Send size={18} />}
         Send {selected.length} invite{selected.length === 1 ? '' : 's'}
       </button>
-    </ModalShell>
+    </VaulModalShell>
   );
 }
 
@@ -1603,7 +1603,7 @@ function AddTripModal({ existing, me, onClose, onSave }: {
   }
 
   return (
-    <ModalShell title={existing ? 'Edit trip' : 'New trip'} onClose={onClose}>
+    <VaulModalShell title={existing ? 'Edit trip' : 'New trip'} onClose={onClose}>
       <label className="label">Name</label>
       <input className="input" placeholder="e.g. France 2026" value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 16 }} />
       <label className="label">Location</label>
@@ -1701,7 +1701,7 @@ function AddTripModal({ existing, me, onClose, onSave }: {
         {saving ? <Loader2 size={18} className="spin" /> : <Check size={18} />}
         {existing ? 'Save changes' : invitees.length > 0 ? `Create trip & invite ${invitees.length}` : 'Create trip'}
       </button>
-    </ModalShell>
+    </VaulModalShell>
   );
 }
 
@@ -2692,7 +2692,7 @@ export function CatchDetail({ catchData, me, profilesById, trips, stackLevel, on
   const isMyCatch = catchData.angler_id === me.id;
 
   return (
-    <ModalShell title="" onClose={onClose} hideTitle stackLevel={stackLevel}>
+    <VaulModalShell title="" onClose={onClose} hideTitle stackLevel={stackLevel}>
       {catchData.lost ? (
         <div style={{ textAlign: 'center', padding: '20px 0 30px' }}>
           <div style={{ width: 64, height: 64, borderRadius: 20, background: 'rgba(220,107,88,0.15)', border: '1px solid rgba(220,107,88,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
@@ -2877,7 +2877,7 @@ export function CatchDetail({ catchData, me, profilesById, trips, stackLevel, on
           <button onClick={onDelete} className="btn btn-ghost tap" style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)', color: 'var(--danger)' }}><Trash2 size={16} /> Delete</button>
         </div>
       )}
-    </ModalShell>
+    </VaulModalShell>
   );
 }
 
@@ -3050,7 +3050,7 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
   }
 
   return (
-    <ModalShell title="Settings" onClose={onClose}>
+    <VaulModalShell title="Settings" onClose={onClose}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', marginBottom: 18 }}>
         <AvatarUploader me={me} onSaved={(url) => onSaveProfile({ avatar_url: url })} />
         <Link href={`/profile/${me.username}`} onClick={onClose}
@@ -3141,7 +3141,7 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
       <div style={{ marginTop: 24, padding: '16px 0', borderTop: '1px solid rgba(234,201,136,0.1)', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
         {catches.length} catches · {trips.length} trips
       </div>
-    </ModalShell>
+    </VaulModalShell>
   );
 }
 
@@ -3390,9 +3390,9 @@ function ModalShell({ title, onClose, hideTitle, headerAction, stackLevel = 0, c
 // Same visual language (handle pill, sticky header, scrollable body) but
 // vaul handles drag-to-dismiss properly: drag is constrained to the handle
 // area via `handleOnly`, body scrolling is uninterrupted, and snap-back
-// physics are spring-based. Currently used by AddCatchModal as a
-// proof-of-concept; if it holds up under real-world iOS use we can migrate
-// the rest of the modals.
+// physics are spring-based. Used by every modal in the app. The legacy
+// ModalShell below is kept temporarily as a no-drag fallback in case any
+// regression surfaces; once we're confident, it can be deleted.
 // ============================================================
 function VaulModalShell({ title, onClose, hideTitle, headerAction, stackLevel = 0, children }: {
   title?: string; onClose: () => void; hideTitle?: boolean;

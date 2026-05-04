@@ -14,3 +14,4 @@ public/workbox-*.js.map
 public/worker-*.js.map
 public/fallback-*.js
 supabase/.temp
+.env.prod-export
