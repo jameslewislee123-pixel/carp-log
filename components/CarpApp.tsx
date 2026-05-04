@@ -10,6 +10,7 @@ import {
   Activity as ActivityIcon, Map as MapIcon, MessageSquare, ThumbsUp, Search,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { Drawer } from 'vaul';
 import InvitePicker from './InvitePicker';
 import TripChat from './TripChat';
 import TripActivityFeed from './TripActivity';
@@ -2399,7 +2400,7 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
   }
 
   return (
-    <ModalShell title={existing ? 'Edit catch' : 'New catch'} onClose={onClose}>
+    <VaulModalShell title={existing ? 'Edit catch' : 'New catch'} onClose={onClose}>
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, padding: 4, background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.14)', borderRadius: 14 }}>
         <button onClick={() => setLost(false)} className="tap" style={{
           flex: 1, padding: '10px', borderRadius: 10, border: 'none',
@@ -2594,7 +2595,7 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
         {saving ? <Loader2 size={18} className="spin" /> : <Check size={18} />}
         {existing ? 'Save changes' : (lost ? 'Log lost fish' : 'Bank this fish')}
       </button>
-    </ModalShell>
+    </VaulModalShell>
   );
 }
 
@@ -3381,6 +3382,113 @@ function ModalShell({ title, onClose, hideTitle, headerAction, stackLevel = 0, c
         </div>
       </motion.div>
     </motion.div>
+  );
+}
+
+// ============================================================
+// VaulModalShell — vaul-backed drop-in replacement for ModalShell.
+// Same visual language (handle pill, sticky header, scrollable body) but
+// vaul handles drag-to-dismiss properly: drag is constrained to the handle
+// area via `handleOnly`, body scrolling is uninterrupted, and snap-back
+// physics are spring-based. Currently used by AddCatchModal as a
+// proof-of-concept; if it holds up under real-world iOS use we can migrate
+// the rest of the modals.
+// ============================================================
+function VaulModalShell({ title, onClose, hideTitle, headerAction, stackLevel = 0, children }: {
+  title?: string; onClose: () => void; hideTitle?: boolean;
+  headerAction?: React.ReactNode; stackLevel?: number; children: React.ReactNode;
+}) {
+  // Lock the body scroll + count this modal towards the FAB/BottomNav-hide store.
+  useEffect(() => { document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = ''; }; }, []);
+  useEffect(() => {
+    modalOpenCount++;
+    modalListeners.forEach(l => l());
+    return () => {
+      modalOpenCount--;
+      modalListeners.forEach(l => l());
+    };
+  }, []);
+
+  const z = 100 + stackLevel * 10;
+
+  return (
+    <Drawer.Root open onOpenChange={(o) => { if (!o) onClose(); }} handleOnly>
+      <Drawer.Portal>
+        <Drawer.Overlay style={{
+          position: 'fixed', inset: 0, zIndex: z,
+          background: 'rgba(3, 10, 9, 0.7)',
+          backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
+        }} />
+        <Drawer.Content
+          aria-describedby={undefined}
+          style={{
+            position: 'fixed', bottom: 0, left: 0, right: 0,
+            zIndex: z + 1,
+            display: 'flex', justifyContent: 'center',
+            outline: 'none',
+          }}>
+          <div style={{
+            width: '100%', maxWidth: 480,
+            maxHeight: '92vh' as any,
+            height: 'min(92vh, calc(100dvh - 24px))' as any,
+            background: 'rgba(10, 24, 22, 0.92)',
+            backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+            borderRadius: '28px 28px 0 0', border: '1px solid rgba(234,201,136,0.14)', borderBottom: 'none',
+            boxShadow: '0 -10px 40px rgba(0,0,0,0.45)',
+            display: 'flex', flexDirection: 'column', minHeight: 0,
+          }}>
+            {/* vaul's Drawer.Handle is the ONLY draggable region thanks to handleOnly. */}
+            <div style={{
+              height: 28, flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              touchAction: 'none',
+            }}>
+              <Drawer.Handle style={{
+                width: 44, height: 5, borderRadius: 999,
+                background: 'rgba(255,255,255,0.22)',
+                margin: 0,
+              }} />
+            </div>
+
+            {/* HEADER — sticky outside the scroll region. */}
+            <div style={{
+              flexShrink: 0,
+              padding: hideTitle ? '0 20px 8px' : '0 20px 12px',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+            }}>
+              {!hideTitle && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                  <Drawer.Title asChild>
+                    <h2 className="display-font" style={{ fontSize: 22, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h2>
+                  </Drawer.Title>
+                  {headerAction}
+                </div>
+              )}
+              {hideTitle ? (
+                <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6, padding: 4, fontFamily: 'inherit', fontSize: 14, cursor: 'pointer' }}>
+                  <ArrowLeft size={18} /> Back
+                </button>
+              ) : (
+                <button onClick={onClose} aria-label="Close" style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 12, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-2)', flexShrink: 0, padding: 0 }}>
+                  <X size={18} />
+                </button>
+              )}
+            </div>
+
+            {/* SCROLLABLE BODY — vaul does NOT intercept gestures here when handleOnly is set. */}
+            <div style={{
+              flex: 1, minHeight: 0,
+              overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain',
+              touchAction: 'pan-y',
+              WebkitOverflowScrolling: 'touch' as any,
+              padding: '0 20px max(40px, calc(env(safe-area-inset-bottom) + 24px))',
+            }}>
+              {children}
+            </div>
+          </div>
+        </Drawer.Content>
+      </Drawer.Portal>
+    </Drawer.Root>
   );
 }
 
