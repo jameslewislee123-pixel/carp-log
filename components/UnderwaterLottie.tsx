@@ -73,6 +73,8 @@ export default function UnderwaterLottie() {
           animationData={animationData}
           loop
           autoplay
+          // 0.4x of native 30fps → the 8s native loop plays over ~20s.
+          speed={0.4}
           rendererSettings={{
             // 'slice' = behave like CSS background-size: cover.
             preserveAspectRatio: 'xMidYMid slice',
