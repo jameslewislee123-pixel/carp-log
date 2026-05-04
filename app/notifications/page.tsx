@@ -73,6 +73,7 @@ export default function NotificationsPage() {
       if (n.payload?.addressee_id) set.add(n.payload.addressee_id);
       if (n.payload?.invited_by)   set.add(n.payload.invited_by);
       if (n.payload?.actor_id)     set.add(n.payload.actor_id);
+      if (n.payload?.angler_id)    set.add(n.payload.angler_id);
     });
     return Array.from(set);
   }, [notifs]);
@@ -107,7 +108,7 @@ export default function NotificationsPage() {
 
   const rows: RowData[] | null = notifs ? notifs.map(n => ({
     notif: n,
-    actor: aMap[n.payload?.requester_id || n.payload?.invited_by || n.payload?.addressee_id || n.payload?.actor_id || ''],
+    actor: aMap[n.payload?.requester_id || n.payload?.invited_by || n.payload?.addressee_id || n.payload?.actor_id || n.payload?.angler_id || ''],
     trip: tMap[n.payload?.trip_id || ''],
   })) : null;
 
@@ -225,7 +226,7 @@ export default function NotificationsPage() {
                   <NotifCard key={notif.id} icon={<UserPlus size={16} style={{ color: 'var(--gold-2)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
-                        <strong>{actor.display_name}</strong> wants to be friends
+                        <strong>{actor.display_name || actor.username}</strong> wants to be friends
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
                     </div>
@@ -248,7 +249,7 @@ export default function NotificationsPage() {
                   <NotifCard key={notif.id} clickable onClick={handleClick} icon={<Check size={16} style={{ color: 'var(--sage)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
-                        <strong>{actor.display_name}</strong> accepted your friend request
+                        <strong>{actor.display_name || actor.username}</strong> accepted your friend request
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
                     </div>
@@ -263,7 +264,7 @@ export default function NotificationsPage() {
                   <NotifCard key={notif.id} icon={<Tent size={16} style={{ color: 'var(--gold-2)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
-                        {actor ? <><strong>{actor.display_name}</strong> invited you to </> : 'Invited to '}
+                        {actor ? <><strong>{actor.display_name || actor.username}</strong> invited you to </> : 'Invited to '}
                         <strong>{trip?.name || 'a trip'}</strong>
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
@@ -284,6 +285,8 @@ export default function NotificationsPage() {
               if (notif.type === 'trip_new_catch' || notif.type === 'comment_on_catch' || notif.type === 'catch_liked') {
                 const lbs = notif.payload?.lbs ?? 0;
                 const oz = notif.payload?.oz ?? 0;
+                const species = notif.payload?.species as string | undefined;
+                const actorName = actor?.display_name || actor?.username || (notif.payload?.angler_name as string | undefined);
                 const icon = notif.type === 'catch_liked'
                   ? <ThumbsUp size={16} style={{ color: 'var(--gold-2)' }} />
                   : <Fish size={16} style={{ color: 'var(--gold-2)' }} />;
@@ -292,12 +295,14 @@ export default function NotificationsPage() {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
                         {notif.type === 'comment_on_catch' ? (
-                          <>{actor ? <><strong>{actor.display_name}</strong> commented on your catch</> : 'New comment on your catch'}</>
+                          <>{actorName ? <><strong>{actorName}</strong> commented on your catch</> : 'New comment on your catch'}</>
                         ) : notif.type === 'catch_liked' ? (
-                          <>{actor ? <><strong>{actor.display_name}</strong> liked your catch</> : 'Your catch was liked'}</>
+                          <>{actorName ? <><strong>{actorName}</strong> liked your catch</> : 'Your catch was liked'}</>
                         ) : (
-                          <>{actor ? <><strong>{actor.display_name}</strong> banked </> : 'New catch '}
-                          <strong>{lbs}lb{oz ? ` ${oz}oz` : ''}</strong>{trip ? <> on <strong>{trip.name}</strong></> : null}</>
+                          <>{actorName ? <><strong>{actorName}</strong> banked </> : 'New catch '}
+                          <strong>{lbs}lb{oz ? ` ${oz}oz` : ''}</strong>
+                          {species ? <> {species}</> : null}
+                          {trip ? <> on <strong>{trip.name}</strong></> : null}</>
                         )}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
@@ -307,11 +312,12 @@ export default function NotificationsPage() {
                 );
               }
               if (notif.type === 'trip_new_member') {
+                const actorName = actor?.display_name || actor?.username || (notif.payload?.angler_name as string | undefined);
                 return (
                   <NotifCard key={notif.id} clickable onClick={handleClick} icon={<UserPlus size={16} style={{ color: 'var(--sage)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
-                        {actor ? <><strong>{actor.display_name}</strong> joined </> : 'New member on '}
+                        {actorName ? <><strong>{actorName}</strong> joined </> : 'New member on '}
                         <strong>{trip?.name || 'your trip'}</strong>
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
@@ -321,11 +327,12 @@ export default function NotificationsPage() {
                 );
               }
               if (notif.type === 'trip_chat') {
+                const actorName = actor?.display_name || actor?.username || (notif.payload?.angler_name as string | undefined);
                 return (
                   <NotifCard key={notif.id} clickable onClick={handleClick} icon={<MessageCircle size={16} style={{ color: 'var(--text-2)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
-                        {actor ? <><strong>{actor.display_name}</strong></> : 'New message'} {trip ? <>in <strong>{trip.name}</strong></> : null}
+                        {actorName ? <><strong>{actorName}</strong></> : 'New message'} {trip ? <>in <strong>{trip.name}</strong></> : null}
                       </div>
                       {notif.payload?.snippet && (
                         <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{notif.payload.snippet}"</div>
@@ -337,11 +344,12 @@ export default function NotificationsPage() {
                 );
               }
               if (notif.type === 'trip_chat_mention') {
+                const actorName = actor?.display_name || actor?.username || (notif.payload?.angler_name as string | undefined);
                 return (
                   <NotifCard key={notif.id} clickable onClick={handleClick} icon={<AtSign size={16} style={{ color: 'var(--gold-2)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
-                        {actor ? <><strong>{actor.display_name}</strong> mentioned you{trip ? <> in <strong>{trip.name}</strong></> : ''}</> : 'You were mentioned'}
+                        {actorName ? <><strong>{actorName}</strong> mentioned you{trip ? <> in <strong>{trip.name}</strong></> : ''}</> : 'You were mentioned'}
                       </div>
                       {notif.payload?.preview && (
                         <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{notif.payload.preview}"</div>

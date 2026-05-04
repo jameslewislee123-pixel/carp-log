@@ -68,7 +68,7 @@ async function buildPayload(n: NotifRow): Promise<{ title: string; body: string;
       const species = cat?.species || '';
       const w = cat ? fmtWeight(cat.lbs, cat.oz) : (p.lbs != null ? fmtWeight(p.lbs, p.oz || 0) : '');
       return {
-        title: `${angler?.display_name || 'Someone'} banked ${w}${species ? ` ${species}` : ''}`,
+        title: `${angler?.display_name || angler?.username || 'Someone'} banked ${w}${species ? ` ${species}` : ''}`,
         body: [cat?.lake, trip?.name].filter(Boolean).join(' · ') || 'New catch in your trip',
         url: `/?catch=${cat?.id || ''}`,
         tag: `trip-catch-${cat?.id || n.id}`,
@@ -78,7 +78,7 @@ async function buildPayload(n: NotifRow): Promise<{ title: string; body: string;
       const angler = p.angler_id ? await fetchProfile(p.angler_id) : null;
       const trip = p.trip_id ? await fetchTrip(p.trip_id) : null;
       return {
-        title: `${angler?.display_name || 'Someone'} joined ${trip?.name || 'your trip'}`,
+        title: `${angler?.display_name || angler?.username || 'Someone'} joined ${trip?.name || 'your trip'}`,
         body: 'Tap to open the trip',
         url: '/notifications',
         tag: `trip-member-${p.trip_id || n.id}`,
@@ -88,7 +88,7 @@ async function buildPayload(n: NotifRow): Promise<{ title: string; body: string;
       const angler = p.invited_by ? await fetchProfile(p.invited_by) : null;
       const trip = p.trip_id ? await fetchTrip(p.trip_id) : null;
       return {
-        title: `${angler?.display_name || 'Someone'} invited you to ${trip?.name || 'a trip'}`,
+        title: `${angler?.display_name || angler?.username || 'Someone'} invited you to ${trip?.name || 'a trip'}`,
         body: trip ? fmtDateRange(trip.start_date, trip.end_date) : 'Tap to view',
         url: '/notifications',
         tag: `trip-invite-${p.trip_id || n.id}`,
@@ -106,7 +106,7 @@ async function buildPayload(n: NotifRow): Promise<{ title: string; body: string;
     case 'friend_accepted': {
       const angler = p.addressee_id ? await fetchProfile(p.addressee_id) : null;
       return {
-        title: `${angler?.display_name || 'Someone'} accepted your friend request`,
+        title: `${angler?.display_name || angler?.username || 'Someone'} accepted your friend request`,
         body: 'Tap to see their profile',
         url: angler ? `/profile/${angler.username}` : '/notifications',
         tag: `friend-acc-${n.id}`,
@@ -117,7 +117,7 @@ async function buildPayload(n: NotifRow): Promise<{ title: string; body: string;
       const cat = p.catch_id ? await fetchCatch(p.catch_id) : null;
       const w = cat ? `${fmtWeight(cat.lbs, cat.oz)}${cat.species ? ` ${cat.species}` : ''}` : 'your catch';
       return {
-        title: `${angler?.display_name || 'Someone'} commented on your ${w}`,
+        title: `${angler?.display_name || angler?.username || 'Someone'} commented on your ${w}`,
         body: (p.snippet || p.preview || 'Tap to read').toString().slice(0, 100),
         url: `/?catch=${cat?.id || ''}`,
         tag: `catch-comment-${cat?.id || n.id}`,
@@ -128,7 +128,7 @@ async function buildPayload(n: NotifRow): Promise<{ title: string; body: string;
       const cat = p.catch_id ? await fetchCatch(p.catch_id) : null;
       const w = cat ? `${fmtWeight(cat.lbs, cat.oz)}${cat.species ? ` ${cat.species}` : ''}` : 'your catch';
       return {
-        title: `${angler?.display_name || 'Someone'} liked your ${w}`,
+        title: `${angler?.display_name || angler?.username || 'Someone'} liked your ${w}`,
         body: 'Tap to view',
         url: `/?catch=${cat?.id || ''}`,
         tag: `catch-liked-${cat?.id || n.id}`,
@@ -138,7 +138,7 @@ async function buildPayload(n: NotifRow): Promise<{ title: string; body: string;
       const angler = p.angler_id ? await fetchProfile(p.angler_id) : null;
       const trip = p.trip_id ? await fetchTrip(p.trip_id) : null;
       return {
-        title: `${angler?.display_name || 'Someone'} mentioned you${trip ? ` in ${trip.name}` : ''}`,
+        title: `${angler?.display_name || angler?.username || 'Someone'} mentioned you${trip ? ` in ${trip.name}` : ''}`,
         body: (p.preview || 'Tap to view').toString().slice(0, 100),
         url: '/',
         tag: `chat-mention-${p.message_id || n.id}`,
@@ -148,7 +148,7 @@ async function buildPayload(n: NotifRow): Promise<{ title: string; body: string;
       const angler = p.angler_id ? await fetchProfile(p.angler_id) : null;
       const trip = p.trip_id ? await fetchTrip(p.trip_id) : null;
       return {
-        title: `${angler?.display_name || 'Someone'}${trip ? ` in ${trip.name}` : ''}`,
+        title: `${angler?.display_name || angler?.username || 'Someone'}${trip ? ` in ${trip.name}` : ''}`,
         body: (p.snippet || p.preview || '').toString().slice(0, 100),
         url: '/',
         tag: `chat-${p.trip_id || n.id}`,
