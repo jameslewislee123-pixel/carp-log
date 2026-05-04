@@ -10,6 +10,8 @@ import {
   Activity as ActivityIcon, Map as MapIcon, MessageSquare, ThumbsUp, Search,
 } from 'lucide-react';
 import { Drawer } from 'vaul';
+import nextDynamic from 'next/dynamic';
+const DiscoverVenues = nextDynamic(() => import('./DiscoverVenues'), { ssr: false });
 import InvitePicker from './InvitePicker';
 import TripChat from './TripChat';
 import TripActivityFeed from './TripActivity';
@@ -31,7 +33,7 @@ import { hasSupabase, supabase } from '@/lib/supabase/client';
 import * as db from '@/lib/db';
 import {
   useMe, useCatches, useTrips, useMyNotifyConfig, useUnreadCount,
-  useProfilesByIds, useCommentCounts, prefetchTrip, prefetchLake, prefetchNotifications,
+  useProfilesByIds, useCommentCounts, useLakes, prefetchTrip, prefetchLake, prefetchNotifications,
 } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
 import type {
@@ -1187,7 +1189,23 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
   const [latestRoll, setLatestRoll] = useState<TripSwimRoll | null>(null);
   const [rollViewer, setRollViewer] = useState<{ roll: TripSwimRoll; mode: 'animate' | 'replay' } | null>(null);
   const [rolling, setRolling] = useState(false);
+  const [discoverFromTrip, setDiscoverFromTrip] = useState<{ center: { lat: number; lng: number } | null; ready: boolean } | null>(null);
   const isOwner = trip.owner_id === me.id;
+
+  async function openTripDiscover() {
+    setDiscoverFromTrip({ center: null, ready: false });
+    if (trip.location) {
+      try {
+        const { geocodeLake } = await import('@/lib/weather');
+        const g = await geocodeLake(trip.location);
+        setDiscoverFromTrip({ center: g, ready: true });
+      } catch {
+        setDiscoverFromTrip({ center: null, ready: true });
+      }
+    } else {
+      setDiscoverFromTrip({ center: null, ready: true });
+    }
+  }
 
   async function refreshMembers() {
     const m = await db.listTripMembers(trip.id);
@@ -1496,7 +1514,29 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
       )}
 
       {tab === 'map' && (
-        <TripMap trip={trip} catches={tripCatches} profilesById={memberProfiles} onOpenCatch={onOpenCatch} />
+        <>
+          <button onClick={openTripDiscover} className="card tap" style={{
+            padding: 12, marginBottom: 12,
+            display: 'flex', alignItems: 'center', gap: 10,
+            background: 'rgba(212,182,115,0.08)',
+            border: '1px solid rgba(234,201,136,0.3)',
+            cursor: 'pointer', width: '100%', textAlign: 'left', fontFamily: 'inherit',
+            color: 'var(--text)',
+          }}>
+            <Search size={14} style={{ color: 'var(--gold-2)', flexShrink: 0 }} />
+            <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>Find more venues nearby</span>
+            <ChevronRight size={14} style={{ color: 'var(--text-3)' }} />
+          </button>
+          <TripMap trip={trip} catches={tripCatches} profilesById={memberProfiles} onOpenCatch={onOpenCatch} />
+        </>
+      )}
+
+      {discoverFromTrip?.ready && (
+        <DiscoverVenues
+          initialCenter={discoverFromTrip.center}
+          sourceLabel={discoverFromTrip.center ? `Searching near ${trip.name}` : 'Searching near you'}
+          onClose={() => setDiscoverFromTrip(null)}
+        />
       )}
 
       {tab === 'chat' && (
@@ -2088,6 +2128,15 @@ function StatsBait({ catches }: { catches: CatchT[] }) {
 
 function StatsLakes({ catches, profilesById, onOpen, onOpenLake }: { catches: CatchT[]; profilesById: Record<string, Profile>; onOpen: (c: CatchT) => void; onOpenLake: (lakeName: string) => void }) {
   const qc = useQueryClient();
+  const lakeRowsQuery = useLakes();
+  const lakeRows = lakeRowsQuery.data || [];
+  // Quick lookup: lake name (lowercased, trimmed) → source from the lakes table.
+  const sourceByName = useMemo(() => {
+    const m: Record<string, string> = {};
+    lakeRows.forEach(l => { m[l.name.trim().toLowerCase()] = l.source || 'manual'; });
+    return m;
+  }, [lakeRows]);
+  const [showDiscover, setShowDiscover] = useState(false);
   const landed = useMemo(() => catches.filter(c => !c.lost && c.lake), [catches]);
   const lakes = useMemo(() => {
     const grouped: Record<string, { name: string; catches: CatchT[]; totalOz: number; biggest: CatchT | null }> = {};
@@ -2099,12 +2148,47 @@ function StatsLakes({ catches, profilesById, onOpen, onOpenLake }: { catches: Ca
     });
     return Object.values(grouped).sort((a, b) => (b.biggest ? totalOz(b.biggest.lbs, b.biggest.oz) : 0) - (a.biggest ? totalOz(a.biggest.lbs, a.biggest.oz) : 0));
   }, [landed]);
-  if (lakes.length === 0) return <EmptyState icon={<MapPinned size={48} />} title="No lake data yet" subtitle="Add lake names to your catches to track records by venue" />;
   const rankColors = ['var(--gold)', '#B5B6A6', '#A06D3D'];
+
+  const discoverButton = (
+    <button onClick={() => setShowDiscover(true)} className="card tap" style={{
+      padding: 14, marginBottom: 14,
+      display: 'flex', alignItems: 'center', gap: 12,
+      background: 'rgba(212,182,115,0.08)',
+      border: '1px solid rgba(234,201,136,0.3)',
+      cursor: 'pointer', width: '100%', textAlign: 'left', fontFamily: 'inherit',
+      color: 'var(--text)',
+    }}>
+      <div style={{
+        width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+        background: 'rgba(212,182,115,0.18)', border: '1px solid rgba(234,201,136,0.4)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <MapPin size={18} style={{ color: 'var(--gold-2)' }} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>Find venues nearby</div>
+        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>Discover fishing spots within 25km via OpenStreetMap</div>
+      </div>
+      <ChevronRight size={16} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
+    </button>
+  );
+
+  if (lakes.length === 0) return (
+    <>
+      {discoverButton}
+      <EmptyState icon={<MapPinned size={48} />} title="No lake data yet" subtitle="Add lake names to your catches to track records by venue" />
+      {showDiscover && <DiscoverVenues onClose={() => setShowDiscover(false)} />}
+    </>
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {discoverButton}
+      {showDiscover && <DiscoverVenues onClose={() => setShowDiscover(false)} />}
       {lakes.map(lake => {
         const top3 = [...lake.catches].sort((a, b) => totalOz(b.lbs, b.oz) - totalOz(a.lbs, a.oz)).slice(0, 3);
+        const isOsm = sourceByName[lake.name.trim().toLowerCase()] === 'osm';
         return (
           <div key={lake.name} className="card" style={{ padding: 16 }}>
             <button onClick={() => onOpenLake(lake.name)}
@@ -2118,6 +2202,13 @@ function StatsLakes({ catches, profilesById, onOpen, onOpenLake }: { catches: Ca
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
                 <MapPinned size={18} style={{ color: 'var(--gold)', flexShrink: 0 }} />
                 <h3 className="display-font" style={{ fontSize: 18, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>{lake.name}</h3>
+                {isOsm && (
+                  <span className="pill" title="Imported from OpenStreetMap" style={{
+                    background: 'rgba(141,191,157,0.15)', color: 'var(--sage)',
+                    border: '1px solid rgba(141,191,157,0.4)',
+                    fontSize: 9, padding: '2px 6px', flexShrink: 0,
+                  }}>OSM</span>
+                )}
               </div>
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                 <span className="pill" style={{ background: 'rgba(212,182,115,0.15)', color: 'var(--gold-2)', border: '1px solid rgba(234,201,136,0.4)' }}>
@@ -3301,7 +3392,7 @@ function useScrollDim() {
 // constrained to the handle area via `handleOnly`, body scrolling is
 // uninterrupted, and snap-back physics are spring-based.
 // ============================================================
-function VaulModalShell({ title, onClose, hideTitle, headerAction, stackLevel = 0, children }: {
+export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackLevel = 0, children }: {
   title?: string; onClose: () => void; hideTitle?: boolean;
   headerAction?: React.ReactNode; stackLevel?: number; children: React.ReactNode;
 }) {

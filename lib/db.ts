@@ -510,6 +510,25 @@ export async function listLakes(): Promise<Lake[]> {
   const { data } = await supabase().from('lakes').select('*').order('name');
   return (data || []) as Lake[];
 }
+
+// Insert a lake discovered via OSM Overpass into the lakes table. Marks the
+// row with source='osm' so the UI can show an "OSM" pill and so we can later
+// dedupe against manually-typed lakes. Returns the inserted row.
+export async function createLakeFromOSM(input: {
+  name: string; latitude: number; longitude: number;
+}): Promise<Lake> {
+  const { data: { user } } = await supabase().auth.getUser();
+  const payload: any = {
+    name: input.name.trim(),
+    latitude: input.latitude,
+    longitude: input.longitude,
+    created_by: user?.id || null,
+    source: 'osm',
+  };
+  const { data, error } = await supabase().from('lakes').insert(payload).select().single();
+  if (error) throw error;
+  return data as Lake;
+}
 export async function getLakeByName(name: string): Promise<Lake | null> {
   // case-insensitive lookup
   const { data } = await supabase().from('lakes').select('*').ilike('name', name.trim()).maybeSingle();

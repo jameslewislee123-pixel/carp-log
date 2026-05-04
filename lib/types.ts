@@ -187,12 +187,16 @@ export type GearItem = {
   updated_at?: string;
 };
 
+export type LakeSource = 'manual' | 'osm' | 'imported';
 export type Lake = {
   id: string;
   name: string;
   latitude: number | null;
   longitude: number | null;
   created_by: string | null;
+  // Provenance: 'manual' = user-typed, 'osm' = imported from OpenStreetMap.
+  // Column added via SQL migration; defaults to 'manual' for legacy rows.
+  source: LakeSource;
   created_at?: string;
 };
 
