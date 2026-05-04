@@ -80,6 +80,15 @@ export function prefetchNotifications(qc: QueryClient) {
     staleTime: 30_000,
   });
 }
+
+// Same idea for the friends list — touching the Friends button warms the cache.
+export function prefetchFriendships(qc: QueryClient) {
+  return qc.prefetchQuery({
+    queryKey: QK.friendships,
+    queryFn: db.listFriendships,
+    staleTime: 60_000,
+  });
+}
 export function useCatchComments(catchId: string | undefined) {
   return useQuery({
     queryKey: catchId ? QK.comments.byCatch(catchId) : ['comments', 'none'],

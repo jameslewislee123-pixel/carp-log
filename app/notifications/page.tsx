@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/AppFrame';
 import { useNotifications, useProfilesByIds, useMe, useTrips, useCatches } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
 import { CatchDetail } from '@/components/CarpApp';
+import PullToRefresh from '@/components/PullToRefresh';
 
 type RowData = {
   notif: AppNotification;
@@ -200,6 +201,9 @@ export default function NotificationsPage() {
   );
 
   return (
+    <PullToRefresh onRefresh={async () => {
+      await qc.invalidateQueries({ queryKey: QK.notifications.list });
+    }}>
     <div className="app-root">
       <PageHeader title="Notifications" back />
       <div style={{ padding: '8px 20px 80px' }}>
@@ -385,6 +389,7 @@ export default function NotificationsPage() {
         />
       )}
     </div>
+    </PullToRefresh>
   );
 }
 

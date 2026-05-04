@@ -1,37 +1,47 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Check, Loader2, Search, UserPlus, X } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import * as db from '@/lib/db';
 import type { Friendship, Profile } from '@/lib/types';
 import { PageHeader } from '@/components/AppFrame';
 import AvatarBubble from '@/components/AvatarBubble';
+import { useMe, useFriendships, useProfilesByIds } from '@/lib/queries';
+import { QK } from '@/lib/queryKeys';
 
 type Tab = 'friends' | 'requests' | 'find';
 
 export default function FriendsPage() {
-  const [me, setMe] = useState<Profile | null>(null);
+  const qc = useQueryClient();
+  const meQuery = useMe();
+  const friendshipsQuery = useFriendships();
+  const me = meQuery.data || null;
+  // Be defensive: a cache collision elsewhere shouldn't crash this page.
+  const friendships: Friendship[] = Array.isArray(friendshipsQuery.data) ? friendshipsQuery.data : [];
   const [tab, setTab] = useState<Tab>('friends');
-  const [friendships, setFriendships] = useState<Friendship[]>([]);
-  const [profilesById, setProfilesById] = useState<Record<string, Profile>>({});
-  const [loading, setLoading] = useState(true);
 
-  async function loadAll() {
-    setLoading(true);
-    const m = await db.getMe();
-    setMe(m);
-    const fs = await db.listFriendships();
-    setFriendships(fs);
-    const ids = Array.from(new Set(fs.flatMap(f => [f.requester_id, f.addressee_id])));
-    const profs = await db.listProfilesByIds(ids);
-    const map: Record<string, Profile> = {};
-    profs.forEach(p => map[p.id] = p);
-    setProfilesById(map);
-    setLoading(false);
+  const friendIds = useMemo(() => {
+    const set = new Set<string>();
+    friendships.forEach(f => { set.add(f.requester_id); set.add(f.addressee_id); });
+    return Array.from(set);
+  }, [friendships]);
+  const profilesQuery = useProfilesByIds(friendIds);
+  const profilesById: Record<string, Profile> =
+    (profilesQuery.data && typeof profilesQuery.data === 'object' && !Array.isArray(profilesQuery.data))
+      ? profilesQuery.data : {};
+
+  // Instant refetch helper (used after accept/decline/remove); rather than a
+  // full local reload, just invalidate the cached queries so cards re-render
+  // without flashing the spinner.
+  function reload() {
+    qc.invalidateQueries({ queryKey: QK.friendships });
   }
-  useEffect(() => { loadAll(); }, []);
 
-  if (loading || !me) return (
+  // Spinner only shows on FIRST visit when there's no cache at all. Repeat
+  // visits within the staleTime window land instantly on cached data.
+  const initialLoading = !me && meQuery.isLoading || (friendshipsQuery.isLoading && !friendshipsQuery.data);
+  if (initialLoading || !me) return (
     <div className="app-root"><div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Loader2 size={20} className="spin" style={{ color: 'var(--text-3)' }} /></div></div>
   );
 
@@ -71,7 +81,7 @@ export default function FriendsPage() {
                     <FriendRow key={f.id} profile={p}
                       action={
                         <button onClick={async () => {
-                          if (confirm(`Remove ${p.display_name} from friends?`)) { await db.removeFriend(f.id); await loadAll(); }
+                          if (confirm(`Remove ${p.display_name} from friends?`)) { await db.removeFriend(f.id); await reload(); }
                         }} style={{
                           background: 'transparent', border: '1px solid rgba(234,201,136,0.18)',
                           borderRadius: 999, padding: '6px 12px', color: 'var(--text-3)',
@@ -110,12 +120,12 @@ export default function FriendsPage() {
                   <FriendRow key={f.id} profile={p}
                     action={
                       <div style={{ display: 'flex', gap: 6 }}>
-                        <button onClick={async () => { await db.acceptFriend(f.id); await loadAll(); }} className="tap" style={{
+                        <button onClick={async () => { await db.acceptFriend(f.id); await reload(); }} className="tap" style={{
                           background: 'var(--gold)', color: '#1A1004', border: 'none',
                           borderRadius: 999, padding: '8px 14px', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, cursor: 'pointer',
                           display: 'inline-flex', alignItems: 'center', gap: 4,
                         }}><Check size={12} /> Accept</button>
-                        <button onClick={async () => { await db.declineFriend(f.id); await loadAll(); }} className="tap" style={{
+                        <button onClick={async () => { await db.declineFriend(f.id); await reload(); }} className="tap" style={{
                           background: 'transparent', color: 'var(--text-3)', border: '1px solid rgba(234,201,136,0.18)',
                           borderRadius: 999, padding: '8px 12px', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
                         }}>Decline</button>
@@ -128,7 +138,7 @@ export default function FriendsPage() {
           )
         )}
 
-        {tab === 'find' && <FindAnglers me={me} onFriendChange={loadAll} />}
+        {tab === 'find' && <FindAnglers me={me} onFriendChange={reload} />}
       </div>
     </div>
   );

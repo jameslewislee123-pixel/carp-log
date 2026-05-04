@@ -28,6 +28,7 @@ import LakeDetail from './LakeDetail';
 import PushSettings from './PushSettings';
 import CatchPhotoCarousel from './CatchPhotoCarousel';
 import CatchPhotoLightbox from './CatchPhotoLightbox';
+import PullToRefresh from './PullToRefresh';
 import { readBgAnimationEnabled, writeBgAnimationEnabled } from './UnderwaterLottie';
 import type { TripSwimRoll } from '@/lib/types';
 import { Dices } from 'lucide-react';
@@ -38,7 +39,7 @@ import * as db from '@/lib/db';
 import {
   useMe, useCatches, useTrips, useMyNotifyConfig, useUnreadCount,
   useProfilesByIds, useCommentCounts, useLakes, useLakeStatsTiles, useLakesEnriched,
-  prefetchTrip, prefetchLake, prefetchNotifications,
+  prefetchTrip, prefetchLake, prefetchNotifications, prefetchFriendships,
   type EnrichedLake,
 } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
@@ -310,11 +311,18 @@ export default function CarpApp() {
         <Header me={meAngler} unread={unread} onSettings={() => setShowSettings(true)} view={view} />
 
         {view === 'feed' && (
-          <Feed
-            me={me} catches={catches} trips={trips} profilesById={profilesById}
-            commentCounts={commentCounts}
-            onOpen={setDetailCatch} onOpenTrip={setDetailTrip}
-          />
+          <PullToRefresh onRefresh={async () => {
+            await Promise.all([
+              qc.invalidateQueries({ queryKey: QK.catches.all }),
+              qc.invalidateQueries({ queryKey: QK.notifications.unread }),
+            ]);
+          }}>
+            <Feed
+              me={me} catches={catches} trips={trips} profilesById={profilesById}
+              commentCounts={commentCounts}
+              onOpen={setDetailCatch} onOpenTrip={setDetailTrip}
+            />
+          </PullToRefresh>
         )}
         {view === 'trips' && (
           <TripsView
@@ -429,7 +437,10 @@ function Header({ me, unread, onSettings, view }: { me: Profile | null; unread: 
           </span>
         )}
       </Link>
-      <Link href="/friends" className="tap" style={{
+      <Link href="/friends" className="tap"
+        onMouseEnter={() => prefetchFriendships(qc)}
+        onTouchStart={() => prefetchFriendships(qc)}
+        style={{
         width: 42, height: 42, borderRadius: 14,
         background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.14)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -4102,45 +4113,10 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
     };
   }, []);
 
-  // Track the visible viewport height (excludes the iOS keyboard when it
-  // opens). Setting --app-vh lets the sheet shrink to fit instead of
-  // letting vaul shove the whole drawer up off the top of the screen.
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.visualViewport) return;
-    const vv = window.visualViewport;
-    const apply = () => {
-      document.documentElement.style.setProperty('--app-vh', `${vv.height}px`);
-    };
-    apply();
-    vv.addEventListener('resize', apply);
-    vv.addEventListener('scroll', apply);
-    return () => {
-      vv.removeEventListener('resize', apply);
-      vv.removeEventListener('scroll', apply);
-      document.documentElement.style.removeProperty('--app-vh');
-    };
-  }, []);
-
-  // Auto-scroll the focused input into view inside the scrollable body.
-  // Belt-and-braces with repositionInputs={false}: vaul no longer moves the
-  // sheet itself, so we have to make sure the field lands above the keyboard.
-  const bodyRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const root = bodyRef.current;
-    if (!root) return;
-    const onFocusIn = (e: FocusEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      const tag = target.tagName;
-      if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') return;
-      // Defer past the keyboard's appearance animation (~250ms on iOS).
-      window.setTimeout(() => {
-        try { target.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
-      }, 300);
-    };
-    root.addEventListener('focusin', onFocusIn);
-    return () => root.removeEventListener('focusin', onFocusIn);
-  }, []);
+  // Note: visualViewport sizing + focusin scroll-into-view live in
+  // app/providers.tsx now so they apply app-wide, including non-vaul
+  // surfaces (AddTrip, edit profile, etc.). Vaul's repositionInputs is
+  // still off so the sheet doesn't shove itself up.
 
   const z = 100 + stackLevel * 10;
 
@@ -4212,7 +4188,7 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
             </div>
 
             {/* SCROLLABLE BODY — vaul does NOT intercept gestures here when handleOnly is set. */}
-            <div ref={bodyRef} style={{
+            <div style={{
               flex: 1, minHeight: 0,
               overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain',
               touchAction: 'pan-y',
