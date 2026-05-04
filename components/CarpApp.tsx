@@ -4388,11 +4388,15 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
           }}>
           <div style={{
             width: '100%', maxWidth: 480,
-            // 100dvh is the dynamic-viewport-height — iOS 16.4+ shrinks it
-            // automatically when the soft keyboard opens, so we no longer
-            // need a manual visualViewport handler.
-            maxHeight: 'min(92vh, calc(100dvh - 24px))' as any,
-            height: 'min(92vh, calc(100dvh - 24px))' as any,
+            // 100dvh handles the iOS keyboard automatically on 16.4+, but
+            // it includes the area BEHIND the status bar / notch. Subtract
+            // env(safe-area-inset-top) so the sheet's top edge never
+            // collides with the system clock + battery; subtract another
+            // 24px to leave a comfortable visual gap below them. The
+            // matching marginTop pushes the sheet's top below the inset.
+            maxHeight: 'calc(100dvh - env(safe-area-inset-top, 0px) - 24px)' as any,
+            height: 'calc(100dvh - env(safe-area-inset-top, 0px) - 24px)' as any,
+            marginTop: 'env(safe-area-inset-top, 0px)',
             background: 'rgba(10, 24, 22, 0.92)',
             backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
             borderRadius: '28px 28px 0 0', border: '1px solid rgba(234,201,136,0.14)', borderBottom: 'none',
