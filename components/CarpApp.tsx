@@ -4351,21 +4351,18 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
               flexShrink: 0,
               userSelect: 'none', WebkitUserSelect: 'none',
               cursor: 'grab',
+              // DEBUG (preview only): red 3px outline + minHeight to verify
+              // whether the Drawer.Handle wrapper is rendering at all.
+              border: '3px solid red',
+              minHeight: 80,
               // Override vaul's default tiny-pill look (the wrapper paints
               // its own visual pill below). vaul auto-injects CSS for
-              // [data-vaul-handle] including height:5px and width:32px —
-              // both must be explicitly overridden inline or the wrapper
-              // collapses to 5px and clips everything inside.
+              // [data-vaul-handle] including height:5px and width:32px.
               width: 'auto', height: 'auto',
               background: 'transparent', margin: 0,
               display: 'block',
-              // Vertical breathing room is what last sprint accidentally
-              // collapsed: 8px above the pill, padding-bottom on the
-              // header gives a gap before the scrolling body starts.
               paddingTop: 8,
               paddingBottom: hideTitle ? 8 : 16,
-              // Clip rounded sheet corners so the handle area can't bleed
-              // past them when the sheet is mid-drag.
               borderTopLeftRadius: 28, borderTopRightRadius: 28, overflow: 'hidden',
             }}>
                 {/* Pill row — natural height (no fixed height), 12px gap
