@@ -156,6 +156,11 @@ export async function removeTripMember(tripMemberId: string): Promise<void> {
 }
 
 // ============ CATCHES ============
+export async function getCatchById(id: string): Promise<Catch | null> {
+  const { data } = await supabase().from('catches').select('*').eq('id', id).maybeSingle();
+  return (data as Catch) || null;
+}
+
 export async function listCatches(): Promise<Catch[]> {
   const { data } = await supabase().from('catches').select('*').order('date', { ascending: false });
   return (data || []) as Catch[];

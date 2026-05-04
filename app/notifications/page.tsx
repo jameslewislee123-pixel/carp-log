@@ -1,13 +1,14 @@
 'use client';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AtSign, Bell, Check, Fish, Loader2, MessageCircle, Tent, UserPlus, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as db from '@/lib/db';
-import type { AppNotification, Profile, Trip } from '@/lib/types';
+import type { AppNotification, Catch as CatchT, Profile, Trip } from '@/lib/types';
 import { PageHeader } from '@/components/AppFrame';
-import { useNotifications, useProfilesByIds } from '@/lib/queries';
+import { useNotifications, useProfilesByIds, useMe, useTrips, useCatches } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
+import { CatchDetail } from '@/components/CarpApp';
 
 type RowData = {
   notif: AppNotification;
@@ -22,6 +23,45 @@ export default function NotificationsPage() {
   // Belt-and-braces: TanStack Query in placeholder/initial state may yield
   // undefined; a stale cache entry under a colliding key could yield non-array.
   const notifs: AppNotification[] | undefined = Array.isArray(notifsQuery.data) ? notifsQuery.data : undefined;
+
+  // Data needed by the inline CatchDetail modal. Hooks are cached across
+  // pages so visiting /notifications after the home page is essentially free.
+  const me = useMe().data || null;
+  const trips = useTrips().data || [];
+  const catches = useCatches().data || [];
+  const allActorIdsFromCatches = useMemo(() => {
+    const set = new Set<string>();
+    catches.forEach(c => set.add(c.angler_id));
+    return Array.from(set);
+  }, [catches]);
+  const profilesByIdsQuery = useProfilesByIds(allActorIdsFromCatches);
+  const profilesById: Record<string, Profile> = (profilesByIdsQuery.data && typeof profilesByIdsQuery.data === 'object' && !Array.isArray(profilesByIdsQuery.data))
+    ? profilesByIdsQuery.data
+    : {};
+
+  const [detailCatch, setDetailCatch] = useState<CatchT | null>(null);
+
+  async function openCatchById(catchId: string) {
+    // Cache-first: skip the network if the catch is already loaded via useCatches
+    // (CarpApp's cache reaches here too) or via QK.catches.detail.
+    let c: CatchT | null =
+      qc.getQueryData<CatchT>(QK.catches.detail(catchId)) ||
+      catches.find(x => x.id === catchId) ||
+      null;
+    if (!c) {
+      try {
+        c = await qc.fetchQuery({
+          queryKey: QK.catches.detail(catchId),
+          queryFn: () => db.getCatchById(catchId),
+        });
+      } catch { c = null; }
+    }
+    if (!c) {
+      alert('This catch is no longer available');
+      return;
+    }
+    setDetailCatch(c);
+  }
 
   // Resolve actor profiles & referenced trips for this batch of notifications.
   const actorIds = useMemo(() => {
@@ -124,9 +164,9 @@ export default function NotificationsPage() {
       case 'comment_on_catch': {
         const catchId = n.payload?.catch_id;
         if (catchId) {
-          // Open the home page with ?catch=<id>; CarpApp picks this up and
-          // mounts CatchDetail on top of any other state.
-          router.push(`/?catch=${catchId}&back=${encodeURIComponent('/notifications')}`);
+          // Mount CatchDetail INLINE on this page (no route change). Closing
+          // the modal returns the user to /notifications with the list intact.
+          openCatchById(catchId);
           return true;
         }
         return false;
@@ -307,6 +347,34 @@ export default function NotificationsPage() {
           </div>
         )}
       </div>
+
+      {detailCatch && me && (
+        <CatchDetail
+          catchData={detailCatch}
+          me={me}
+          profilesById={profilesById}
+          trips={trips}
+          onClose={() => setDetailCatch(null)}
+          onDelete={async () => {
+            if (!confirm('Delete this catch?')) return;
+            await db.deleteCatch(detailCatch.id);
+            qc.invalidateQueries({ queryKey: QK.catches.all });
+            setDetailCatch(null);
+          }}
+          onUpdate={async (data, photoDataUrl) => {
+            const saved = await db.upsertCatch({ ...data, id: detailCatch.id });
+            if (photoDataUrl) {
+              try { await db.uploadPhotoFromDataUrl(detailCatch.id, photoDataUrl); } catch {}
+            }
+            qc.invalidateQueries({ queryKey: QK.catches.all });
+            setDetailCatch(saved);
+          }}
+          onOpenTrip={(t) => {
+            setDetailCatch(null);
+            router.push(`/?trip=${t.id}&back=${encodeURIComponent('/notifications')}`);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -2265,7 +2265,7 @@ function Gallery({ catches, profilesById, onOpen }: { catches: CatchT[]; profile
 }
 
 // ============ ADD CATCH MODAL ============
-function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, photoExisting }: {
+export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, photoExisting }: {
   me: Profile; trips: Trip[]; activeTrips: Trip[];
   onClose: () => void;
   onSave: (data: db.CatchInput, photoDataUrl: string | null) => Promise<void>;
@@ -2599,7 +2599,7 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
 }
 
 // ============ CATCH DETAIL ============
-function CatchDetail({ catchData, me, profilesById, trips, stackLevel, onClose, onDelete, onUpdate, onOpenTrip }: {
+export function CatchDetail({ catchData, me, profilesById, trips, stackLevel, onClose, onDelete, onUpdate, onOpenTrip }: {
   catchData: CatchT; me: Profile; profilesById: Record<string, Profile>; trips: Trip[];
   stackLevel?: number;
   onClose: () => void; onDelete: () => void;
