@@ -4339,37 +4339,48 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
             boxShadow: '0 -10px 40px rgba(0,0,0,0.45)',
             display: 'flex', flexDirection: 'column', minHeight: 0,
           }}>
-            {/* Drag handle area — visual pill + header row.
-                Outer wrapper is a plain <div> (not Drawer.Handle) so
-                vaul's auto-injected [data-vaul-handle] CSS doesn't fight
-                our layout. Drawer.Handle is used ONLY for the small
-                visual pill — vaul's defaults size that correctly. The
-                header row is a sibling, not a child of the Handle, so
-                normal flex layout applies without clipping or height
-                interference. Drag-to-dismiss is driven by the pill (vaul's
-                handleOnly is set on Root) — native iOS sheet pattern. */}
-            <div
+            {/* Drag-from-anywhere top zone.
+                Drawer.Handle wraps both the visual pill and the header
+                row so dragging anywhere in this band dismisses the sheet.
+                Vaul auto-injects [data-vaul-handle] { height:5px; width:32px; ... }
+                so we explicitly override height/width/margin/display/
+                background. NO overflow:hidden — that was the previous bug
+                that clipped content to vaul's 5px when the override
+                didn't fully win. The X / Back / headerAction buttons
+                stopPropagation on pointerdown + touchstart so taps don't
+                arm the drag. */}
+            <Drawer.Handle
               style={{
+                // Vaul-CSS overrides
+                height: 'auto',
+                width: 'auto',
+                margin: 0,
+                background: 'transparent',
+                display: 'block',
+                // Layout
                 flexShrink: 0,
                 paddingTop: 8,
                 paddingBottom: 16,
                 borderTopLeftRadius: 28,
                 borderTopRightRadius: 28,
-                background: 'transparent',
+                cursor: 'grab',
+                userSelect: 'none',
+                WebkitUserSelect: 'none',
               }}
             >
-              <Drawer.Handle
-                style={{
-                  display: 'block',
-                  width: 36,
-                  height: 5,
-                  margin: '0 auto 12px',
-                  background: 'rgba(239, 233, 217, 0.35)',
-                  borderRadius: 999,
-                  cursor: 'grab',
-                }}
-              />
+              {/* Visual pill — decorative div, not a Drawer.Handle. */}
+              <div style={{ display: 'flex', justifyContent: 'center', paddingBottom: 12 }}>
+                <div
+                  style={{
+                    width: 36,
+                    height: 5,
+                    borderRadius: 999,
+                    background: 'rgba(239, 233, 217, 0.35)',
+                  }}
+                />
+              </div>
 
+              {/* Header row — title + X OR Back button. */}
               <div
                 style={{
                   padding: '0 20px',
@@ -4452,7 +4463,7 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
                   </>
                 )}
               </div>
-            </div>
+            </Drawer.Handle>
 
             {/* SCROLLABLE BODY — vaul does NOT intercept gestures here when handleOnly is set. */}
             <div style={{
