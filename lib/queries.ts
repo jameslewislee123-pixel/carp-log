@@ -200,10 +200,39 @@ export function useTripActivity(tripId: string | undefined) {
     placeholderData: (prev) => prev,
   });
 }
+// Scoped to "my lakes" — the union of lakes referenced by my catches,
+// my trips, my bookmarks. Avoids the full-table cold-load (which after
+// the seed import is ~2k rows AND was being silently truncated to
+// Supabase's default 1000-row cap, hiding bookmarked lakes whose
+// alphabetical position fell past row 1000).
+//
+// "Lakes I created but didn't bookmark and never used" is a missing
+// fourth signal — but every lake-create path in AddLakeModal also
+// bookmarks via bookmarkAndFinish, and AddCatch-created lakes link
+// via catches.lake_id, so historical orphans should be rare.
 export function useLakes() {
+  const catchesQuery = useCatches();
+  const tripsQuery = useTrips();
+  const savedIdsQuery = useMySavedLakeIds();
+  const upstreamReady =
+    catchesQuery.isSuccess && tripsQuery.isSuccess && savedIdsQuery.isSuccess;
+
+  const idList = useMemo(() => {
+    if (!upstreamReady) return [] as string[];
+    const s = new Set<string>();
+    (catchesQuery.data || []).forEach(c => {
+      const lid = (c as any).lake_id;
+      if (lid) s.add(lid);
+    });
+    (tripsQuery.data || []).forEach(t => { if (t.lake_id) s.add(t.lake_id); });
+    (savedIdsQuery.data || []).forEach(id => s.add(id));
+    return Array.from(s).sort();
+  }, [upstreamReady, catchesQuery.data, tripsQuery.data, savedIdsQuery.data]);
+
   return useQuery({
-    queryKey: QK.lakes.all,
-    queryFn: db.listLakes,
+    queryKey: ['lakes', 'mine', idList.join(',')],
+    queryFn: () => db.listLakesByIds(idList),
+    enabled: upstreamReady,
     staleTime: 60_000,
     placeholderData: (prev) => prev,
   });
@@ -245,9 +274,8 @@ function totalOzLocal(c: Catch) { return c.lbs * 16 + c.oz; }
 export function useLakesEnriched() {
   const catches = useCatches().data || [];
   const lakes = useLakes().data || [];
-  const trips = useTrips().data || [];
-  const me = useMe().data || null;
-  const savedIds = useMySavedLakeIds().data || [];
+  // Trips/me/savedIds are no longer used here — useLakes() already
+  // unions those signals into its scoped result set.
   // We don't list annotations for every lake here; the badge just reflects
   // whatever the cache currently knows about. This is intentionally
   // best-effort — it only matters for the "Add notes" badge hint.
@@ -256,42 +284,11 @@ export function useLakesEnriched() {
   return useMemo<EnrichedLake[]>(() => {
     const byKey: Record<string, EnrichedLake & { _baits: Record<string, number> }> = {};
 
-    // Determine which lakes "belong" to the user. db.listLakes() returns
-    // all lakes globally (no RLS), so without scoping we'd surface every
-    // OSM venue any user has ever discovered. Sources of ownership:
-    //   - lakes referenced by any catch I've logged (lake_id or by-name)
-    //   - lakes referenced by any trip I'm a member of (trips.lake_id)
-    //   - lakes I created (lakes.created_by = me.id)
-    const myLakeIds = new Set<string>();
-    const myLakeNames = new Set<string>();
-    catches.forEach(c => {
-      if ((c as any).lake_id) myLakeIds.add((c as any).lake_id);
-      if (c.lake) myLakeNames.add(norm(c.lake));
-    });
-    trips.forEach(t => { if (t.lake_id) myLakeIds.add(t.lake_id); });
-    if (me) lakes.forEach(l => { if (l.created_by === me.id) myLakeIds.add(l.id); });
-    // Bookmarks (user_saved_lakes) — fourth ownership signal. Lets seed
-    // and Nominatim picks (which have created_by IS NULL) appear in the
-    // Lakes tab without the user having to log a catch first.
-    savedIds.forEach(id => myLakeIds.add(id));
-
-    const myLakes = lakes.filter(l => myLakeIds.has(l.id) || myLakeNames.has(norm(l.name)));
-    // eslint-disable-next-line no-console
-    console.log('[useLakesEnriched]', {
-      catches: catches.length,
-      lakesGlobal: lakes.length,
-      trips: trips.length,
-      savedIds: savedIds.length,
-      savedSample: savedIds.slice(0, 3),
-      myLakeIdsSize: myLakeIds.size,
-      myLakeIdsSample: Array.from(myLakeIds).slice(0, 3),
-      myLakesAfterFilter: myLakes.length,
-      mePresent: !!me,
-    });
-
-    // Seed from MY lakes (subset of lakes table). Picks up trip-reserved
-    // lakes and manually-saved lakes even when the user has zero catches.
-    myLakes.forEach(l => {
+    // useLakes() now returns the user-scoped subset (my catches + trips +
+    // bookmarks), so `lakes` IS the my-lakes set — no further filtering
+    // by id needed. We still build a name index below so catches with
+    // a free-text lake name resolve to the right entry.
+    lakes.forEach(l => {
       const key = l.id;
       byKey[key] = {
         key,

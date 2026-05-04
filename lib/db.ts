@@ -628,6 +628,16 @@ export async function listLakes(): Promise<Lake[]> {
   return (data || []) as Lake[];
 }
 
+// Fetch a specific subset of lakes by id. Used by useLakes() to scope
+// the cold-load payload to "my lakes" (~5–50 rows) instead of pulling
+// the entire 2k+ row global table — which also tripped Supabase's
+// default 1000-row hard cap on plain selects.
+export async function listLakesByIds(ids: string[]): Promise<Lake[]> {
+  if (ids.length === 0) return [];
+  const { data } = await supabase().from('lakes').select('*').in('id', ids).order('name');
+  return (data || []) as Lake[];
+}
+
 // Insert a lake discovered via OSM Overpass into the lakes table. Marks the
 // row with source='osm' so the UI can show an "OSM" pill and so we can later
 // dedupe against manually-typed lakes. Returns the inserted row.

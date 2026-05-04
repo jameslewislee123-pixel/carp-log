@@ -38,7 +38,7 @@ import { hasSupabase, supabase } from '@/lib/supabase/client';
 import * as db from '@/lib/db';
 import {
   useMe, useCatches, useTrips, useMyNotifyConfig, useUnreadCount,
-  useProfilesByIds, useCommentCounts, useLakes, useLakeStatsTiles, useLakesEnriched,
+  useProfilesByIds, useCommentCounts, useLakeStatsTiles, useLakesEnriched,
   useCatchLikeCounts, useMyCatchLikes,
   prefetchTrip, prefetchLake, prefetchNotifications, prefetchFriendships,
   type EnrichedLake,
