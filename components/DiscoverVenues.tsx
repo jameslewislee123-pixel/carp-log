@@ -25,7 +25,12 @@ type Radius = typeof RADIUS_OPTIONS[number];
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const COOLDOWN_MS = 30 * 1000;
-const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+// Tried in order. Primary first, kumi.systems mirror as fallback when the
+// primary returns a network error / 5xx / 429.
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+] as const;
 
 function cacheKey(lat: number, lng: number, radius: Radius) {
   return `osm_venues_${lat.toFixed(2)}_${lng.toFixed(2)}_${radius}`;
@@ -79,24 +84,51 @@ function buildOverpassQuery(center: { lat: number; lng: number }, radiusKm: Radi
 out center;`;
 }
 
-async function fetchOverpass(center: { lat: number; lng: number }, radiusKm: Radius, attempt = 0): Promise<OSMVenue[]> {
-  const body = new URLSearchParams({ data: buildOverpassQuery(center, radiusKm) });
-  const res = await fetch(OVERPASS_URL, {
-    method: 'POST',
-    body,
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-  });
-  if (res.status === 429) {
-    if (attempt === 0) {
-      await new Promise(r => setTimeout(r, 5000));
-      return fetchOverpass(center, radiusKm, 1);
-    }
-    throw new Error('rate-limited');
+// Single attempt against one Overpass mirror. Throws with a descriptive
+// Error.message on network failure or non-2xx — the caller surfaces it.
+async function callOverpass(endpoint: string, query: string): Promise<any> {
+  const body = 'data=' + encodeURIComponent(query);
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+  } catch (e) {
+    // Network-level failure (offline, DNS, CORS preflight blocked, etc.)
+    throw new Error(`Network error reaching ${endpoint}: ${e instanceof Error ? e.message : String(e)}`);
   }
-  if (!res.ok) throw new Error(`overpass ${res.status}`);
-  const json = await res.json();
-  const elements: any[] = json?.elements || [];
+  if (!res.ok) {
+    // Try to peek at the response body for context — Overpass surfaces a
+    // useful textual error in non-2xx responses.
+    let detail = '';
+    try { detail = (await res.text()).slice(0, 200); } catch {}
+    throw new Error(`Overpass returned ${res.status} ${res.statusText}${detail ? ` — ${detail.replace(/\s+/g, ' ').trim()}` : ''}`);
+  }
+  return res.json();
+}
 
+async function fetchOverpass(center: { lat: number; lng: number }, radiusKm: Radius): Promise<OSMVenue[]> {
+  const query = buildOverpassQuery(center, radiusKm);
+  let json: any | null = null;
+  let lastErr: Error | null = null;
+  for (let i = 0; i < OVERPASS_ENDPOINTS.length; i++) {
+    const endpoint = OVERPASS_ENDPOINTS[i];
+    try {
+      json = await callOverpass(endpoint, query);
+      break;
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      // eslint-disable-next-line no-console
+      console.warn(`[discover] ${endpoint} failed:`, lastErr.message);
+      // 429 handling: if primary is rate-limiting, fall straight through to
+      // the next mirror (no 5s sleep — kumi has independent capacity).
+    }
+  }
+  if (!json) throw lastErr || new Error('All Overpass mirrors failed');
+
+  const elements: any[] = json?.elements || [];
   const seen = new Set<string>();
   const venues: OSMVenue[] = [];
   for (const el of elements) {
@@ -191,8 +223,10 @@ export default function DiscoverVenues({
       })
       .catch(err => {
         if (cancelled) return;
+        // eslint-disable-next-line no-console
+        console.error('[discover] Overpass failed:', err);
         setStatus('error');
-        setErrorMsg(err?.message === 'rate-limited' ? 'OpenStreetMap is busy. Try again in a moment.' : 'Couldn’t reach OpenStreetMap.');
+        setErrorMsg(err instanceof Error ? err.message : String(err));
       });
     return () => { cancelled = true; };
   }, [center, radius]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -211,7 +245,12 @@ export default function DiscoverVenues({
     setLastSearchAt(Date.now());
     fetchOverpass(center, radius)
       .then(results => { writeCache(key, results); setVenues(results); setStatus(results.length === 0 ? 'empty' : 'success'); })
-      .catch(err => { setStatus('error'); setErrorMsg(err?.message === 'rate-limited' ? 'OpenStreetMap is busy. Try again in a moment.' : 'Couldn’t reach OpenStreetMap.'); });
+      .catch(err => {
+        // eslint-disable-next-line no-console
+        console.error('[discover] Overpass failed:', err);
+        setStatus('error');
+        setErrorMsg(err instanceof Error ? err.message : String(err));
+      });
   }
 
   async function addVenue(v: OSMVenue) {
@@ -288,9 +327,31 @@ export default function DiscoverVenues({
       )}
 
       {center && status === 'error' && (
-        <div className="card" style={{ padding: 18, textAlign: 'center', cursor: 'pointer' }} onClick={canSearch ? refresh : undefined}>
-          <div style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 4 }}>{errorMsg || 'Search failed'}</div>
-          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{canSearch ? 'Tap to retry' : `Wait ${Math.ceil(cooldownRemaining / 1000)}s`}</div>
+        <div className="card" style={{ padding: 18 }}>
+          <div style={{ fontSize: 13, color: 'var(--danger)', fontWeight: 600, marginBottom: 6 }}>Search failed</div>
+          <div style={{
+            fontSize: 11, color: 'var(--text-2)', lineHeight: 1.5,
+            padding: 10, borderRadius: 10,
+            background: 'rgba(220,107,88,0.08)',
+            border: '1px solid rgba(220,107,88,0.25)',
+            wordBreak: 'break-word',
+            fontFamily: 'ui-monospace, Menlo, monospace',
+            marginBottom: 12,
+          }}>
+            {errorMsg || 'Unknown error'}
+          </div>
+          <button onClick={refresh} disabled={!canSearch} className="tap" style={{
+            width: '100%', padding: '10px 14px', borderRadius: 12,
+            background: canSearch ? 'var(--gold)' : 'rgba(212,182,115,0.15)',
+            color: canSearch ? '#1A1004' : 'var(--text-3)',
+            border: 'none',
+            fontFamily: 'inherit', fontSize: 13, fontWeight: 700,
+            cursor: canSearch ? 'pointer' : 'not-allowed',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          }}>
+            <RefreshCw size={14} />
+            {canSearch ? 'Retry' : `Retry in ${Math.ceil(cooldownRemaining / 1000)}s`}
+          </button>
         </div>
       )}
 
