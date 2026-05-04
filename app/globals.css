@@ -45,60 +45,91 @@ body {
   position: relative;
 }
 
-/* Animated background layers — drifting aurora + ripples + particles.
-   All layered with pointer-events: none, sit behind app content (z-index < 1). */
-.bg-aurora {
-  position: fixed; inset: -10vw; pointer-events: none; z-index: 0;
+/* ============================================================
+   Underwater scene — looking up from beneath the surface.
+   All layers: pointer-events:none, fixed inset:0, z-index:0.
+   App content sits at z-index:1 above. ============================ */
+
+/* Static depth gradient — top is brighter (light from above), bottom dark. */
+.bg-water-base {
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
   background:
-    radial-gradient(circle 50vw at var(--ax, 85%) var(--ay, 8%),  rgba(228, 192, 122, 0.22), transparent 55%),
-    radial-gradient(circle 60vw at var(--bx, 12%) var(--by, 48%), rgba(141, 191, 157, 0.16), transparent 55%);
-  animation: aurora-drift 90s ease-in-out infinite alternate;
-  will-change: transform, background-position;
-}
-@keyframes aurora-drift {
-  0%   { --ax: 85%; --ay: 8%;  --bx: 12%; --by: 48%; transform: translate3d(0,0,0); }
-  50%  { --ax: 30%; --ay: 18%; --bx: 80%; --by: 70%; transform: translate3d(2vw, -1vw, 0); }
-  100% { --ax: 70%; --ay: 30%; --bx: 25%; --by: 65%; transform: translate3d(-2vw, 1vw, 0); }
+    radial-gradient(ellipse 90% 50% at 50% 0%, rgba(132, 198, 196, 0.16), transparent 70%),
+    linear-gradient(180deg, #0F3530 0%, #082724 35%, #050E0D 70%, #03080A 100%);
 }
 
-.bg-ripples {
-  position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; opacity: 0.55;
+/* God rays — vertical light beams piercing the water. Each beam drifts
+   laterally over a long cycle and has a separate scaleY pulse to feel
+   organic. Heavy blur softens them so they read as volumetric light. */
+.bg-water-beams {
+  position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;
+  mix-blend-mode: screen;
 }
-.bg-ripples span {
-  position: absolute; left: var(--rx, 50%); top: var(--ry, 50%);
-  width: 6px; height: 6px; border-radius: 50%;
-  border: 1px solid rgba(212, 182, 115, 0.25);
-  transform: translate(-50%, -50%);
-  animation: ripple var(--dur, 8s) ease-out infinite;
-  animation-delay: var(--delay, 0s);
+.bg-water-beams span {
+  position: absolute; top: -10%; height: 130%;
+  background: linear-gradient(180deg,
+    transparent 0%,
+    rgba(220, 240, 245, 0.06) 25%,
+    rgba(220, 240, 245, 0.09) 50%,
+    rgba(220, 240, 245, 0.04) 75%,
+    transparent 100%);
+  filter: blur(40px);
+  transform-origin: 50% 0%;
+  animation:
+    beam-drift var(--drift, 80s) ease-in-out infinite alternate,
+    beam-pulse var(--pulse, 12s) ease-in-out infinite alternate;
+  will-change: transform;
 }
-@keyframes ripple {
-  0%   { width: 6px; height: 6px; opacity: 0.6; border-width: 1px; }
-  100% { width: 320px; height: 320px; opacity: 0; border-width: 0.5px; }
+@keyframes beam-drift {
+  from { transform: translateX(-12vw) skewX(-3deg); }
+  to   { transform: translateX(12vw)  skewX(3deg); }
+}
+@keyframes beam-pulse {
+  from { transform: scaleY(1)    scaleX(1); opacity: 0.85; }
+  to   { transform: scaleY(1.08) scaleX(1.05); opacity: 1; }
 }
 
-.bg-particles {
+/* Caustics — soft cyan turbulence pattern, very low opacity, slow lateral
+   drift so the shimmer feels alive without distracting. */
+.bg-water-caustics {
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  opacity: 0.06;
+  mix-blend-mode: screen;
+  animation: caustic-drift 30s linear infinite;
+}
+@keyframes caustic-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(-5%, 2%, 0); }
+}
+.bg-water-caustics svg {
+  width: 110%; height: 110%; display: block;
+}
+
+/* Floating particles — tiny dust motes drifting upward through the column. */
+.bg-water-particles {
   position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;
 }
-.bg-particles span {
-  position: absolute; left: var(--px, 50%); bottom: -10px;
-  width: var(--pw, 1px); height: var(--pw, 1px); border-radius: 50%;
-  background: var(--pc, rgba(212,182,115,0.5));
-  animation: particle-rise var(--pd, 30s) linear infinite;
-  animation-delay: var(--pdl, 0s);
+.bg-water-particles span {
+  position: absolute; bottom: -2vh;
+  border-radius: 999px;
+  background: rgba(220, 240, 245, 0.9);
+  animation: particle-rise var(--dur, 30s) linear infinite;
+  will-change: transform, opacity;
   opacity: 0;
 }
 @keyframes particle-rise {
-  0%   { transform: translate3d(0, 0, 0);       opacity: 0; }
-  10%  {                                          opacity: var(--po, 0.55); }
-  90%  {                                          opacity: var(--po, 0.55); }
-  100% { transform: translate3d(var(--ptx, 1vw), -110vh, 0); opacity: 0; }
+  0%   { transform: translate3d(0, 0, 0);                          opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translate3d(var(--sway, 0), -110vh, 0);        opacity: 0; }
 }
 
-/* prefers-reduced-motion: kill all animations */
+/* Honour reduced-motion: freeze beams/particles, leave the static gradient. */
 @media (prefers-reduced-motion: reduce) {
-  .bg-aurora, .bg-ripples span, .bg-particles span { animation: none !important; }
-  .bg-ripples, .bg-particles { display: none; }
+  .bg-water-beams span,
+  .bg-water-caustics,
+  .bg-water-particles span { animation: none !important; }
+  .bg-water-particles span { opacity: 0.25; }
 }
 
 .app-root {

@@ -9,7 +9,7 @@ import {
   Clock, Tent, MapPinned, Star, Users as UsersIcon, Lock, LogOut, UserPlus, Mail,
   Activity as ActivityIcon, Map as MapIcon, MessageSquare, ThumbsUp, Search,
 } from 'lucide-react';
-import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
+import { motion } from 'framer-motion';
 import InvitePicker from './InvitePicker';
 import TripChat from './TripChat';
 import TripActivityFeed from './TripActivity';
@@ -22,6 +22,7 @@ import GearItemPicker from './GearItemPicker';
 import GearManager from './GearManager';
 import LakeDetail from './LakeDetail';
 import PushSettings from './PushSettings';
+import { loadBgPrefs, saveBgPrefs } from './UnderwaterScene';
 import type { TripSwimRoll } from '@/lib/types';
 import { Dices } from 'lucide-react';
 
@@ -30,7 +31,7 @@ import { hasSupabase, supabase } from '@/lib/supabase/client';
 import * as db from '@/lib/db';
 import {
   useMe, useCatches, useTrips, useMyNotifyConfig, useUnreadCount,
-  useProfilesByIds, useCommentCounts, prefetchTrip, prefetchLake,
+  useProfilesByIds, useCommentCounts, prefetchTrip, prefetchLake, prefetchNotifications,
 } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
 import type {
@@ -119,8 +120,8 @@ export default function CarpApp() {
     if (meQuery.isFetched && !me) router.replace('/auth/sign-in');
   }, [meQuery.isFetched, me, router]);
 
-  // Open a catch by ?catch=<id> query param (deep link from /profile).
-  // Optional ?back=/profile/foo: closing the modal navigates back there.
+  // Open a catch by ?catch=<id> query param (deep link from /profile or
+  // /notifications). Optional ?back=/foo: closing the modal navigates back.
   const [catchBackTo, setCatchBackTo] = useState<string | null>(null);
   useEffect(() => {
     const id = searchParams?.get('catch');
@@ -136,6 +137,19 @@ export default function CarpApp() {
       window.history.replaceState({}, '', u.toString());
     }
   }, [searchParams, catches]);
+
+  // Open a trip by ?trip=<id> (deep link from /notifications).
+  useEffect(() => {
+    const id = searchParams?.get('trip');
+    if (!id || trips.length === 0) return;
+    const t = trips.find(x => x.id === id);
+    if (t) {
+      setDetailTrip(t);
+      const u = new URL(window.location.href);
+      u.searchParams.delete('trip');
+      window.history.replaceState({}, '', u.toString());
+    }
+  }, [searchParams, trips]);
 
   // ───── realtime → cache merge (no full refetches) ─────
   // INSERT: prepend / append to cache via setQueryData (instant UI update).
@@ -290,21 +304,6 @@ export default function CarpApp() {
           onSave={async (data, photo) => { await saveCatch(data, photo, true); setShowAdd(false); }}
         />
       )}
-      {detailCatch && (
-        <CatchDetail
-          catchData={detailCatch} me={me} profilesById={profilesById} trips={trips}
-          onClose={() => {
-            setDetailCatch(null);
-            if (catchBackTo) { const dest = catchBackTo; setCatchBackTo(null); router.push(dest); }
-          }}
-          onDelete={async () => { if (confirm('Delete this catch?')) { await deleteCatchHandler(detailCatch.id); setDetailCatch(null); } }}
-          onUpdate={async (data, photo) => {
-            const saved = await saveCatch({ ...data, id: detailCatch.id }, photo, false);
-            setDetailCatch(saved);
-          }}
-          onOpenTrip={(t) => { setDetailCatch(null); setDetailTrip(t); }}
-        />
-      )}
       {detailLakeName && (
         <LakeDetailLoader name={detailLakeName} catches={catches} profilesById={profilesById} me={me}
           onClose={() => setDetailLakeName(null)} onOpenCatch={setDetailCatch} />
@@ -318,6 +317,24 @@ export default function CarpApp() {
             if (confirm('Delete this trip? Catches will stay but become unlinked.')) { await deleteTripHandler(detailTrip.id); setDetailTrip(null); }
           }}
           onOpenCatch={setDetailCatch}
+        />
+      )}
+      {/* CatchDetail renders AFTER TripDetail in JSX so it stacks ABOVE the trip
+          modal. Closing the catch detail leaves the trip modal mounted underneath. */}
+      {detailCatch && (
+        <CatchDetail
+          catchData={detailCatch} me={me} profilesById={profilesById} trips={trips}
+          stackLevel={detailTrip ? 1 : 0}
+          onClose={() => {
+            setDetailCatch(null);
+            if (catchBackTo) { const dest = catchBackTo; setCatchBackTo(null); router.push(dest); }
+          }}
+          onDelete={async () => { if (confirm('Delete this catch?')) { await deleteCatchHandler(detailCatch.id); setDetailCatch(null); } }}
+          onUpdate={async (data, photo) => {
+            const saved = await saveCatch({ ...data, id: detailCatch.id }, photo, false);
+            setDetailCatch(saved);
+          }}
+          onOpenTrip={(t) => { setDetailCatch(null); setDetailTrip(t); }}
         />
       )}
       {showAddTrip && (
@@ -348,6 +365,7 @@ export default function CarpApp() {
 
 // ============ HEADER ============
 function Header({ me, unread, onSettings, view }: { me: Profile | null; unread: number; onSettings: () => void; view: string }) {
+  const qc = useQueryClient();
   const titles: Record<string, string> = { feed: 'The Log', trips: 'Trips', stats: 'The Board', gallery: 'Gallery' };
   return (
     <div style={{ paddingTop: 'max(24px, env(safe-area-inset-top))', paddingLeft: 20, paddingRight: 20, paddingBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -355,7 +373,10 @@ function Header({ me, unread, onSettings, view }: { me: Profile | null; unread: 
         <div style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--text-3)', fontWeight: 600 }}>Carp Tracker</div>
         <h1 className="display-font" style={{ fontSize: 30, margin: '2px 0 0', fontWeight: 500, letterSpacing: '-0.02em' }}>{titles[view]}</h1>
       </div>
-      <Link href="/notifications" className="tap" style={{
+      <Link href="/notifications" className="tap"
+        onMouseEnter={() => prefetchNotifications(qc)}
+        onTouchStart={() => prefetchNotifications(qc)}
+        style={{
         position: 'relative', width: 42, height: 42, borderRadius: 14,
         background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.14)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -2578,8 +2599,9 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
 }
 
 // ============ CATCH DETAIL ============
-function CatchDetail({ catchData, me, profilesById, trips, onClose, onDelete, onUpdate, onOpenTrip }: {
+function CatchDetail({ catchData, me, profilesById, trips, stackLevel, onClose, onDelete, onUpdate, onOpenTrip }: {
   catchData: CatchT; me: Profile; profilesById: Record<string, Profile>; trips: Trip[];
+  stackLevel?: number;
   onClose: () => void; onDelete: () => void;
   onUpdate: (data: db.CatchInput, photoDataUrl: string | null) => Promise<void>;
   onOpenTrip: (t: Trip) => void;
@@ -2669,7 +2691,7 @@ function CatchDetail({ catchData, me, profilesById, trips, onClose, onDelete, on
   const isMyCatch = catchData.angler_id === me.id;
 
   return (
-    <ModalShell title="" onClose={onClose} hideTitle>
+    <ModalShell title="" onClose={onClose} hideTitle stackLevel={stackLevel}>
       {catchData.lost ? (
         <div style={{ textAlign: 'center', padding: '20px 0 30px' }}>
           <div style={{ width: 64, height: 64, borderRadius: 20, background: 'rgba(220,107,88,0.15)', border: '1px solid rgba(220,107,88,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
@@ -3082,6 +3104,9 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
         <GearManager />
       </div>
 
+      <div className="label">Appearance</div>
+      <BgAnimationToggle />
+
       <div className="label">Telegram alerts</div>
       <button onClick={() => setShowNotify(!showNotify)} className="tap" style={{
         width: '100%', padding: 14, borderRadius: 14,
@@ -3116,6 +3141,26 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
         {catches.length} catches · {trips.length} trips
       </div>
     </ModalShell>
+  );
+}
+
+function BgAnimationToggle() {
+  const [enabled, setEnabled] = useState(true);
+  useEffect(() => { setEnabled(loadBgPrefs().enabled); }, []);
+  return (
+    <label className="tap" style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: 14, borderRadius: 14,
+      background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
+      cursor: 'pointer', marginBottom: 24,
+    }}>
+      <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-2)' }}>Background animation</span>
+      <input type="checkbox" checked={enabled} onChange={(e) => {
+        const next = e.target.checked;
+        setEnabled(next);
+        saveBgPrefs({ enabled: next });
+      }} style={{ accentColor: 'var(--gold)' }} />
+    </label>
   );
 }
 
@@ -3205,7 +3250,48 @@ function useAnyModalOpen() {
   return React.useSyncExternalStore(subscribeModal, getModalSnapshot, getModalServerSnapshot) > 0;
 }
 
-function ModalShell({ title, onClose, hideTitle, headerAction, children }: { title?: string; onClose: () => void; hideTitle?: boolean; headerAction?: React.ReactNode; children: React.ReactNode }) {
+// Shared scroll-dim store so BottomNav and FAB fade together as a unit.
+let scrollDimmed = false;
+const dimListeners = new Set<() => void>();
+let dimTimer: ReturnType<typeof setTimeout> | null = null;
+let dimConsumers = 0;
+let dimScrollHandler: (() => void) | null = null;
+function setScrollDimmed(next: boolean) {
+  if (scrollDimmed === next) return;
+  scrollDimmed = next;
+  dimListeners.forEach(l => l());
+}
+function subscribeDim(cb: () => void) { dimListeners.add(cb); return () => { dimListeners.delete(cb); }; }
+function getDimSnapshot() { return scrollDimmed; }
+function getDimServerSnapshot() { return false; }
+function useScrollDim() {
+  // Install the window scroll listener the first time any consumer mounts;
+  // tear it down when the last consumer unmounts. Counted refcount avoids
+  // double-installs and avoids leaks if multiple components use this hook.
+  useEffect(() => {
+    dimConsumers++;
+    if (dimConsumers === 1) {
+      dimScrollHandler = () => {
+        setScrollDimmed(true);
+        if (dimTimer) clearTimeout(dimTimer);
+        dimTimer = setTimeout(() => setScrollDimmed(false), 300);
+      };
+      window.addEventListener('scroll', dimScrollHandler, { passive: true });
+    }
+    return () => {
+      dimConsumers--;
+      if (dimConsumers === 0) {
+        if (dimScrollHandler) window.removeEventListener('scroll', dimScrollHandler);
+        dimScrollHandler = null;
+        if (dimTimer) { clearTimeout(dimTimer); dimTimer = null; }
+        scrollDimmed = false;
+      }
+    };
+  }, []);
+  return React.useSyncExternalStore(subscribeDim, getDimSnapshot, getDimServerSnapshot);
+}
+
+function ModalShell({ title, onClose, hideTitle, headerAction, stackLevel = 0, children }: { title?: string; onClose: () => void; hideTitle?: boolean; headerAction?: React.ReactNode; stackLevel?: number; children: React.ReactNode }) {
   useEffect(() => { document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = ''; }; }, []);
   useEffect(() => {
     modalOpenCount++;
@@ -3215,23 +3301,21 @@ function ModalShell({ title, onClose, hideTitle, headerAction, children }: { tit
       modalListeners.forEach(l => l());
     };
   }, []);
-  // Pull-to-dismiss: drag the sheet down; close on >150px or velocity > 500/s.
-  const y = useMotionValue(0);
-  const backdropOpacity = useTransform(y, [0, 200, 400], [0.7, 0.4, 0]);
+  // Each stackLevel adds 10 to z-index so a stacked modal sits above its parent.
+  const z = 100 + stackLevel * 10;
   return (
     <motion.div
       style={{
-        position: 'fixed', inset: 0, zIndex: 100,
-        background: useTransform(backdropOpacity, (o) => `rgba(3, 10, 9, ${o})`) as any,
+        position: 'fixed', inset: 0, zIndex: z,
+        background: 'rgba(3, 10, 9, 0.7)',
         backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
         display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-        touchAction: 'none',
       }}
       onClick={onClose}
     >
       <motion.div
         onClick={(e) => e.stopPropagation()}
-        style={{ y,
+        style={{
           width: '100%', maxWidth: 480,
           // Use dvh so iOS Safari's URL bar / home indicator are accounted for.
           // Falls back to 92vh on browsers that don't support dvh.
@@ -3249,28 +3333,13 @@ function ModalShell({ title, onClose, hideTitle, headerAction, children }: { tit
         exit={{ y: '100%' }}
         transition={{ type: 'spring', stiffness: 260, damping: 30 }}
       >
-        {/* DRAG HANDLE — locked to top of sheet, drag-to-dismiss only on this strip. */}
-        <motion.div
-          drag="y"
-          dragConstraints={{ top: 0, bottom: 0 }}
-          dragElastic={{ top: 0, bottom: 1 }}
-          dragMomentum={false}
-          onDragEnd={(_, info) => {
-            if (info.offset.y > 100 || info.velocity.y > 500) {
-              animate(y, 700, { duration: 0.18, onComplete: onClose });
-            } else {
-              animate(y, 0, { type: 'spring', stiffness: 320, damping: 28 });
-            }
-          }}
-          style={{
-            position: 'relative', height: 28, flexShrink: 0,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'grab', touchAction: 'none',
-          }}
-          aria-label="Drag down to dismiss"
-        >
+        {/* Decorative handle pill — purely visual, no drag interaction. */}
+        <div style={{
+          height: 28, flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} aria-hidden="true">
           <div style={{ width: 44, height: 5, borderRadius: 999, background: 'rgba(255,255,255,0.22)' }} />
-        </motion.div>
+        </div>
 
         {/* HEADER — pinned outside the scroll region so it never moves with content. */}
         <div style={{
@@ -3314,6 +3383,8 @@ function ModalShell({ title, onClose, hideTitle, headerAction, children }: { tit
 
 function FAB({ onClick }: { onClick: () => void }) {
   const modalOpen = useAnyModalOpen();
+  const dimmed = useScrollDim();
+  const opacity = modalOpen ? 0 : (dimmed ? 0.5 : 1);
   return (
     <button onClick={onClick} className="tap" aria-hidden={modalOpen} tabIndex={modalOpen ? -1 : 0} style={{
       position: 'fixed',
@@ -3325,9 +3396,9 @@ function FAB({ onClick }: { onClick: () => void }) {
       boxShadow: '0 12px 28px rgba(212,182,115,0.4), 0 2px 6px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.5)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       color: '#1A1004', cursor: 'pointer', zIndex: 50,
-      opacity: modalOpen ? 0 : 1,
+      opacity,
       pointerEvents: modalOpen ? 'none' : 'auto',
-      transition: 'opacity 0.18s ease',
+      transition: 'opacity 0.2s ease',
     }}>
       <Plus size={28} strokeWidth={2.5} />
     </button>
@@ -3335,19 +3406,9 @@ function FAB({ onClick }: { onClick: () => void }) {
 }
 
 function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 'trips' | 'stats' | 'gallery') => void }) {
-  // Dim while user is actively scrolling; restore after a short idle.
-  const [dimmed, setDimmed] = useState(false);
+  // Shared dim state with FAB so they fade together while user is scrolling.
+  const dimmed = useScrollDim();
   const modalOpen = useAnyModalOpen();
-  useEffect(() => {
-    let t: ReturnType<typeof setTimeout> | null = null;
-    const onScroll = () => {
-      setDimmed(true);
-      if (t) clearTimeout(t);
-      t = setTimeout(() => setDimmed(false), 300);
-    };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => { window.removeEventListener('scroll', onScroll); if (t) clearTimeout(t); };
-  }, []);
   const items = [
     { id: 'feed' as const,    label: 'Log',    icon: Fish },
     { id: 'trips' as const,   label: 'Trips',  icon: Tent },
@@ -3357,7 +3418,6 @@ function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 't
   const opacity = modalOpen ? 0 : (dimmed ? 0.5 : 1);
   return (
     <div
-      onPointerEnter={() => setDimmed(false)}
       aria-hidden={modalOpen}
       style={{
       position: 'fixed',

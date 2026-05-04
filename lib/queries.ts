@@ -33,12 +33,28 @@ export function useFriendships() {
   return useQuery({ queryKey: QK.friendships, queryFn: db.listFriendships });
 }
 export function useNotifications() {
-  return useQuery({ queryKey: QK.notifications.list, queryFn: db.listNotifications });
+  return useQuery({
+    queryKey: QK.notifications.list,
+    queryFn: db.listNotifications,
+    // Show cached results immediately; refetch happens in the background so
+    // the page never shows a spinner after the first successful load.
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  });
 }
 export function useUnreadCount() {
   return useQuery({
     queryKey: QK.notifications.unread,
     queryFn: db.unreadCount,
+    staleTime: 30_000,
+  });
+}
+
+// Warm the notification list cache so opening /notifications is instant.
+export function prefetchNotifications(qc: QueryClient) {
+  return qc.prefetchQuery({
+    queryKey: QK.notifications.list,
+    queryFn: db.listNotifications,
     staleTime: 30_000,
   });
 }

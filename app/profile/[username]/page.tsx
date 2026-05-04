@@ -9,6 +9,7 @@ import type { Catch, Profile, Friendship } from '@/lib/types';
 import { formatWeight, totalOz } from '@/lib/util';
 import { PageHeader } from '@/components/AppFrame';
 import AvatarBubble from '@/components/AvatarBubble';
+import AvatarLightbox from '@/components/AvatarLightbox';
 import { SPECIES } from '@/components/CatchCard';
 import { photoPublicUrl } from '@/lib/db';
 import { useProfileByUsername, useCatchesForAngler, useFriendships } from '@/lib/queries';
@@ -22,6 +23,7 @@ export default function ProfilePage() {
   const catchesQuery = useCatchesForAngler(profileQuery.data?.id);
   const friendshipsQuery = useFriendships();
   const [busy, setBusy] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   const me: Profile | null = meQuery.data || null;
   const profile = profileQuery.data;
@@ -77,7 +79,15 @@ export default function ProfilePage() {
       <PageHeader title={profile.display_name} kicker={`@${profile.username}`} back />
       <div style={{ padding: '8px 20px 80px' }}>
         <div className="card" style={{ padding: 18, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 16 }}>
-          <AvatarBubble username={profile.username} displayName={profile.display_name} avatarUrl={profile.avatar_url} size={64} link={false} />
+          <button
+            type="button"
+            onClick={() => { if (profile.avatar_url) setLightboxOpen(true); }}
+            disabled={!profile.avatar_url}
+            aria-label="View profile picture"
+            style={{ background: 'transparent', border: 'none', padding: 0, cursor: profile.avatar_url ? 'zoom-in' : 'default' }}
+          >
+            <AvatarBubble username={profile.username} displayName={profile.display_name} avatarUrl={profile.avatar_url} size={64} link={false} />
+          </button>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="display-font" style={{ fontSize: 22, fontWeight: 500 }}>{profile.display_name}</div>
             <div style={{ fontSize: 12, color: 'var(--text-3)', display: 'flex', alignItems: 'center', gap: 4 }}><Calendar size={11} /> Joined {new Date(profile.created_at || Date.now()).toLocaleDateString([], { month: 'short', year: 'numeric' })}</div>
@@ -161,6 +171,9 @@ export default function ProfilePage() {
           </div>
         )}
       </div>
+      {lightboxOpen && profile.avatar_url && (
+        <AvatarLightbox src={profile.avatar_url} onClose={() => setLightboxOpen(false)} />
+      )}
     </div>
   );
 }

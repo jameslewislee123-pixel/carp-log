@@ -1,53 +1,162 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AtSign, Bell, Check, Fish, Loader2, MessageCircle, Tent, UserPlus, X } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as db from '@/lib/db';
-import type { AppNotification, Profile, Trip, TripMember } from '@/lib/types';
+import type { AppNotification, Profile, Trip } from '@/lib/types';
 import { PageHeader } from '@/components/AppFrame';
-import AvatarBubble from '@/components/AvatarBubble';
+import { useNotifications } from '@/lib/queries';
+import { QK } from '@/lib/queryKeys';
 
 type RowData = {
   notif: AppNotification;
   actor?: Profile;
   trip?: Trip;
-  tripMember?: TripMember;
 };
 
 export default function NotificationsPage() {
   const router = useRouter();
-  const [rows, setRows] = useState<RowData[] | null>(null);
+  const qc = useQueryClient();
+  const notifsQuery = useNotifications();
+  const notifs = notifsQuery.data;
 
-  async function load() {
-    const notifs = await db.listNotifications();
-    const actorIds = new Set<string>(), tripIds = new Set<string>(), tmIds = new Set<string>();
+  // Resolve actor profiles & referenced trips for this batch of notifications.
+  // These are also TanStack queries so they cache across visits.
+  const actorIds = useMemo(() => {
+    if (!notifs) return [] as string[];
+    const set = new Set<string>();
     notifs.forEach(n => {
-      if (n.payload?.requester_id) actorIds.add(n.payload.requester_id);
-      if (n.payload?.addressee_id) actorIds.add(n.payload.addressee_id);
-      if (n.payload?.invited_by)   actorIds.add(n.payload.invited_by);
-      if (n.payload?.trip_id)      tripIds.add(n.payload.trip_id);
-      if (n.payload?.trip_member_id) tmIds.add(n.payload.trip_member_id);
+      if (n.payload?.requester_id) set.add(n.payload.requester_id);
+      if (n.payload?.addressee_id) set.add(n.payload.addressee_id);
+      if (n.payload?.invited_by)   set.add(n.payload.invited_by);
+      if (n.payload?.actor_id)     set.add(n.payload.actor_id);
     });
-    const [actors, trips] = await Promise.all([
-      db.listProfilesByIds(Array.from(actorIds)),
-      Promise.all(Array.from(tripIds).map(id => db.getTrip(id))).then(arr => arr.filter((x): x is Trip => !!x)),
-    ]);
-    const aMap: Record<string, Profile> = {}; actors.forEach(a => aMap[a.id] = a);
-    const tMap: Record<string, Trip> = {}; trips.forEach(t => tMap[t.id] = t);
-    const out: RowData[] = notifs.map(n => ({
-      notif: n,
-      actor: aMap[n.payload?.requester_id || n.payload?.invited_by || n.payload?.addressee_id || ''],
-      trip: tMap[n.payload?.trip_id || ''],
-    }));
-    setRows(out);
-    if (notifs.length > 0) {
-      const unread = notifs.filter(n => !n.read).map(n => n.id);
-      if (unread.length) await db.markRead(unread);
+    return Array.from(set);
+  }, [notifs]);
+  const tripIds = useMemo(() => {
+    if (!notifs) return [] as string[];
+    const set = new Set<string>();
+    notifs.forEach(n => { if (n.payload?.trip_id) set.add(n.payload.trip_id); });
+    return Array.from(set);
+  }, [notifs]);
+
+  const actorsQuery = useQuery({
+    queryKey: ['profiles', 'ids', [...actorIds].sort().join(',')],
+    queryFn: () => db.listProfilesByIds(actorIds),
+    enabled: actorIds.length > 0,
+    staleTime: 5 * 60_000,
+  });
+  const tripsQuery = useQuery({
+    queryKey: ['notifs', 'trips', [...tripIds].sort().join(',')],
+    queryFn: () => Promise.all(tripIds.map(id => db.getTrip(id))).then(arr => arr.filter((x): x is Trip => !!x)),
+    enabled: tripIds.length > 0,
+    staleTime: 60_000,
+  });
+
+  const aMap = useMemo(() => {
+    const m: Record<string, Profile> = {};
+    (actorsQuery.data || []).forEach(p => { m[p.id] = p; });
+    return m;
+  }, [actorsQuery.data]);
+  const tMap = useMemo(() => {
+    const m: Record<string, Trip> = {};
+    (tripsQuery.data || []).forEach(t => { m[t.id] = t; });
+    return m;
+  }, [tripsQuery.data]);
+
+  const rows: RowData[] | null = notifs ? notifs.map(n => ({
+    notif: n,
+    actor: aMap[n.payload?.requester_id || n.payload?.invited_by || n.payload?.addressee_id || n.payload?.actor_id || ''],
+    trip: tMap[n.payload?.trip_id || ''],
+  })) : null;
+
+  // ----- Mutations: all optimistic so taps feel instant -----
+
+  // Mark a batch of ids as read. Used on initial load to clear the badge.
+  const markReadMut = useMutation({
+    mutationFn: (ids: string[]) => db.markRead(ids),
+    onMutate: async (ids) => {
+      await qc.cancelQueries({ queryKey: QK.notifications.list });
+      const prev = qc.getQueryData<AppNotification[]>(QK.notifications.list);
+      qc.setQueryData<AppNotification[]>(QK.notifications.list, (old) =>
+        old ? old.map(n => ids.includes(n.id) ? { ...n, read: true } : n) : old);
+      qc.setQueryData<number>(QK.notifications.unread, (old) => Math.max(0, (old ?? 0) - ids.length));
+      return { prev };
+    },
+    onError: (_e, _ids, ctx) => {
+      if (ctx?.prev) qc.setQueryData(QK.notifications.list, ctx.prev);
+      qc.invalidateQueries({ queryKey: QK.notifications.unread });
+    },
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => db.deleteNotification(id),
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: QK.notifications.list });
+      const prev = qc.getQueryData<AppNotification[]>(QK.notifications.list);
+      const removed = prev?.find(n => n.id === id);
+      qc.setQueryData<AppNotification[]>(QK.notifications.list, (old) => old ? old.filter(n => n.id !== id) : old);
+      if (removed && !removed.read) {
+        qc.setQueryData<number>(QK.notifications.unread, (old) => Math.max(0, (old ?? 0) - 1));
+      }
+      return { prev };
+    },
+    onError: (_e, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(QK.notifications.list, ctx.prev);
+      qc.invalidateQueries({ queryKey: QK.notifications.unread });
+    },
+  });
+
+  // Mark all unread as read on first view of the page.
+  useEffect(() => {
+    if (!notifs) return;
+    const unread = notifs.filter(n => !n.read).map(n => n.id);
+    if (unread.length === 0) return;
+    markReadMut.mutate(unread);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notifs?.length]);
+
+  // Per-type click routing. Returns true if the notification was handled
+  // (so the row's onClick can also mark-read + dismiss).
+  function handleNotifClick(n: AppNotification, trip?: Trip, actor?: Profile) {
+    switch (n.type) {
+      case 'trip_new_catch':
+      case 'comment_on_catch': {
+        const catchId = n.payload?.catch_id;
+        if (catchId) {
+          // Open the home page with ?catch=<id>; CarpApp picks this up and
+          // mounts CatchDetail on top of any other state.
+          router.push(`/?catch=${catchId}&back=${encodeURIComponent('/notifications')}`);
+          return true;
+        }
+        return false;
+      }
+      case 'friend_accepted': {
+        if (actor?.username) { router.push(`/profile/${actor.username}`); return true; }
+        return false;
+      }
+      case 'friend_request': {
+        router.push('/friends');
+        return true;
+      }
+      case 'trip_invite':
+      case 'trip_new_member':
+      case 'trip_chat':
+      case 'trip_chat_mention': {
+        if (trip?.id) {
+          router.push(`/?trip=${trip.id}&back=${encodeURIComponent('/notifications')}`);
+          return true;
+        }
+        return false;
+      }
+      default: return false;
     }
   }
-  useEffect(() => { load(); }, []);
 
-  if (!rows) return (
+  // Initial-load skeleton: only show spinner when there is genuinely no data
+  // available yet. Subsequent visits hit the cache and render instantly.
+  if (!rows && notifsQuery.isLoading) return (
     <div className="app-root"><div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Loader2 size={20} className="spin" style={{ color: 'var(--text-3)' }} /></div></div>
   );
 
@@ -55,7 +164,7 @@ export default function NotificationsPage() {
     <div className="app-root">
       <PageHeader title="Notifications" back />
       <div style={{ padding: '8px 20px 80px' }}>
-        {rows.length === 0 ? (
+        {!rows || rows.length === 0 ? (
           <div style={{ padding: '60px 20px', textAlign: 'center' }}>
             <Bell size={48} style={{ color: 'var(--text-3)', opacity: 0.4, margin: '0 auto 16px' }} />
             <p style={{ color: 'var(--text-3)' }}>You're all caught up</p>
@@ -63,6 +172,9 @@ export default function NotificationsPage() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {rows.map(({ notif, actor, trip }) => {
+              const handleClick = () => {
+                handleNotifClick(notif, trip, actor);
+              };
               if (notif.type === 'friend_request') {
                 if (!actor) return null;
                 return (
@@ -75,13 +187,12 @@ export default function NotificationsPage() {
                     </div>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <ActionBtn primary onClick={async () => {
-                        // friendship_id was stored in payload
                         await db.acceptFriend(notif.payload.friendship_id);
-                        await db.deleteNotification(notif.id); load();
+                        deleteMut.mutate(notif.id);
                       }}><Check size={12} /> Accept</ActionBtn>
                       <ActionBtn onClick={async () => {
                         await db.declineFriend(notif.payload.friendship_id);
-                        await db.deleteNotification(notif.id); load();
+                        deleteMut.mutate(notif.id);
                       }}>Decline</ActionBtn>
                     </div>
                   </NotifCard>
@@ -90,14 +201,14 @@ export default function NotificationsPage() {
               if (notif.type === 'friend_accepted') {
                 if (!actor) return null;
                 return (
-                  <NotifCard key={notif.id} icon={<Check size={16} style={{ color: 'var(--sage)' }} />}>
+                  <NotifCard key={notif.id} clickable onClick={handleClick} icon={<Check size={16} style={{ color: 'var(--sage)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
                         <strong>{actor.display_name}</strong> accepted your friend request
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
                     </div>
-                    <ActionBtn onClick={() => { db.deleteNotification(notif.id); load(); }}>
+                    <ActionBtn onClick={(e) => { e.stopPropagation(); deleteMut.mutate(notif.id); }}>
                       <X size={12} />
                     </ActionBtn>
                   </NotifCard>
@@ -116,36 +227,39 @@ export default function NotificationsPage() {
                     <div style={{ display: 'flex', gap: 6 }}>
                       <ActionBtn primary onClick={async () => {
                         await db.setTripMemberStatus(notif.payload.trip_member_id, 'joined');
-                        await db.deleteNotification(notif.id);
-                        load();
+                        deleteMut.mutate(notif.id);
                       }}><Check size={12} /> Join</ActionBtn>
                       <ActionBtn onClick={async () => {
                         await db.setTripMemberStatus(notif.payload.trip_member_id, 'declined');
-                        await db.deleteNotification(notif.id); load();
+                        deleteMut.mutate(notif.id);
                       }}>Decline</ActionBtn>
                     </div>
                   </NotifCard>
                 );
               }
-              if (notif.type === 'trip_new_catch') {
+              if (notif.type === 'trip_new_catch' || notif.type === 'comment_on_catch') {
                 const lbs = notif.payload?.lbs ?? 0;
                 const oz = notif.payload?.oz ?? 0;
                 return (
-                  <NotifCard key={notif.id} icon={<Fish size={16} style={{ color: 'var(--gold-2)' }} />}>
+                  <NotifCard key={notif.id} clickable onClick={handleClick} icon={<Fish size={16} style={{ color: 'var(--gold-2)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
-                        {actor ? <><strong>{actor.display_name}</strong> banked </> : 'New catch '}
-                        <strong>{lbs}lb{oz ? ` ${oz}oz` : ''}</strong>{trip ? <> on <strong>{trip.name}</strong></> : null}
+                        {notif.type === 'comment_on_catch' ? (
+                          <>{actor ? <><strong>{actor.display_name}</strong> commented on your catch</> : 'New comment on your catch'}</>
+                        ) : (
+                          <>{actor ? <><strong>{actor.display_name}</strong> banked </> : 'New catch '}
+                          <strong>{lbs}lb{oz ? ` ${oz}oz` : ''}</strong>{trip ? <> on <strong>{trip.name}</strong></> : null}</>
+                        )}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
                     </div>
-                    <ActionBtn onClick={() => { db.deleteNotification(notif.id); load(); }}><X size={12} /></ActionBtn>
+                    <ActionBtn onClick={(e) => { e.stopPropagation(); deleteMut.mutate(notif.id); }}><X size={12} /></ActionBtn>
                   </NotifCard>
                 );
               }
               if (notif.type === 'trip_new_member') {
                 return (
-                  <NotifCard key={notif.id} icon={<UserPlus size={16} style={{ color: 'var(--sage)' }} />}>
+                  <NotifCard key={notif.id} clickable onClick={handleClick} icon={<UserPlus size={16} style={{ color: 'var(--sage)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
                         {actor ? <><strong>{actor.display_name}</strong> joined </> : 'New member on '}
@@ -153,13 +267,13 @@ export default function NotificationsPage() {
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
                     </div>
-                    <ActionBtn onClick={() => { db.deleteNotification(notif.id); load(); }}><X size={12} /></ActionBtn>
+                    <ActionBtn onClick={(e) => { e.stopPropagation(); deleteMut.mutate(notif.id); }}><X size={12} /></ActionBtn>
                   </NotifCard>
                 );
               }
               if (notif.type === 'trip_chat') {
                 return (
-                  <NotifCard key={notif.id} icon={<MessageCircle size={16} style={{ color: 'var(--text-2)' }} />}>
+                  <NotifCard key={notif.id} clickable onClick={handleClick} icon={<MessageCircle size={16} style={{ color: 'var(--text-2)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
                         {actor ? <><strong>{actor.display_name}</strong></> : 'New message'} {trip ? <>in <strong>{trip.name}</strong></> : null}
@@ -169,13 +283,13 @@ export default function NotificationsPage() {
                       )}
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
                     </div>
-                    <ActionBtn onClick={() => { db.deleteNotification(notif.id); load(); }}><X size={12} /></ActionBtn>
+                    <ActionBtn onClick={(e) => { e.stopPropagation(); deleteMut.mutate(notif.id); }}><X size={12} /></ActionBtn>
                   </NotifCard>
                 );
               }
               if (notif.type === 'trip_chat_mention') {
                 return (
-                  <NotifCard key={notif.id} icon={<AtSign size={16} style={{ color: 'var(--gold-2)' }} />}>
+                  <NotifCard key={notif.id} clickable onClick={handleClick} icon={<AtSign size={16} style={{ color: 'var(--gold-2)' }} />}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--text)' }}>
                         {actor ? <><strong>{actor.display_name}</strong> mentioned you{trip ? <> in <strong>{trip.name}</strong></> : ''}</> : 'You were mentioned'}
@@ -185,7 +299,7 @@ export default function NotificationsPage() {
                       )}
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{relTime(notif.created_at)}</div>
                     </div>
-                    <ActionBtn onClick={() => { db.deleteNotification(notif.id); load(); }}><X size={12} /></ActionBtn>
+                    <ActionBtn onClick={(e) => { e.stopPropagation(); deleteMut.mutate(notif.id); }}><X size={12} /></ActionBtn>
                   </NotifCard>
                 );
               }
@@ -198,9 +312,11 @@ export default function NotificationsPage() {
   );
 }
 
-function NotifCard({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
+function NotifCard({ icon, children, clickable, onClick }: { icon: React.ReactNode; children: React.ReactNode; clickable?: boolean; onClick?: () => void }) {
   return (
-    <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12 }}>
+    <div className={clickable ? 'card tap' : 'card'}
+      onClick={clickable ? onClick : undefined}
+      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, cursor: clickable ? 'pointer' : 'default' }}>
       <div style={{ width: 36, height: 36, borderRadius: 12, background: 'rgba(212,182,115,0.10)', border: '1px solid rgba(234,201,136,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         {icon}
       </div>
@@ -209,7 +325,7 @@ function NotifCard({ icon, children }: { icon: React.ReactNode; children: React.
   );
 }
 
-function ActionBtn({ children, onClick, primary }: { children: React.ReactNode; onClick: () => void; primary?: boolean }) {
+function ActionBtn({ children, onClick, primary }: { children: React.ReactNode; onClick: (e: React.MouseEvent) => void; primary?: boolean }) {
   return (
     <button onClick={onClick} className="tap" style={{
       display: 'inline-flex', alignItems: 'center', gap: 4,
