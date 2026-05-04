@@ -1,9 +1,9 @@
 'use client';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import * as db from './db';
 import { QK } from './queryKeys';
-import type { Catch, Profile, Trip } from './types';
+import type { Catch, Lake, Profile, Trip } from './types';
 
 // ============================================================
 // Read hooks — these power the cached, deduplicated UI fetches
@@ -134,6 +134,156 @@ export function useTripActivity(tripId: string | undefined) {
 }
 export function useLakes() {
   return useQuery({ queryKey: QK.lakes.all, queryFn: db.listLakes });
+}
+
+// ============================================================
+// useLakesEnriched: union of (lakes the user has caught at) and (rows in
+// the lakes table — including 'osm' venues saved-but-unfished). Catches and
+// lakes both live in the existing TanStack cache, so this is a pure
+// client-side compute — no network call. Memoised on its inputs.
+// ============================================================
+export type EnrichedLake = {
+  key: string;                 // canonical key (lake.id || lowercased name)
+  id: string | null;           // lakes.id if a row exists, else null
+  name: string;                // display name
+  source: 'manual' | 'osm' | 'imported' | null;
+  latitude: number | null;
+  longitude: number | null;
+  catchCount: number;          // by current user
+  lastFishedAt: Date | null;
+  pbCatch: Catch | null;       // biggest by total weight at this lake
+  topBait: string | null;      // most-frequent bait at this lake
+  monthlySparkline: number[];  // last 6 months, oldest → newest
+  hasAnnotations: boolean;     // true iff lakeAnnotations cache has any entries
+};
+
+const norm = (s: string) => s.trim().toLowerCase();
+function totalOzLocal(c: Catch) { return c.lbs * 16 + c.oz; }
+
+export function useLakesEnriched() {
+  const catches = useCatches().data || [];
+  const lakes = useLakes().data || [];
+  // We don't list annotations for every lake here; the badge just reflects
+  // whatever the cache currently knows about. This is intentionally
+  // best-effort — it only matters for the "Add notes" badge hint.
+  const qc = useQueryClient();
+
+  return useMemo<EnrichedLake[]>(() => {
+    const byKey: Record<string, EnrichedLake & { _baits: Record<string, number> }> = {};
+
+    // Seed from the lakes table — this picks up OSM venues even when the
+    // user has zero catches at them.
+    lakes.forEach(l => {
+      const key = l.id;
+      byKey[key] = {
+        key,
+        id: l.id,
+        name: l.name,
+        source: (l.source as EnrichedLake['source']) || 'manual',
+        latitude: l.latitude,
+        longitude: l.longitude,
+        catchCount: 0,
+        lastFishedAt: null,
+        pbCatch: null,
+        topBait: null,
+        monthlySparkline: new Array(6).fill(0),
+        hasAnnotations: false,
+        _baits: {},
+      };
+    });
+    // Index lake rows by lowercased name for catch-side joins.
+    const lakeByName: Record<string, Lake> = {};
+    lakes.forEach(l => { lakeByName[norm(l.name)] = l; });
+
+    // Merge catches.
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const sixMonthsAgoStart = new Date(monthStart);
+    sixMonthsAgoStart.setMonth(sixMonthsAgoStart.getMonth() - 5);
+
+    catches.forEach(c => {
+      const lakeName = c.lake?.trim();
+      if (!lakeName) return;
+      const matchedLake = lakeByName[norm(lakeName)];
+      const key = matchedLake ? matchedLake.id : `name:${norm(lakeName)}`;
+      let entry = byKey[key];
+      if (!entry) {
+        entry = byKey[key] = {
+          key,
+          id: matchedLake?.id || null,
+          name: matchedLake?.name || lakeName,
+          source: (matchedLake?.source as EnrichedLake['source']) || null,
+          latitude: matchedLake?.latitude ?? c.latitude ?? null,
+          longitude: matchedLake?.longitude ?? c.longitude ?? null,
+          catchCount: 0,
+          lastFishedAt: null,
+          pbCatch: null,
+          topBait: null,
+          monthlySparkline: new Array(6).fill(0),
+          hasAnnotations: false,
+          _baits: {},
+        };
+      }
+      // Lakes-only rows that didn't have coords inherit them from a catch.
+      if (entry.latitude == null && c.latitude != null) entry.latitude = c.latitude;
+      if (entry.longitude == null && c.longitude != null) entry.longitude = c.longitude;
+
+      if (c.lost) return; // landed-only counts towards stats below
+      entry.catchCount++;
+      const d = new Date(c.date);
+      if (!entry.lastFishedAt || d > entry.lastFishedAt) entry.lastFishedAt = d;
+      if (!entry.pbCatch || totalOzLocal(c) > totalOzLocal(entry.pbCatch)) entry.pbCatch = c;
+      if (c.bait) entry._baits[c.bait] = (entry._baits[c.bait] || 0) + 1;
+
+      // Sparkline bucket
+      if (d >= sixMonthsAgoStart) {
+        const monthsDiff = (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth());
+        const idx = 5 - monthsDiff;
+        if (idx >= 0 && idx <= 5) entry.monthlySparkline[idx]++;
+      }
+    });
+
+    // Resolve top bait + annotation flag.
+    const out: EnrichedLake[] = Object.values(byKey).map(e => {
+      const baits = Object.entries(e._baits);
+      baits.sort((a, b) => b[1] - a[1]);
+      const annsCache = e.id ? qc.getQueryData<unknown[]>(QK.lakes.annotations(e.id)) : null;
+      return {
+        key: e.key,
+        id: e.id,
+        name: e.name,
+        source: e.source,
+        latitude: e.latitude,
+        longitude: e.longitude,
+        catchCount: e.catchCount,
+        lastFishedAt: e.lastFishedAt,
+        pbCatch: e.pbCatch,
+        topBait: baits.length > 0 ? baits[0][0] : null,
+        monthlySparkline: e.monthlySparkline,
+        hasAnnotations: Array.isArray(annsCache) && annsCache.length > 0,
+      };
+    });
+    return out;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catches, lakes]);
+}
+
+// One-shot GPS fetch with cached result. Used by the "Closest to me" sort
+// in LakesView. Resolves to null if the user denies / the device has no GPS.
+export function useUserLocationOnce(): { coords: { lat: number; lng: number } | null; ready: boolean } {
+  const [state, setState] = useState<{ coords: { lat: number; lng: number } | null; ready: boolean }>({ coords: null, ready: false });
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setState({ coords: null, ready: true });
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      p => setState({ coords: { lat: p.coords.latitude, lng: p.coords.longitude }, ready: true }),
+      () => setState({ coords: null, ready: true }),
+      { enableHighAccuracy: false, timeout: 4000, maximumAge: 600_000 },
+    );
+  }, []);
+  return state;
 }
 export function useGearItems() {
   return useQuery({ queryKey: QK.gear, queryFn: () => db.listMyGear() });

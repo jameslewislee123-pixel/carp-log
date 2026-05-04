@@ -12,6 +12,7 @@ import {
 import { Drawer } from 'vaul';
 import nextDynamic from 'next/dynamic';
 const DiscoverVenues = nextDynamic(() => import('./DiscoverVenues'), { ssr: false });
+const LakesView = nextDynamic(() => import('./LakesView'), { ssr: false });
 import InvitePicker from './InvitePicker';
 import TripChat from './TripChat';
 import TripActivityFeed from './TripActivity';
@@ -103,7 +104,12 @@ export default function CarpApp() {
   const commentCounts = commentCountsQuery.data || {};
 
   // ───── ephemeral UI state (kept as useState — these are not server data) ─────
-  const [view, setView] = useState<'feed' | 'trips' | 'stats' | 'gallery'>('feed');
+  const [view, setView] = useState<'feed' | 'trips' | 'stats' | 'lakes'>('feed');
+  // Migration: previous versions stored 'gallery' (Photos tab) — silently
+  // redirect anyone arriving with that state to the new Lakes tab.
+  useEffect(() => {
+    if ((view as string) === 'gallery') setView('lakes');
+  }, [view]);
   const [showAdd, setShowAdd] = useState(false);
   const [detailCatch, setDetailCatch] = useState<CatchT | null>(null);
   const [detailTrip, setDetailTrip] = useState<Trip | null>(null);
@@ -289,10 +295,10 @@ export default function CarpApp() {
           />
         )}
         {view === 'stats' && (
-          <Stats catches={catches} profilesById={profilesById} me={me} onOpen={setDetailCatch} onOpenLake={(name) => setDetailLakeName(name)} />
+          <Stats catches={catches} profilesById={profilesById} me={me} onOpen={setDetailCatch} />
         )}
-        {view === 'gallery' && (
-          <Gallery catches={catches.filter(c => c.angler_id === me.id)} profilesById={profilesById} onOpen={setDetailCatch} />
+        {view === 'lakes' && (
+          <LakesView onOpenLake={(name) => setDetailLakeName(name)} />
         )}
       </div>
 
@@ -368,7 +374,7 @@ export default function CarpApp() {
 // ============ HEADER ============
 function Header({ me, unread, onSettings, view }: { me: Profile | null; unread: number; onSettings: () => void; view: string }) {
   const qc = useQueryClient();
-  const titles: Record<string, string> = { feed: 'The Log', trips: 'Trips', stats: 'The Board', gallery: 'Gallery' };
+  const titles: Record<string, string> = { feed: 'The Log', trips: 'Trips', stats: 'The Board', lakes: 'Lakes' };
   return (
     <div style={{ paddingTop: 'max(24px, env(safe-area-inset-top))', paddingLeft: 20, paddingRight: 20, paddingBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
       <div style={{ minWidth: 0, flex: 1 }}>
@@ -1745,18 +1751,17 @@ function AddTripModal({ existing, me, onClose, onSave }: {
 }
 
 // ============ STATS ============
-function Stats({ catches, profilesById, me, onOpen, onOpenLake }: {
+function Stats({ catches, profilesById, me, onOpen }: {
   catches: CatchT[]; profilesById: Record<string, Profile>; me: Profile;
-  onOpen: (c: CatchT) => void; onOpenLake: (lakeName: string) => void;
+  onOpen: (c: CatchT) => void;
 }) {
-  const [tab, setTab] = useState<'personal' | 'crew' | 'time' | 'bait' | 'lakes'>('personal');
+  const [tab, setTab] = useState<'personal' | 'crew' | 'time' | 'bait'>('personal');
   if (catches.length === 0) return <div style={{ padding: '40px 20px' }}><EmptyState /></div>;
   const tabs = [
     { id: 'personal' as const, label: 'Personal', icon: Sparkles },
     { id: 'crew' as const,     label: 'Crew',     icon: Trophy },
     { id: 'time' as const,     label: 'Time',     icon: Clock },
     { id: 'bait' as const,     label: 'Bait',     icon: BarChart3 },
-    { id: 'lakes' as const,    label: 'Lakes',    icon: MapPinned },
   ];
   return (
     <div style={{ padding: '8px 20px' }}>
@@ -1782,7 +1787,6 @@ function Stats({ catches, profilesById, me, onOpen, onOpenLake }: {
       {tab === 'crew' && <StatsCrew catches={catches} profilesById={profilesById} me={me} onOpen={onOpen} />}
       {tab === 'time' && <StatsTime catches={catches} />}
       {tab === 'bait' && <StatsBait catches={catches} />}
-      {tab === 'lakes' && <StatsLakes catches={catches} profilesById={profilesById} onOpen={onOpen} onOpenLake={onOpenLake} />}
     </div>
   );
 }
@@ -2126,127 +2130,6 @@ function StatsBait({ catches }: { catches: CatchT[] }) {
   );
 }
 
-function StatsLakes({ catches, profilesById, onOpen, onOpenLake }: { catches: CatchT[]; profilesById: Record<string, Profile>; onOpen: (c: CatchT) => void; onOpenLake: (lakeName: string) => void }) {
-  const qc = useQueryClient();
-  const lakeRowsQuery = useLakes();
-  const lakeRows = lakeRowsQuery.data || [];
-  // Quick lookup: lake name (lowercased, trimmed) → source from the lakes table.
-  const sourceByName = useMemo(() => {
-    const m: Record<string, string> = {};
-    lakeRows.forEach(l => { m[l.name.trim().toLowerCase()] = l.source || 'manual'; });
-    return m;
-  }, [lakeRows]);
-  const [showDiscover, setShowDiscover] = useState(false);
-  const landed = useMemo(() => catches.filter(c => !c.lost && c.lake), [catches]);
-  const lakes = useMemo(() => {
-    const grouped: Record<string, { name: string; catches: CatchT[]; totalOz: number; biggest: CatchT | null }> = {};
-    landed.forEach(c => {
-      const key = c.lake!.trim();
-      if (!grouped[key]) grouped[key] = { name: key, catches: [], totalOz: 0, biggest: null };
-      grouped[key].catches.push(c); grouped[key].totalOz += totalOz(c.lbs, c.oz);
-      if (!grouped[key].biggest || totalOz(c.lbs, c.oz) > totalOz(grouped[key].biggest!.lbs, grouped[key].biggest!.oz)) grouped[key].biggest = c;
-    });
-    return Object.values(grouped).sort((a, b) => (b.biggest ? totalOz(b.biggest.lbs, b.biggest.oz) : 0) - (a.biggest ? totalOz(a.biggest.lbs, a.biggest.oz) : 0));
-  }, [landed]);
-  const rankColors = ['var(--gold)', '#B5B6A6', '#A06D3D'];
-
-  const discoverButton = (
-    <button onClick={() => setShowDiscover(true)} className="card tap" style={{
-      padding: 14, marginBottom: 14,
-      display: 'flex', alignItems: 'center', gap: 12,
-      background: 'rgba(212,182,115,0.08)',
-      border: '1px solid rgba(234,201,136,0.3)',
-      cursor: 'pointer', width: '100%', textAlign: 'left', fontFamily: 'inherit',
-      color: 'var(--text)',
-    }}>
-      <div style={{
-        width: 40, height: 40, borderRadius: 12, flexShrink: 0,
-        background: 'rgba(212,182,115,0.18)', border: '1px solid rgba(234,201,136,0.4)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <MapPin size={18} style={{ color: 'var(--gold-2)' }} />
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>Find venues nearby</div>
-        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>Discover fishing spots within 25km via OpenStreetMap</div>
-      </div>
-      <ChevronRight size={16} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
-    </button>
-  );
-
-  if (lakes.length === 0) return (
-    <>
-      {discoverButton}
-      <EmptyState icon={<MapPinned size={48} />} title="No lake data yet" subtitle="Add lake names to your catches to track records by venue" />
-      {showDiscover && <DiscoverVenues onClose={() => setShowDiscover(false)} />}
-    </>
-  );
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {discoverButton}
-      {showDiscover && <DiscoverVenues onClose={() => setShowDiscover(false)} />}
-      {lakes.map(lake => {
-        const top3 = [...lake.catches].sort((a, b) => totalOz(b.lbs, b.oz) - totalOz(a.lbs, a.oz)).slice(0, 3);
-        const isOsm = sourceByName[lake.name.trim().toLowerCase()] === 'osm';
-        return (
-          <div key={lake.name} className="card" style={{ padding: 16 }}>
-            <button onClick={() => onOpenLake(lake.name)}
-              onTouchStart={async () => { const l = await db.getLakeByName(lake.name); if (l) prefetchLake(qc, l.id); }}
-              onMouseEnter={async () => { const l = await db.getLakeByName(lake.name); if (l) prefetchLake(qc, l.id); }}
-              className="tap" style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 8,
-              background: 'transparent', border: 'none', padding: 0, width: '100%',
-              color: 'var(--text)', fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-                <MapPinned size={18} style={{ color: 'var(--gold)', flexShrink: 0 }} />
-                <h3 className="display-font" style={{ fontSize: 18, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>{lake.name}</h3>
-                {isOsm && (
-                  <span className="pill" title="Imported from OpenStreetMap" style={{
-                    background: 'rgba(141,191,157,0.15)', color: 'var(--sage)',
-                    border: '1px solid rgba(141,191,157,0.4)',
-                    fontSize: 9, padding: '2px 6px', flexShrink: 0,
-                  }}>OSM</span>
-                )}
-              </div>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                <span className="pill" style={{ background: 'rgba(212,182,115,0.15)', color: 'var(--gold-2)', border: '1px solid rgba(234,201,136,0.4)' }}>
-                  📍 Map
-                </span>
-                <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>{lake.catches.length} fish</div>
-                <ChevronRight size={14} style={{ color: 'var(--text-3)' }} />
-              </div>
-            </button>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {top3.map((c, i) => {
-                const a = profilesById[c.angler_id];
-                const photoUrl = c.has_photo && a ? db.photoPublicUrl(a.id, c.id) : null;
-                return (
-                  <div key={c.id} className="tap" onClick={() => onOpen(c)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 8, borderRadius: 12, background: 'rgba(10,24,22,0.5)', cursor: 'pointer' }}>
-                    <div style={{
-                      width: 24, height: 24, borderRadius: 8, flexShrink: 0,
-                      background: `${rankColors[i]}22`, color: rankColors[i],
-                      border: `1px solid ${rankColors[i]}66`,
-                      fontFamily: 'Fraunces, serif', fontWeight: 600,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12,
-                    }}>{i + 1}</div>
-                    {photoUrl && <img src={photoUrl} alt="" style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover' }} />}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="num-display" style={{ fontSize: 16, color: 'var(--text)', lineHeight: 1 }}>{formatWeight(c.lbs, c.oz)}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{a?.display_name} · {new Date(c.date).toLocaleDateString([], { month: 'short', year: 'numeric' })}</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function HeroCatch({ catchData, angler, onClick }: { catchData: CatchT; angler: Profile | null; onClick: () => void }) {
   const photoUrl = catchData.has_photo && angler ? db.photoPublicUrl(angler.id, catchData.id) : null;
   return (
@@ -2318,39 +2201,6 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
     <div style={{ background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', borderRadius: 14, padding: 14, textAlign: 'center', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' }}>
       <div className="num-display" style={{ fontSize: 22, color: 'var(--gold-2)' }}>{value}</div>
       <div style={{ fontSize: 10, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600, marginTop: 2 }}>{label}</div>
-    </div>
-  );
-}
-
-// ============ GALLERY ============
-function Gallery({ catches, profilesById, onOpen }: { catches: CatchT[]; profilesById: Record<string, Profile>; onOpen: (c: CatchT) => void }) {
-  const withPhotos = useMemo(() => catches.filter(c => c.has_photo && !c.lost).sort((a, b) => +new Date(b.date) - +new Date(a.date)), [catches]);
-  if (withPhotos.length === 0) return (
-    <div style={{ padding: '60px 20px', textAlign: 'center' }}>
-      <Images size={48} style={{ color: 'var(--text-3)', opacity: 0.4, margin: '0 auto 16px' }} />
-      <p style={{ color: 'var(--text-3)' }}>No photos yet</p>
-    </div>
-  );
-  return (
-    <div style={{ padding: '8px 8px 20px' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
-        {withPhotos.map(c => {
-          const a = profilesById[c.angler_id];
-          const photoUrl = a ? db.photoPublicUrl(a.id, c.id) : null;
-          return (
-            <div key={c.id} className="tap fade-in" onClick={() => onOpen(c)} style={{ aspectRatio: '1', borderRadius: 14, overflow: 'hidden', position: 'relative', cursor: 'pointer', background: 'rgba(10,24,22,0.5)' }}>
-              {photoUrl && <img src={photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
-              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 60%, rgba(5,14,13,0.9))' }} />
-              <div style={{ position: 'absolute', bottom: 8, left: 10, right: 10 }}>
-                <div className="num-display" style={{ fontSize: 18, color: 'var(--text)', textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}>
-                  {c.lbs}<span style={{ fontSize: 12 }}>lb</span>
-                  {c.oz > 0 && <> {c.oz}<span style={{ fontSize: 11 }}>oz</span></>}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -3514,7 +3364,7 @@ function FAB({ onClick }: { onClick: () => void }) {
   );
 }
 
-function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 'trips' | 'stats' | 'gallery') => void }) {
+function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 'trips' | 'stats' | 'lakes') => void }) {
   // Shared dim state with FAB so they fade together while user is scrolling.
   const dimmed = useScrollDim();
   const modalOpen = useAnyModalOpen();
@@ -3522,7 +3372,7 @@ function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 't
     { id: 'feed' as const,    label: 'Log',    icon: Fish },
     { id: 'trips' as const,   label: 'Trips',  icon: Tent },
     { id: 'stats' as const,   label: 'Stats',  icon: Trophy },
-    { id: 'gallery' as const, label: 'Photos', icon: Images },
+    { id: 'lakes' as const,   label: 'Lakes',  icon: MapPinned },
   ];
   const opacity = modalOpen ? 0 : (dimmed ? 0.5 : 1);
   return (
