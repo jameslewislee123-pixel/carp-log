@@ -4339,86 +4339,120 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
             boxShadow: '0 -10px 40px rgba(0,0,0,0.45)',
             display: 'flex', flexDirection: 'column', minHeight: 0,
           }}>
-            {/* DRAG ZONE — handle pill + header row. Drawer.Handle is the
-                only element vaul accepts as a drag-source under handleOnly,
-                and it renders as a plain div with vaul-data attributes —
-                so we can style it to be the wrapper of the entire top
-                region (pill + header row) and dragging from anywhere in
-                this zone dismisses the sheet. The close button (and any
-                headerAction) calls stopPropagation on pointerdown so taps
-                still register without arming the drag. */}
-            <Drawer.Handle style={{
-              flexShrink: 0,
-              userSelect: 'none', WebkitUserSelect: 'none',
-              cursor: 'grab',
-              // Override vaul's default tiny-pill look (the wrapper paints
-              // its own visual pill below). vaul auto-injects CSS for
-              // [data-vaul-handle] including height:5px and width:32px —
-              // both must be explicitly overridden inline or the wrapper
-              // collapses to 5px and clips everything inside.
-              width: 'auto', height: 'auto',
-              background: 'transparent', margin: 0,
-              display: 'block',
-              // Same vertical breathing room regardless of hideTitle so
-              // the pill always sits comfortably above the header row,
-              // whether the row contains the close-X + title or just the
-              // Back button.
-              paddingTop: 8,
-              paddingBottom: 16,
-              borderTopLeftRadius: 28, borderTopRightRadius: 28, overflow: 'hidden',
-            }}>
-                {/* Pill row — natural height (no fixed height), 12px gap
-                    to the title row below. The previous explicit height
-                    + padding under box-sizing:border-box squashed the
-                    pill to nothing — leave it auto. */}
-                <div style={{
-                  display: 'flex', justifyContent: 'center',
-                  paddingBottom: 12,
-                }}>
-                  <div style={{
-                    width: 36, height: 5, borderRadius: 999,
-                    background: 'rgba(239, 233, 217, 0.3)',
-                  }} />
-                </div>
-                {/* Title + close row. min-height matches the close button so
-                    the title is vertically centred even when titles wrap. */}
-                <div style={{
+            {/* Drag handle area — visual pill + header row.
+                Outer wrapper is a plain <div> (not Drawer.Handle) so
+                vaul's auto-injected [data-vaul-handle] CSS doesn't fight
+                our layout. Drawer.Handle is used ONLY for the small
+                visual pill — vaul's defaults size that correctly. The
+                header row is a sibling, not a child of the Handle, so
+                normal flex layout applies without clipping or height
+                interference. Drag-to-dismiss is driven by the pill (vaul's
+                handleOnly is set on Root) — native iOS sheet pattern. */}
+            <div
+              style={{
+                flexShrink: 0,
+                paddingTop: 8,
+                paddingBottom: 16,
+                borderTopLeftRadius: 28,
+                borderTopRightRadius: 28,
+                background: 'transparent',
+              }}
+            >
+              <Drawer.Handle
+                style={{
+                  display: 'block',
+                  width: 36,
+                  height: 5,
+                  margin: '0 auto 12px',
+                  background: 'rgba(239, 233, 217, 0.35)',
+                  borderRadius: 999,
+                  cursor: 'grab',
+                }}
+              />
+
+              <div
+                style={{
                   padding: '0 20px',
                   minHeight: 44,
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
-                }}>
-                  {!hideTitle && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 12,
+                }}
+              >
+                {hideTitle ? (
+                  <>
+                    <button
+                      onClick={onClose}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onTouchStart={(e) => e.stopPropagation()}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: 'var(--text-2)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '4px 0',
+                        fontFamily: 'inherit',
+                        fontSize: 14,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <ArrowLeft size={18} /> Back
+                    </button>
+                    <span />
+                  </>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
                       <Drawer.Title asChild>
-                        <h2 className="display-font" style={{ fontSize: 22, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h2>
+                        <h2
+                          className="display-font"
+                          style={{
+                            fontSize: 22,
+                            margin: 0,
+                            fontWeight: 500,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {title}
+                        </h2>
                       </Drawer.Title>
-                      {/* headerAction (e.g. weather modal magnifier) gets its
-                          own pointerdown stopPropagation so the search button
-                          taps still work without arming the drag. */}
                       {headerAction && (
                         <span onPointerDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}>
                           {headerAction}
                         </span>
                       )}
                     </div>
-                  )}
-                  {hideTitle ? (
-                    <button onClick={onClose}
+                    <button
+                      onClick={onClose}
+                      aria-label="Close"
                       onPointerDown={(e) => e.stopPropagation()}
                       onTouchStart={(e) => e.stopPropagation()}
-                      style={{ background: 'transparent', border: 'none', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6, padding: 4, fontFamily: 'inherit', fontSize: 14, cursor: 'pointer' }}>
-                      <ArrowLeft size={18} /> Back
-                    </button>
-                  ) : (
-                    <button onClick={onClose} aria-label="Close"
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onTouchStart={(e) => e.stopPropagation()}
-                      style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 12, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-2)', flexShrink: 0, padding: 0 }}>
+                      style={{
+                        background: 'rgba(20, 42, 38, 0.7)',
+                        border: '1px solid rgba(234, 201, 136, 0.18)',
+                        borderRadius: 12,
+                        width: 36,
+                        height: 36,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        color: 'var(--text-2)',
+                        flexShrink: 0,
+                        padding: 0,
+                      }}
+                    >
                       <X size={18} />
                     </button>
-                  )}
-                </div>
-            </Drawer.Handle>
+                  </>
+                )}
+              </div>
+            </div>
 
             {/* SCROLLABLE BODY — vaul does NOT intercept gestures here when handleOnly is set. */}
             <div style={{
