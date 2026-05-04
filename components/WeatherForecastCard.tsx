@@ -299,10 +299,7 @@ export function WeatherLocationSearch({ onClose, onPick, onReset, canReset }: {
         backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
         border: '1px solid rgba(234,201,136,0.18)',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--gold-2)', letterSpacing: '0.08em', textTransform: 'uppercase', flex: 1, marginBottom: 0, lineHeight: 1 }}>Pick a location</div>
-          <button onClick={onClose} aria-label="Close" style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 10, width: 32, height: 32, color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}><X size={14} /></button>
-        </div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--gold-2)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 12, lineHeight: 1 }}>Pick a location</div>
         <div style={{ position: 'relative', marginBottom: 10 }}>
           <Search size={14} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-3)' }} />
           <input className="input" autoFocus placeholder="e.g. Burgundy, Stoneacres, EC1A…"

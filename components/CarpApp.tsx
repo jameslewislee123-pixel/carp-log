@@ -2422,7 +2422,7 @@ function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existing, phot
                 </button>
               </>
             ) : (
-              <div style={{ textAlign: 'center', color: 'var(--text-3)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: 'var(--text-3)' }}>
                 <Camera size={32} style={{ marginBottom: 8 }} />
                 <div style={{ fontSize: 14, fontWeight: 600 }}>Add a photo</div>
                 <div style={{ fontSize: 12, marginTop: 2 }}>Tap to capture or upload</div>
