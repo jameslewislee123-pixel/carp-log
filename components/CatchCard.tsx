@@ -35,7 +35,7 @@ function PBPeel() {
 
 export default function CatchCard({
   catchData, angler, trip, onClick, commentCount: commentCountProp, pb,
-  likeCount, iLiked, canLike, onToggleLike,
+  likeCount, iLiked, onToggleLike,
 }: {
   catchData: Catch;
   angler: Profile | null;
@@ -45,7 +45,6 @@ export default function CatchCard({
   pb?: boolean;
   likeCount?: number;
   iLiked?: boolean;
-  canLike?: boolean;
   onToggleLike?: () => void;
 }) {
   const species = SPECIES.find(s => s.id === catchData.species);
@@ -142,46 +141,39 @@ export default function CatchCard({
             </Link>
           )}
           <span style={{ color: 'var(--text-3)', fontSize: 13 }}>{formatDate(catchData.date)}</span>
-          {commentCount > 0 && <span style={{ marginLeft: 'auto', color: 'var(--text-3)', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 3 }}><MessageCircle size={12} />{commentCount}</span>}
+          {/* Right-aligned actions: comment count then like button. Both
+              live in this row so the card stays compact. The like button
+              is shown for every non-lost catch, including the user's own —
+              you can like your own fish. */}
+          <div style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {commentCount > 0 && (
+              <span style={{ color: 'var(--text-3)', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                <MessageCircle size={12} />{commentCount}
+              </span>
+            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleLike?.(); }}
+              aria-label={iLiked ? 'Unlike' : 'Like'}
+              aria-pressed={!!iLiked}
+              className="tap"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                padding: '5px 10px', borderRadius: 999,
+                background: iLiked ? 'rgba(212,182,115,0.18)' : 'transparent',
+                border: `1px solid ${iLiked ? 'var(--gold)' : 'rgba(141,191,157,0.4)'}`,
+                color: iLiked ? 'var(--gold-2)' : 'var(--sage)',
+                cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+              }}>
+              <ThumbsUp size={13} fill={iLiked ? 'currentColor' : 'none'} />
+              {(likeCount ?? 0) > 0 && <span>{likeCount}</span>}
+            </button>
+          </div>
         </div>
         {(catchData.lake || catchData.swim || catchData.bait) && (
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8, fontSize: 12, color: 'var(--text-3)' }}>
             {catchData.lake && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><MapPin size={12} />{catchData.lake}{catchData.swim ? ` · Swim ${catchData.swim}` : ''}</span>}
             {!catchData.lake && catchData.swim && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><MapPin size={12} />Swim {catchData.swim}</span>}
             {catchData.bait && <span>{'🎣'} {catchData.bait}</span>}
-          </div>
-        )}
-
-        {/* Like row. Hidden on lost catches and on the user's own catches
-            (where canLike is false but we still show the count if any). */}
-        {(canLike || (likeCount ?? 0) > 0) && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10 }}>
-            {canLike ? (
-              <button
-                onClick={(e) => { e.stopPropagation(); onToggleLike?.(); }}
-                aria-label={iLiked ? 'Unlike' : 'Like'}
-                aria-pressed={!!iLiked}
-                className="tap"
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  padding: '6px 12px', borderRadius: 999,
-                  background: iLiked ? 'rgba(212,182,115,0.18)' : 'transparent',
-                  border: `1px solid ${iLiked ? 'var(--gold)' : 'rgba(141,191,157,0.4)'}`,
-                  color: iLiked ? 'var(--gold-2)' : 'var(--sage)',
-                  cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
-                }}>
-                <ThumbsUp size={13} fill={iLiked ? 'currentColor' : 'none'} />
-                {(likeCount ?? 0) > 0 && <span>{likeCount}</span>}
-              </button>
-            ) : (
-              <span style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                padding: '6px 12px', borderRadius: 999,
-                color: 'var(--text-3)', fontSize: 12, fontWeight: 600,
-              }}>
-                <ThumbsUp size={13} /> {likeCount}
-              </span>
-            )}
           </div>
         )}
       </div>

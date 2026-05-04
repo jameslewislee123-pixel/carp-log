@@ -956,21 +956,17 @@ function FeedListWithLikes({ filtered, me, profilesById, trips, commentCounts, p
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {filtered.map(c => {
-        const isMine = c.angler_id === me.id;
-        return (
-          <CatchCard key={c.id} catchData={c}
-            angler={profilesById[c.angler_id] || null}
-            trip={c.trip_id ? trips.find(t => t.id === c.trip_id) || null : null}
-            commentCount={commentCounts[c.id] || 0}
-            pb={pbByAngler[c.angler_id] === c.id}
-            likeCount={counts[c.id] || 0}
-            iLiked={likedSet.has(c.id)}
-            canLike={!isMine && !c.lost}
-            onToggleLike={() => toggleLike(c.id)}
-            onClick={() => onOpen(c)} />
-        );
-      })}
+      {filtered.map(c => (
+        <CatchCard key={c.id} catchData={c}
+          angler={profilesById[c.angler_id] || null}
+          trip={c.trip_id ? trips.find(t => t.id === c.trip_id) || null : null}
+          commentCount={commentCounts[c.id] || 0}
+          pb={pbByAngler[c.angler_id] === c.id}
+          likeCount={counts[c.id] || 0}
+          iLiked={likedSet.has(c.id)}
+          onToggleLike={() => toggleLike(c.id)}
+          onClick={() => onOpen(c)} />
+      ))}
     </div>
   );
 }
@@ -4355,22 +4351,35 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
               flexShrink: 0,
               userSelect: 'none', WebkitUserSelect: 'none',
               cursor: 'grab',
-              // Override vaul's default tiny-pill look — we paint the
-              // visual pill ourselves below.
-              width: 'auto', height: 'auto', background: 'transparent', margin: 0,
+              // Override vaul's default tiny-pill look (the wrapper paints
+              // its own visual pill below).
+              width: 'auto', background: 'transparent', margin: 0,
               display: 'block',
+              // Vertical breathing room is what last sprint accidentally
+              // collapsed: 8px above the pill, padding-bottom on the
+              // header gives a gap before the scrolling body starts.
+              paddingTop: 8,
+              paddingBottom: hideTitle ? 8 : 16,
+              // Clip rounded sheet corners so the handle area can't bleed
+              // past them when the sheet is mid-drag.
+              borderTopLeftRadius: 28, borderTopRightRadius: 28, overflow: 'hidden',
             }}>
+                {/* Pill row — fixed height with bottom gap to the title. */}
                 <div style={{
-                  height: 28,
+                  height: 16,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  paddingBottom: 12,
                 }}>
                   <div style={{
                     width: 44, height: 5, borderRadius: 999,
                     background: 'rgba(255,255,255,0.22)',
                   }} />
                 </div>
+                {/* Title + close row. min-height matches the close button so
+                    the title is vertically centred even when titles wrap. */}
                 <div style={{
-                  padding: hideTitle ? '0 20px 8px' : '0 20px 12px',
+                  padding: '0 20px',
+                  minHeight: 44,
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
                 }}>
                   {!hideTitle && (
@@ -4412,7 +4421,10 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
               overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain',
               touchAction: 'pan-y',
               WebkitOverflowScrolling: 'touch' as any,
-              padding: '0 20px max(40px, calc(env(safe-area-inset-bottom) + 24px))',
+              // Small paddingTop separates the first row of content from
+              // the header; bottom padding accounts for the iOS home
+              // indicator + 24px breathing margin.
+              padding: '4px 20px max(40px, calc(env(safe-area-inset-bottom) + 24px))',
             }}>
               {children}
             </div>
