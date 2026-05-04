@@ -8,18 +8,34 @@ import type { Catch, Lake, Profile, Trip } from './types';
 // ============================================================
 // Read hooks — these power the cached, deduplicated UI fetches
 // ============================================================
+// Loading-overhaul defaults: every list-style query uses placeholderData so
+// the previous snapshot stays on screen while a background refetch runs.
+// staleTime ≥ 60s keeps tab-switch / cross-page navigation from triggering
+// any network request at all when data is fresh.
 export function useCatches() {
-  return useQuery({ queryKey: QK.catches.all, queryFn: db.listCatches });
+  return useQuery({
+    queryKey: QK.catches.all,
+    queryFn: db.listCatches,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  });
 }
 export function useCatchesForAngler(anglerId: string | undefined) {
   return useQuery({
     queryKey: anglerId ? QK.catches.byAngler(anglerId) : ['catches', 'angler', 'none'],
     queryFn: () => anglerId ? db.listCatchesForAngler(anglerId) : Promise.resolve([] as Catch[]),
     enabled: !!anglerId,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
   });
 }
 export function useTrips() {
-  return useQuery({ queryKey: QK.trips.all, queryFn: db.listTrips });
+  return useQuery({
+    queryKey: QK.trips.all,
+    queryFn: db.listTrips,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  });
 }
 export function useProfileByUsername(username: string | undefined) {
   return useQuery({
@@ -27,10 +43,16 @@ export function useProfileByUsername(username: string | undefined) {
     queryFn: () => username ? db.getProfileByUsername(username) : Promise.resolve(null),
     enabled: !!username,
     staleTime: 5 * 60_000, // profile stuff changes rarely
+    placeholderData: (prev) => prev,
   });
 }
 export function useFriendships() {
-  return useQuery({ queryKey: QK.friendships, queryFn: db.listFriendships });
+  return useQuery({
+    queryKey: QK.friendships,
+    queryFn: db.listFriendships,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  });
 }
 export function useNotifications() {
   return useQuery({
@@ -63,6 +85,8 @@ export function useCatchComments(catchId: string | undefined) {
     queryKey: catchId ? QK.comments.byCatch(catchId) : ['comments', 'none'],
     queryFn: () => catchId ? db.listCatchComments(catchId) : Promise.resolve([]),
     enabled: !!catchId,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
   });
 }
 export function useCommentCounts(catchIds: string[]) {
@@ -100,15 +124,20 @@ export function useProfilesByIds(ids: string[]) {
       return out;
     },
     staleTime: 5 * 60_000,
+    placeholderData: (prev) => prev,
   });
 }
 
-// Trip-bound queries.
+// Trip-bound queries. Each tab inside TripDetail (Overview / Catches / Map /
+// Chat / Activity) reads through these hooks, so caching once + showing
+// previous-data while refetching makes tab switches instant.
 export function useTrip(id: string | undefined) {
   return useQuery({
     queryKey: id ? QK.trips.detail(id) : ['trips', 'detail', 'none'],
     queryFn: () => id ? db.getTrip(id) : Promise.resolve(null),
     enabled: !!id,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
   });
 }
 export function useTripMembers(tripId: string | undefined) {
@@ -116,6 +145,8 @@ export function useTripMembers(tripId: string | undefined) {
     queryKey: tripId ? QK.trips.members(tripId) : ['trips', 'members', 'none'],
     queryFn: () => tripId ? db.listTripMembers(tripId) : Promise.resolve([]),
     enabled: !!tripId,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
   });
 }
 export function useTripMessages(tripId: string | undefined) {
@@ -123,6 +154,8 @@ export function useTripMessages(tripId: string | undefined) {
     queryKey: tripId ? QK.trips.messages(tripId) : ['trips', 'messages', 'none'],
     queryFn: () => tripId ? db.listTripMessages(tripId) : Promise.resolve([]),
     enabled: !!tripId,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
   });
 }
 export function useTripActivity(tripId: string | undefined) {
@@ -130,10 +163,17 @@ export function useTripActivity(tripId: string | undefined) {
     queryKey: tripId ? QK.trips.activity(tripId) : ['trips', 'activity', 'none'],
     queryFn: () => tripId ? db.listTripActivity(tripId) : Promise.resolve([]),
     enabled: !!tripId,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
   });
 }
 export function useLakes() {
-  return useQuery({ queryKey: QK.lakes.all, queryFn: db.listLakes });
+  return useQuery({
+    queryKey: QK.lakes.all,
+    queryFn: db.listLakes,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  });
 }
 
 // ============================================================

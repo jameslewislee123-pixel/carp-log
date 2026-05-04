@@ -36,7 +36,7 @@ function isIOS() {
 }
 
 // Race a promise against a timeout. Throws on timeout so the caller's catch
-// fires and the spinner stops. This is the fix for navigator.serviceWorker.ready
+// fires and the spinner stops. This guards against navigator.serviceWorker.ready
 // hanging silently when the SW failed to register.
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -44,27 +44,6 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
   ]);
 }
-
-type Diag = {
-  hasNotification: boolean;
-  permission: string;
-  hasServiceWorker: boolean;
-  swRegistered: boolean;
-  swRegCount: number;
-  swScope: string | null;
-  swRegError: string | null;
-  swState: string;
-  controllerPresent: 'yes' | 'no';
-  controllerScriptURL: string;
-  activeScriptURL: string;
-  activeState: string;
-  vapidLen: number;
-  standalone: boolean;
-  ua: string;
-  swJsStatus: string;
-  pushSwJsStatus: string;
-  hasExistingSubscription: 'true' | 'false' | 'unknown';
-};
 
 export default function PushSettings() {
   const [standalone, setStandalone] = useState(false);
@@ -74,74 +53,6 @@ export default function PushSettings() {
   const [prefs, setPrefs] = useState<db.NotifPrefRow | null>(null);
   const [busy, setBusy] = useState<'master' | string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [diag, setDiag] = useState<Diag | null>(null);
-  const [showDiag, setShowDiag] = useState(false);
-
-  async function refreshDiag() {
-    const d: Diag = {
-      hasNotification: typeof window !== 'undefined' && 'Notification' in window,
-      permission: typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
-      hasServiceWorker: typeof navigator !== 'undefined' && 'serviceWorker' in navigator,
-      swRegistered: false,
-      swRegCount: 0,
-      swScope: null,
-      swRegError: typeof window !== 'undefined' ? (window as any).__swRegError ?? null : null,
-      swState: 'none',
-      controllerPresent: 'no',
-      controllerScriptURL: '—',
-      activeScriptURL: '—',
-      activeState: '—',
-      vapidLen: VAPID_PUBLIC.length,
-      standalone: detectStandalone(),
-      ua: typeof navigator !== 'undefined' ? navigator.userAgent : '',
-      swJsStatus: 'pending',
-      pushSwJsStatus: 'pending',
-      hasExistingSubscription: 'unknown',
-    };
-    if (d.hasServiceWorker) {
-      try {
-        try {
-          const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
-          d.swRegError = null;
-          d.swRegistered = true;
-          d.swScope = reg.scope;
-        } catch (e: any) {
-          d.swRegError = e?.message || e?.name || String(e);
-        }
-        const regs = await navigator.serviceWorker.getRegistrations();
-        d.swRegCount = regs.length;
-        if (regs.length > 0) {
-          d.swRegistered = true;
-          const reg = await navigator.serviceWorker.getRegistration() || regs.find(r => r.active) || regs[0];
-          d.swScope = reg?.scope || d.swScope || null;
-          d.swState = reg?.installing ? 'installing'
-                    : reg?.waiting ? 'waiting'
-                    : reg?.active ? 'active'
-                    : 'none';
-          d.activeScriptURL = reg?.active?.scriptURL || '—';
-          d.activeState = reg?.active?.state || '—';
-          if (reg) {
-            try {
-              const sub = await reg.pushManager.getSubscription();
-              d.hasExistingSubscription = sub ? 'true' : 'false';
-            } catch { d.hasExistingSubscription = 'unknown'; }
-          }
-        }
-        d.controllerPresent = navigator.serviceWorker.controller ? 'yes' : 'no';
-        d.controllerScriptURL = navigator.serviceWorker.controller?.scriptURL || '—';
-      } catch (e: any) { d.swRegError = e?.message || String(e); }
-    }
-    // Probe the SW asset URLs without redirects so we know if middleware is intercepting.
-    try {
-      const r = await fetch('/sw.js', { redirect: 'manual', cache: 'no-store' });
-      d.swJsStatus = `${r.status}${r.type === 'opaqueredirect' ? ' (opaqueredirect)' : ''}`;
-    } catch (e: any) { d.swJsStatus = `error: ${e?.message || 'fetch failed'}`; }
-    try {
-      const r = await fetch('/push-sw.js', { redirect: 'manual', cache: 'no-store' });
-      d.pushSwJsStatus = `${r.status}${r.type === 'opaqueredirect' ? ' (opaqueredirect)' : ''}`;
-    } catch (e: any) { d.pushSwJsStatus = `error: ${e?.message || 'fetch failed'}`; }
-    setDiag(d);
-  }
 
   useEffect(() => {
     setStandalone(detectStandalone());
@@ -149,69 +60,45 @@ export default function PushSettings() {
     setSupported(typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window);
     if (typeof Notification !== 'undefined') setPermission(Notification.permission);
     db.getMyNotifPrefs().then(setPrefs).catch(() => setPrefs(null));
-    refreshDiag();
   }, []);
 
   async function subscribeAndEnable() {
     setBusy('master'); setErr(null);
     try {
-      // ---- Step 1: permission ----
-      console.log('[push] Step 1: requestPermission');
       if (typeof Notification === 'undefined') throw new Error('Notification API not available in this browser.');
       const perm = await Notification.requestPermission();
-      console.log('[push] Step 1 result:', perm);
       setPermission(perm);
       if (perm !== 'granted') throw new Error(`Permission ${perm}. Open iOS Settings → Notifications → Carp Log → Allow.`);
 
-      // ---- Step 2: service worker ----
-      console.log('[push] Step 2: serviceWorker.ready (10s timeout)');
       if (!('serviceWorker' in navigator)) throw new Error('Service workers not supported in this browser.');
-      // Hard timeout — without this, .ready hangs forever if SW failed to register
-      // (which is the actual silent-hang bug in the previous version).
       const reg = await withTimeout(navigator.serviceWorker.ready, 10000, 'serviceWorker.ready');
-      console.log('[push] Step 2 done, scope:', reg.scope);
 
-      // ---- Step 3: VAPID key + subscribe ----
-      console.log('[push] Step 3: pushManager.subscribe');
       const vapidKey = VAPID_PUBLIC;
       if (!vapidKey) throw new Error('NEXT_PUBLIC_VAPID_PUBLIC_KEY undefined at runtime — env var missing on this deploy.');
-      console.log('[push] VAPID key length:', vapidKey.length);
 
       let sub = await reg.pushManager.getSubscription();
-      if (sub) {
-        console.log('[push] Step 3 reusing existing subscription, endpoint:', sub.endpoint.slice(0, 50));
-      } else {
+      if (!sub) {
         sub = await withTimeout(reg.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(vapidKey).buffer as ArrayBuffer,
         }), 15000, 'pushManager.subscribe');
-        console.log('[push] Step 3 done, endpoint:', sub.endpoint.slice(0, 50));
       }
 
-      // ---- Step 4: persist ----
-      console.log('[push] Step 4: POST /api/push/subscribe');
       const res = await withTimeout(fetch('/api/push/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subscription: sub.toJSON() }),
       }), 10000, 'POST /api/push/subscribe');
-      console.log('[push] Step 4 result:', res.status);
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         throw new Error(`Subscribe API returned ${res.status}${j?.error ? `: ${j.error}` : ''}`);
       }
 
-      // ---- Step 5: master toggle ----
-      console.log('[push] Step 5: setPushMaster(true)');
       await db.setPushMaster(true);
       setPrefs(p => p ? { ...p, push_master: true } : p);
-      console.log('[push] All done');
-      refreshDiag();
     } catch (e: any) {
-      console.error('[push] FAILED:', e?.message, e);
       setErr(e?.message || 'Failed to enable push');
     } finally {
-      // CRITICAL: spinner stops even on exception or timeout.
       setBusy(null);
     }
   }
@@ -229,7 +116,6 @@ export default function PushSettings() {
       }
       await db.setPushMaster(false);
       setPrefs(p => p ? { ...p, push_master: false } : p);
-      refreshDiag();
     } catch (e: any) {
       setErr(e?.message || 'Failed to disable push');
     } finally { setBusy(null); }
@@ -255,7 +141,6 @@ export default function PushSettings() {
         <p style={{ fontSize: 12, color: 'var(--text-3)', margin: 0, lineHeight: 1.4 }}>
           This browser doesn't support push notifications.
         </p>
-        <Diagnostics diag={diag} expanded={showDiag} onToggle={() => setShowDiag(v => !v)} />
       </div>
     );
   }
@@ -272,7 +157,6 @@ export default function PushSettings() {
             </p>
           </div>
         </div>
-        <Diagnostics diag={diag} expanded={showDiag} onToggle={() => setShowDiag(v => !v)} />
       </div>
     );
   }
@@ -329,40 +213,6 @@ export default function PushSettings() {
           onToggle={toggleType}
         />
       )}
-      {false && prefs?.push_master && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 8, borderTop: '1px solid rgba(234,201,136,0.12)' }}>
-          {TYPES.map(t => {
-            const on = !!prefs?.enabled[t.key];
-            return (
-              <button key={t.key} onClick={() => toggleType(t.key)} disabled={busy === t.key}
-                className="tap" style={{
-                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px',
-                  background: 'transparent', border: 'none', borderBottom: '1px solid rgba(234,201,136,0.06)',
-                  color: 'var(--text)', fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer',
-                }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{t.help}</div>
-                </div>
-                <span style={{
-                  width: 38, height: 22, borderRadius: 999, position: 'relative',
-                  background: on ? 'var(--gold)' : 'rgba(20,42,38,0.7)',
-                  border: `1px solid ${on ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
-                  transition: 'background 0.18s',
-                }}>
-                  <span style={{
-                    position: 'absolute', top: 1, left: on ? 17 : 1,
-                    width: 18, height: 18, borderRadius: 999, background: '#FFF',
-                    transition: 'left 0.18s var(--spring)',
-                  }} />
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      <Diagnostics diag={diag} expanded={showDiag} onToggle={() => { setShowDiag(v => !v); refreshDiag(); }} />
     </div>
   );
 }
@@ -424,48 +274,6 @@ function CollapsiblePrefs({ prefs, types, busyKey, onToggle }: {
           })}
         </div>
       </div>
-    </div>
-  );
-}
-
-function Diagnostics({ diag, expanded, onToggle }: { diag: Diag | null; expanded: boolean; onToggle: () => void }) {
-  return (
-    <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid rgba(234,201,136,0.12)' }}>
-      <button onClick={onToggle} className="tap" style={{
-        width: '100%', background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
-        display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-3)', fontFamily: 'inherit',
-        fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
-      }}>
-        <ChevronRight size={12} style={{ transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
-        Diagnostic info
-      </button>
-      {expanded && diag && (
-        <pre style={{
-          marginTop: 8, padding: 10, borderRadius: 10,
-          background: 'rgba(10,24,22,0.6)', border: '1px solid rgba(234,201,136,0.12)',
-          color: 'var(--text-2)', fontSize: 10.5, lineHeight: 1.6,
-          whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontFamily: 'monospace', margin: '8px 0 0',
-        }}>
-{`typeof window.Notification : ${diag.hasNotification ? 'function' : 'undefined'}
-Notification.permission     : ${diag.permission}
-typeof navigator.serviceWorker : ${diag.hasServiceWorker ? 'object' : 'undefined'}
-ServiceWorker registered    : ${diag.swRegistered}
-ServiceWorker regs count    : ${diag.swRegCount}
-SW scope                    : ${diag.swScope || '—'}
-SW state                    : ${diag.swState}
-SW registration error       : ${diag.swRegError || '(none)'}
-Active SW scriptURL         : ${diag.activeScriptURL}
-Active SW state             : ${diag.activeState}
-SW controller present       : ${diag.controllerPresent}
-SW controller scriptURL     : ${diag.controllerScriptURL}
-SW file fetch /sw.js        : ${diag.swJsStatus}
-SW file fetch /push-sw.js   : ${diag.pushSwJsStatus}
-Push subscription exists    : ${diag.hasExistingSubscription}
-VAPID public key length     : ${diag.vapidLen} ${diag.vapidLen === 0 ? '⚠ MISSING' : ''}
-Standalone (PWA)            : ${diag.standalone}
-User-Agent                  : ${diag.ua.slice(0, 110)}`}
-        </pre>
-      )}
     </div>
   );
 }

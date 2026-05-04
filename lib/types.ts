@@ -111,6 +111,11 @@ export type Comment = {
 };
 
 export type CatchVisibility = 'public' | 'friends' | 'private';
+// Per-field privacy: any of these fields can be flagged 'private' by the
+// creator so other viewers see "Hidden by angler" instead of the value.
+// Anything not in the map is implicitly 'public'.
+export type FieldVisibility = Partial<Record<'lake' | 'swim' | 'bait' | 'rig' | 'notes', 'public' | 'private'>>;
+
 export type Catch = {
   id: string;
   angler_id: string;
@@ -133,6 +138,7 @@ export type Catch = {
   longitude: number | null;
   lake_id: string | null;
   visibility: CatchVisibility;
+  field_visibility: FieldVisibility;
   comments: Comment[];
   created_at?: string;
   updated_at?: string;

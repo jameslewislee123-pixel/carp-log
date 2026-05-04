@@ -1,6 +1,8 @@
 'use client';
 import Link from 'next/link';
 import type { CSSProperties } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { prefetchProfile } from '@/lib/queries';
 
 const COLORS = ['#C9A961', '#7BA888', '#D8826B', '#9A8FBF', '#7AA8C4', '#B07A3F'];
 
@@ -16,6 +18,7 @@ export default function AvatarBubble({
   username?: string | null; displayName?: string | null; avatarUrl?: string | null;
   size?: number; link?: boolean; style?: CSSProperties; fontWeight?: number;
 }) {
+  const qc = useQueryClient();
   const seed = username || displayName || 'x';
   const color = colorFor(seed);
   const initial = (displayName || username || '?')[0]?.toUpperCase();
@@ -33,6 +36,16 @@ export default function AvatarBubble({
       {!avatarUrl && initial}
     </div>
   );
-  if (link && username) return <Link href={`/profile/${username}`} style={{ display: 'inline-block' }}>{inner}</Link>;
+  if (link && username) {
+    // Warm the profile cache on hover/touch so navigating in feels instant.
+    const warm = () => {
+      prefetchProfile(qc, username);
+    };
+    return (
+      <Link href={`/profile/${username}`} onMouseEnter={warm} onTouchStart={warm} style={{ display: 'inline-block' }}>
+        {inner}
+      </Link>
+    );
+  }
   return inner;
 }

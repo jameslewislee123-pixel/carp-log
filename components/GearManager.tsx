@@ -1,18 +1,21 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Archive, Check, ChevronRight, Edit2, Eye, EyeOff, Loader2, Plus, X } from 'lucide-react';
+import { Archive, Check, Edit2, Eye, EyeOff, Loader2, Plus, X } from 'lucide-react';
 import * as db from '@/lib/db';
 import type { GearItem, GearType } from '@/lib/types';
 
-const SECTIONS: { type: GearType; label: string; placeholder: string }[] = [
-  { type: 'rig',  label: 'Rigs',  placeholder: 'e.g. Ronnie spinner' },
-  { type: 'bait', label: 'Baits', placeholder: 'e.g. 18mm Mainline Cell pop-up' },
-  { type: 'hook', label: 'Hooks', placeholder: 'e.g. Size 6 Korda Mugga' },
+const SECTIONS: { type: GearType; label: string; singular: string; placeholder: string }[] = [
+  { type: 'rig',  label: 'Rigs',  singular: 'rig',  placeholder: 'e.g. Ronnie spinner' },
+  { type: 'bait', label: 'Baits', singular: 'bait', placeholder: 'e.g. 18mm Mainline Cell pop-up' },
+  { type: 'hook', label: 'Hooks', singular: 'hook', placeholder: 'e.g. Size 6 Korda Mugga' },
 ];
 
+// Tabbed layout per the Tackle Box spec — Rigs / Baits / Hooks at the top,
+// only the active tab's items are rendered. Used inside TackleBoxModal in
+// CarpApp; safe to drop into anywhere that needs gear management.
 export default function GearManager() {
   const [items, setItems] = useState<GearItem[]>([]);
-  const [open, setOpen] = useState<Record<GearType, boolean>>({ rig: false, bait: false, hook: false });
+  const [tab, setTab] = useState<GearType>('rig');
   const [editing, setEditing] = useState<{ type: GearType; item: GearItem | null } | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -22,46 +25,60 @@ export default function GearManager() {
   }
   useEffect(() => { load(); }, []);
 
-  if (loading) return <div style={{ padding: 12, textAlign: 'center' }}><Loader2 size={16} className="spin" style={{ color: 'var(--text-3)' }} /></div>;
+  const active = SECTIONS.find(s => s.type === tab)!;
+  const list = items.filter(i => i.type === tab);
 
   return (
     <>
-      {SECTIONS.map(s => {
-        const list = items.filter(i => i.type === s.type);
-        const isOpen = open[s.type];
-        return (
-          <div key={s.type} style={{ marginBottom: 10 }}>
-            <button onClick={() => setOpen(o => ({ ...o, [s.type]: !o[s.type] }))} className="tap" style={{
-              width: '100%', padding: '12px 14px', borderRadius: 12,
-              background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
-              color: 'var(--text-2)', fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer',
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+        {SECTIONS.map(s => {
+          const isActive = tab === s.type;
+          const count = items.filter(i => i.type === s.type).length;
+          return (
+            <button key={s.type} onClick={() => setTab(s.type)} className="tap" style={{
+              flex: 1, padding: '8px 10px', borderRadius: 999,
+              border: `1px solid ${isActive ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
+              background: isActive ? 'rgba(212,182,115,0.15)' : 'rgba(10,24,22,0.5)',
+              color: isActive ? 'var(--gold-2)' : 'var(--text-2)',
+              fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
             }}>
-              <span>{s.label}{list.length > 0 ? ` · ${list.length}` : ''}</span>
-              <ChevronRight size={14} style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
+              {s.label}{count > 0 ? ` · ${count}` : ''}
             </button>
-            {isOpen && (
-              <div className="fade-in" style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {list.map(item => (
-                  <GearRow key={item.id} item={item}
-                    onEdit={() => setEditing({ type: s.type, item })}
-                    onToggleShare={async () => { await db.setGearShared(item.id, !item.shared); load(); }}
-                    onArchive={async () => { if (confirm('Archive this item?')) { await db.archiveGearItem(item.id); load(); } }}
-                  />
-                ))}
-                <button onClick={() => setEditing({ type: s.type, item: null })} className="tap" style={{
-                  padding: '10px 12px', borderRadius: 12,
-                  background: 'transparent', border: '1px dashed rgba(234,201,136,0.3)',
-                  color: 'var(--gold-2)', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                }}>
-                  <Plus size={12} /> Add {s.label.toLowerCase().slice(0, -1)}
-                </button>
-              </div>
-            )}
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 16, textAlign: 'center' }}><Loader2 size={16} className="spin" style={{ color: 'var(--text-3)' }} /></div>
+      ) : (
+        <>
+          <button onClick={() => setEditing({ type: tab, item: null })} className="tap" style={{
+            width: '100%', padding: '10px 12px', borderRadius: 12,
+            background: 'transparent', border: '1px dashed rgba(234,201,136,0.3)',
+            color: 'var(--gold-2)', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            marginBottom: 10,
+          }}>
+            <Plus size={12} /> Add {active.singular}
+          </button>
+
+          {list.length === 0 ? (
+            <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
+              No {active.label.toLowerCase()} yet. Tap "Add {active.singular}" to get started.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {list.map(item => (
+                <GearRow key={item.id} item={item}
+                  onEdit={() => setEditing({ type: tab, item })}
+                  onToggleShare={async () => { await db.setGearShared(item.id, !item.shared); load(); }}
+                  onArchive={async () => { if (confirm('Archive this item?')) { await db.archiveGearItem(item.id); load(); } }}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
 
       {editing && (
         <GearForm

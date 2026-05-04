@@ -1,7 +1,7 @@
 'use client';
 import { supabase } from './supabase/client';
 import type {
-  AppNotification, Catch, CatchComment, CatchVisibility, Comment, CommentLike,
+  AppNotification, Catch, CatchComment, CatchVisibility, Comment, CommentLike, FieldVisibility,
   Friendship, GearItem, GearType, Lake, LakeAnnotation, LakeAnnotationType, Moon,
   NotifyConfig, Profile, SwimRollResult, Trip, TripActivity, TripMember, TripMessage,
   TripStake, TripSwimRoll, TripVisibility, Weather,
@@ -184,6 +184,9 @@ export type CatchInput = {
   latitude?: number | null;
   longitude?: number | null;
   visibility: CatchVisibility;
+  // Optional per-field privacy map. Defaults to {} (everything public) when
+  // omitted. Persisted to the catches.field_visibility JSONB column.
+  field_visibility?: FieldVisibility;
   comments?: Comment[];
 };
 

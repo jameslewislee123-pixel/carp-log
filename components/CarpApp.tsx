@@ -8,6 +8,7 @@ import {
   Cloud, Wind, Thermometer, MessageCircle, Bell, Send, Anchor, BarChart3,
   Clock, Tent, MapPinned, Star, Users as UsersIcon, Lock, LogOut, UserPlus, Mail,
   Activity as ActivityIcon, Map as MapIcon, MessageSquare, ThumbsUp, Search,
+  Eye, EyeOff,
 } from 'lucide-react';
 import { Drawer } from 'vaul';
 import nextDynamic from 'next/dynamic';
@@ -2285,6 +2286,11 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
   const [rig, setRig] = useState(existing?.rig || '');
   const [hook, setHook] = useState(existing?.hook || '');
   const [notes, setNotes] = useState(existing?.notes || '');
+  // Per-field privacy map. Anything not in the map (or 'public') is visible
+  // to friends. 'private' renders as "Hidden by angler" for non-creator viewers.
+  const [fieldVis, setFieldVis] = useState<import('@/lib/types').FieldVisibility>(existing?.field_visibility || {});
+  const toggleFieldVis = (k: 'lake' | 'swim' | 'bait' | 'rig' | 'notes') =>
+    setFieldVis(v => ({ ...v, [k]: v[k] === 'private' ? 'public' : 'private' }));
   const [tempC, setTempC] = useState<string>(existing?.weather?.tempC != null ? String(existing.weather.tempC) : '');
   const [conditions, setConditions] = useState(existing?.weather?.conditions || '');
   const [wind, setWind] = useState(existing?.weather?.wind || '');
@@ -2298,7 +2304,9 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
     existing?.latitude != null && existing?.longitude != null ? { lat: existing.latitude, lng: existing.longitude } : null
   );
   const [saving, setSaving] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const libraryInputRef = useRef<HTMLInputElement | null>(null);
+  const [photoSourcePickerOpen, setPhotoSourcePickerOpen] = useState(false);
 
   // trips this user can attach to: own trips + trips where they're a joined member.
   // Owned trips: trips.owner_id === me.id. Joined trips already in `trips` array (RLS exposes trips that include trip_member rows for me).
@@ -2394,7 +2402,8 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
         weather, moon,
         latitude: lat, longitude: lng,
         has_photo: !lost && !!photo,
-        visibility, comments: existing?.comments || [],
+        visibility, field_visibility: fieldVis,
+        comments: existing?.comments || [],
       };
       await onSave(payload, !lost && photo && photo !== photoExisting ? photo : null);
     } finally { setSaving(false); }
@@ -2421,8 +2430,10 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
 
       {!lost && (
         <>
-          <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: 'none' }} />
-          <div onClick={() => fileInputRef.current?.click()} className="tap" style={{
+          {/* Two hidden inputs: with-capture opens the camera, without-capture opens the photo library/file picker. */}
+          <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleFile} style={{ display: 'none' }} />
+          <input ref={libraryInputRef} type="file" accept="image/*" onChange={handleFile} style={{ display: 'none' }} />
+          <div onClick={() => { if (!photo) setPhotoSourcePickerOpen(true); }} className="tap" style={{
             width: '100%',
             // Compact placeholder when empty so the form below stays reachable;
             // expand to 4:3 once a photo is shown so the image isn't squished.
@@ -2452,6 +2463,13 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
               </div>
             )}
           </div>
+          {photoSourcePickerOpen && (
+            <PhotoSourceSheet
+              onClose={() => setPhotoSourcePickerOpen(false)}
+              onCamera={() => { setPhotoSourcePickerOpen(false); setTimeout(() => cameraInputRef.current?.click(), 50); }}
+              onLibrary={() => { setPhotoSourcePickerOpen(false); setTimeout(() => libraryInputRef.current?.click(), 50); }}
+            />
+          )}
           {(autoStatus.wx !== 'idle' || autoStatus.sp !== 'idle') && (
             <div style={{ display: 'flex', gap: 8, marginBottom: 14, fontSize: 11, color: 'var(--text-3)' }}>
               {autoStatus.wx !== 'idle' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><Cloud size={11} />
@@ -2524,7 +2542,7 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
       </button>
       {showMore && (
         <div className="fade-in" style={{ marginBottom: 6 }}>
-          <label className="label">Lake</label>
+          <PrivacyLabel text="Lake" hidden={fieldVis.lake === 'private'} onToggle={() => toggleFieldVis('lake')} />
           <LakeAutocomplete
             value={lake}
             onChange={(v) => { setLake(v); setLakeCoordOverride(null); }}
@@ -2537,15 +2555,15 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
               }
             }}
           />
-          <label className="label">Swim / Peg</label>
+          <PrivacyLabel text="Swim / Peg" hidden={fieldVis.swim === 'private'} onToggle={() => toggleFieldVis('swim')} />
           <input className="input" placeholder="e.g. 12" value={swim} onChange={(e) => setSwim(e.target.value)} style={{ marginBottom: 14 }} />
-          <label className="label">Bait</label>
+          <PrivacyLabel text="Bait" hidden={fieldVis.bait === 'private'} onToggle={() => toggleFieldVis('bait')} />
           <div style={{ marginBottom: 14 }}><GearItemPicker type="bait" value={bait} onChange={setBait} meId={me.id} /></div>
-          <label className="label">Rig</label>
+          <PrivacyLabel text="Rig" hidden={fieldVis.rig === 'private'} onToggle={() => toggleFieldVis('rig')} />
           <div style={{ marginBottom: 14 }}><GearItemPicker type="rig" value={rig} onChange={setRig} meId={me.id} /></div>
           <label className="label">Hook</label>
           <div style={{ marginBottom: 14 }}><GearItemPicker type="hook" value={hook} onChange={setHook} meId={me.id} /></div>
-          <label className="label">Notes</label>
+          <PrivacyLabel text="Notes" hidden={fieldVis.notes === 'private'} onToggle={() => toggleFieldVis('notes')} />
           <textarea className="input" placeholder="Any details about the session, the fight, the conditions…" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
             style={{ marginBottom: 8, resize: 'vertical', fontFamily: 'inherit' }} />
         </div>
@@ -2777,6 +2795,97 @@ function LakePicker({ onSelect, onClose }: { onSelect: (l: EnrichedLake) => void
   );
 }
 
+// Label + eye-toggle row for privacy-aware fields on AddCatchModal.
+// Tapping the eye flips the field between visible (default) and private —
+// when private, other viewers see "Hidden by angler" in CatchDetail.
+function PrivacyLabel({ text, hidden, onToggle }: { text: string; hidden: boolean; onToggle: () => void }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+      <label className="label" style={{ marginBottom: 0 }}>{text}</label>
+      <button
+        type="button"
+        onClick={onToggle}
+        title={hidden ? 'Hidden from your friends' : 'Visible to your friends'}
+        aria-label={hidden ? `Show ${text} to friends` : `Hide ${text} from friends`}
+        className="tap"
+        style={{
+          background: hidden ? 'rgba(220,107,88,0.10)' : 'transparent',
+          border: `1px solid ${hidden ? 'rgba(220,107,88,0.4)' : 'rgba(234,201,136,0.18)'}`,
+          color: hidden ? 'var(--danger)' : 'var(--text-3)',
+          borderRadius: 999,
+          padding: '4px 8px',
+          fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          cursor: 'pointer', fontFamily: 'inherit',
+        }}>
+        {hidden ? <EyeOff size={11} /> : <Eye size={11} />}
+        {hidden ? 'Private' : 'Visible'}
+      </button>
+    </div>
+  );
+}
+
+// Lightweight bottom-anchored action sheet for the camera-vs-library choice.
+// Not a full vaul drawer — it's a tap-to-dismiss overlay with two actions
+// and a Cancel button, sized just enough for those.
+function PhotoSourceSheet({ onClose, onCamera, onLibrary }: {
+  onClose: () => void; onCamera: () => void; onLibrary: () => void;
+}) {
+  return (
+    <div
+      onClick={onClose}
+      className="fade-in"
+      style={{
+        position: 'fixed', inset: 0, zIndex: 200,
+        background: 'rgba(3,10,9,0.55)',
+        backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+        padding: 'max(16px, env(safe-area-inset-bottom)) 12px',
+      }}
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 460,
+        display: 'flex', flexDirection: 'column', gap: 8,
+      }}>
+        <div style={{
+          background: 'rgba(10,24,22,0.95)',
+          backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          border: '1px solid rgba(234,201,136,0.18)',
+          borderRadius: 16, overflow: 'hidden',
+        }}>
+          <button onClick={onCamera} className="tap" style={{
+            width: '100%', padding: '16px 18px',
+            display: 'flex', alignItems: 'center', gap: 12,
+            background: 'transparent', border: 'none',
+            borderBottom: '1px solid rgba(234,201,136,0.12)',
+            color: 'var(--text)', fontFamily: 'inherit', fontSize: 15, fontWeight: 600,
+            cursor: 'pointer', textAlign: 'left',
+          }}>
+            <Camera size={18} style={{ color: 'var(--gold-2)' }} /> Take photo
+          </button>
+          <button onClick={onLibrary} className="tap" style={{
+            width: '100%', padding: '16px 18px',
+            display: 'flex', alignItems: 'center', gap: 12,
+            background: 'transparent', border: 'none',
+            color: 'var(--text)', fontFamily: 'inherit', fontSize: 15, fontWeight: 600,
+            cursor: 'pointer', textAlign: 'left',
+          }}>
+            <Images size={18} style={{ color: 'var(--gold-2)' }} /> Choose from library
+          </button>
+        </div>
+        <button onClick={onClose} className="tap" style={{
+          padding: '16px 18px', borderRadius: 16,
+          background: 'rgba(10,24,22,0.95)',
+          backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          border: '1px solid rgba(234,201,136,0.18)',
+          color: 'var(--text-2)', fontFamily: 'inherit', fontSize: 15, fontWeight: 700,
+          cursor: 'pointer',
+        }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 // ============ CATCH DETAIL ============
 export function CatchDetail({ catchData, me, profilesById, trips, stackLevel, onClose, onDelete, onUpdate, onOpenTrip }: {
   catchData: CatchT; me: Profile; profilesById: Record<string, Profile>; trips: Trip[];
@@ -2927,10 +3036,30 @@ export function CatchDetail({ catchData, me, profilesById, trips, stackLevel, on
       )}
 
       <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-        {catchData.lake && <DetailRow icon={<MapPin size={14} />} label="Lake" value={catchData.lake} />}
-        {catchData.swim && <DetailRow icon={<MapPin size={14} />} label="Swim" value={catchData.swim} />}
-        {catchData.bait && <DetailRow label="Bait" value={catchData.bait} />}
-        {catchData.rig && <DetailRow label="Rig" value={catchData.rig} />}
+        {(() => {
+          const fv = catchData.field_visibility || {};
+          // For each privacy-aware field, render either the value, "Hidden by
+          // angler" (non-creator view of a private field), or nothing if the
+          // field is empty.
+          const renderField = (key: 'lake' | 'swim' | 'bait' | 'rig', label: string, icon?: React.ReactNode) => {
+            const value = catchData[key];
+            const isPrivate = fv[key] === 'private';
+            if (!value && !isPrivate) return null;
+            if (isPrivate && !isMyCatch) {
+              return <DetailRow icon={<Lock size={14} />} label={label} value="Hidden by angler" muted />;
+            }
+            if (!value) return null;
+            return <DetailRow icon={icon} label={label} value={value} privateBadge={isPrivate} />;
+          };
+          return (
+            <>
+              {renderField('lake', 'Lake', <MapPin size={14} />)}
+              {renderField('swim', 'Swim', <MapPin size={14} />)}
+              {renderField('bait', 'Bait')}
+              {renderField('rig', 'Rig')}
+            </>
+          );
+        })()}
       </div>
 
       {weather && (weather.tempC != null || weather.conditions || weather.wind || weather.pressure != null) && (
@@ -2958,12 +3087,30 @@ export function CatchDetail({ catchData, me, profilesById, trips, stackLevel, on
         </div>
       )}
 
-      {catchData.notes && (
-        <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-          <div className="label">Notes</div>
-          <p style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--text)', margin: 0, whiteSpace: 'pre-wrap' }}>{catchData.notes}</p>
-        </div>
-      )}
+      {(() => {
+        const notesPrivate = catchData.field_visibility?.notes === 'private';
+        if (!catchData.notes && !notesPrivate) return null;
+        if (notesPrivate && !isMyCatch) {
+          return (
+            <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+              <div className="label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <Lock size={11} /> Notes
+              </div>
+              <p style={{ fontSize: 13, color: 'var(--text-3)', margin: 0, fontStyle: 'italic' }}>Hidden by angler</p>
+            </div>
+          );
+        }
+        if (!catchData.notes) return null;
+        return (
+          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+            <div className="label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              {notesPrivate && <Lock size={11} style={{ color: 'var(--gold-2)' }} />}
+              Notes
+            </div>
+            <p style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--text)', margin: 0, whiteSpace: 'pre-wrap' }}>{catchData.notes}</p>
+          </div>
+        );
+      })()}
 
       <BanterSection
         comments={comments}
@@ -3175,11 +3322,18 @@ function BanterSection({
   );
 }
 
-function DetailRow({ icon, label, value }: { icon?: React.ReactNode; label: string; value: string }) {
+function DetailRow({ icon, label, value, muted, privateBadge }: { icon?: React.ReactNode; label: string; value: string; muted?: boolean; privateBadge?: boolean }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid rgba(234,201,136,0.08)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-3)', fontSize: 13 }}>{icon}{label}</div>
-      <div style={{ color: 'var(--text)', fontSize: 14, fontWeight: 500, textAlign: 'right' }}>{value}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-3)', fontSize: 13 }}>
+        {icon}{label}
+        {privateBadge && <Lock size={11} style={{ color: 'var(--gold-2)' }} />}
+      </div>
+      <div style={{
+        color: muted ? 'var(--text-3)' : 'var(--text)',
+        fontStyle: muted ? 'italic' : 'normal',
+        fontSize: 14, fontWeight: muted ? 400 : 500, textAlign: 'right',
+      }}>{value}</div>
     </div>
   );
 }
@@ -3197,6 +3351,7 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
   const [draftBio, setDraftBio] = useState(me.bio || '');
   const [publicProfile, setPublicProfile] = useState(me.public_profile);
   const [showNotify, setShowNotify] = useState(false);
+  const [showTackleBox, setShowTackleBox] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
 
   useEffect(() => { (async () => { const { data: { user } } = await supabase().auth.getUser(); setEmail(user?.email || null); })(); }, []);
@@ -3278,10 +3433,21 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
         <PushSettings />
       </div>
 
-      <div className="label">My gear</div>
-      <div style={{ marginBottom: 24 }}>
-        <GearManager />
-      </div>
+      <div className="label">My tackle box</div>
+      <button onClick={() => setShowTackleBox(true)} className="tap" style={{
+        width: '100%', padding: 14, borderRadius: 14,
+        background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
+        color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, marginBottom: 24,
+      }}>
+        <span>Edit my tackle box</span>
+        <ChevronRight size={16} />
+      </button>
+      {showTackleBox && (
+        <VaulModalShell title="My Tackle Box" onClose={() => setShowTackleBox(false)} stackLevel={1}>
+          <GearManager />
+        </VaulModalShell>
+      )}
 
       <div className="label">Appearance</div>
       <BgAnimationToggle />
