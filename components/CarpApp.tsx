@@ -3495,10 +3495,50 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
     };
   }, []);
 
+  // Track the visible viewport height (excludes the iOS keyboard when it
+  // opens). Setting --app-vh lets the sheet shrink to fit instead of
+  // letting vaul shove the whole drawer up off the top of the screen.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    const apply = () => {
+      document.documentElement.style.setProperty('--app-vh', `${vv.height}px`);
+    };
+    apply();
+    vv.addEventListener('resize', apply);
+    vv.addEventListener('scroll', apply);
+    return () => {
+      vv.removeEventListener('resize', apply);
+      vv.removeEventListener('scroll', apply);
+      document.documentElement.style.removeProperty('--app-vh');
+    };
+  }, []);
+
+  // Auto-scroll the focused input into view inside the scrollable body.
+  // Belt-and-braces with repositionInputs={false}: vaul no longer moves the
+  // sheet itself, so we have to make sure the field lands above the keyboard.
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const root = bodyRef.current;
+    if (!root) return;
+    const onFocusIn = (e: FocusEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const tag = target.tagName;
+      if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') return;
+      // Defer past the keyboard's appearance animation (~250ms on iOS).
+      window.setTimeout(() => {
+        try { target.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
+      }, 300);
+    };
+    root.addEventListener('focusin', onFocusIn);
+    return () => root.removeEventListener('focusin', onFocusIn);
+  }, []);
+
   const z = 100 + stackLevel * 10;
 
   return (
-    <Drawer.Root open onOpenChange={(o) => { if (!o) onClose(); }} handleOnly>
+    <Drawer.Root open onOpenChange={(o) => { if (!o) onClose(); }} handleOnly repositionInputs={false}>
       <Drawer.Portal>
         <Drawer.Overlay style={{
           position: 'fixed', inset: 0, zIndex: z,
@@ -3515,8 +3555,11 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
           }}>
           <div style={{
             width: '100%', maxWidth: 480,
-            maxHeight: '92vh' as any,
-            height: 'min(92vh, calc(100dvh - 24px))' as any,
+            // --app-vh shrinks when the iOS keyboard opens (visualViewport),
+            // so the sheet auto-clamps to the visible area instead of being
+            // pushed off-screen by the keyboard.
+            maxHeight: 'min(92vh, calc(var(--app-vh, 100dvh) - 24px))' as any,
+            height: 'min(92vh, calc(var(--app-vh, 100dvh) - 24px))' as any,
             background: 'rgba(10, 24, 22, 0.92)',
             backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
             borderRadius: '28px 28px 0 0', border: '1px solid rgba(234,201,136,0.14)', borderBottom: 'none',
@@ -3562,7 +3605,7 @@ export function VaulModalShell({ title, onClose, hideTitle, headerAction, stackL
             </div>
 
             {/* SCROLLABLE BODY — vaul does NOT intercept gestures here when handleOnly is set. */}
-            <div style={{
+            <div ref={bodyRef} style={{
               flex: 1, minHeight: 0,
               overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain',
               touchAction: 'pan-y',
