@@ -768,17 +768,21 @@ function WeatherForecastModal({ coords, onClose }: { coords: { lat: number; lng:
     return () => { cancelled = true; };
   }, [effective.lat, effective.lng]);
 
-  // The header has a button that opens the location search.
+  // Magnifier rendered inline next to the title (avoids iOS notch clipping
+  // that the previous absolutely-positioned variant suffered).
   const headerSearchBtn = (
     <button
       onClick={() => setSearchOpen(true)}
       aria-label="Change location"
       style={{
-        position: 'absolute', top: 8, right: 64, zIndex: 11,
-        width: 32, height: 32, borderRadius: 10,
-        background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)',
-        color: 'var(--text-2)', cursor: 'pointer',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(239, 233, 217, 0.10)',
+        border: '1px solid rgba(239, 233, 217, 0.18)',
+        borderRadius: 999,
+        width: 32, height: 32,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        cursor: 'pointer',
+        color: 'var(--text-2)',
+        flexShrink: 0,
       }}>
       <Search size={14} />
     </button>
@@ -786,8 +790,7 @@ function WeatherForecastModal({ coords, onClose }: { coords: { lat: number; lng:
 
   if (!data) {
     return (
-      <ModalShell title={locationName || 'Weather'} onClose={onClose}>
-        {headerSearchBtn}
+      <ModalShell title={locationName || 'Weather'} onClose={onClose} headerAction={headerSearchBtn}>
         <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-3)', fontSize: 13 }}>
           <Loader2 size={18} className="spin" /> Loading forecast…
         </div>
@@ -848,8 +851,7 @@ function WeatherForecastModal({ coords, onClose }: { coords: { lat: number; lng:
   })();
 
   return (
-    <ModalShell title={locationName || 'Weather'} onClose={onClose}>
-      {headerSearchBtn}
+    <ModalShell title={locationName || 'Weather'} onClose={onClose} headerAction={headerSearchBtn}>
       {searchOpen && (
         <WeatherLocationSearch
           onClose={() => setSearchOpen(false)}
@@ -3197,7 +3199,7 @@ function useAnyModalOpen() {
   return React.useSyncExternalStore(subscribeModal, getModalSnapshot, getModalServerSnapshot) > 0;
 }
 
-function ModalShell({ title, onClose, hideTitle, children }: { title?: string; onClose: () => void; hideTitle?: boolean; children: React.ReactNode }) {
+function ModalShell({ title, onClose, hideTitle, headerAction, children }: { title?: string; onClose: () => void; hideTitle?: boolean; headerAction?: React.ReactNode; children: React.ReactNode }) {
   useEffect(() => { document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = ''; }; }, []);
   useEffect(() => {
     modalOpenCount++;
@@ -3274,14 +3276,19 @@ function ModalShell({ title, onClose, hideTitle, children }: { title?: string; o
           // margin so the last row isn't flush against the dock area.
           padding: '0 20px max(40px, calc(env(safe-area-inset-bottom) + 24px))',
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: hideTitle ? 8 : 16, paddingTop: 4, paddingBottom: 8 }}>
-            {!hideTitle && <h2 className="display-font" style={{ fontSize: 22, margin: 0, fontWeight: 500 }}>{title}</h2>}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: hideTitle ? 8 : 16, paddingTop: 4, paddingBottom: 8, gap: 12 }}>
+            {!hideTitle && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                <h2 className="display-font" style={{ fontSize: 22, margin: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h2>
+                {headerAction}
+              </div>
+            )}
             {hideTitle ? (
               <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6, padding: 4, fontFamily: 'inherit', fontSize: 14, cursor: 'pointer' }}>
                 <ArrowLeft size={18} /> Back
               </button>
             ) : (
-              <button onClick={onClose} style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 12, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-2)' }}>
+              <button onClick={onClose} style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 12, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-2)', flexShrink: 0 }}>
                 <X size={18} />
               </button>
             )}
