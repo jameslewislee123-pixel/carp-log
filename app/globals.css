@@ -232,3 +232,18 @@ body {
   margin: 0 auto 8px;
   z-index: 11;
 }
+
+/* Vaul's auto-injected hitarea span is position:absolute by default,
+   which collapses our Drawer.Handle wrapper (the entire top drag zone)
+   to zero height and clips the visual pill + header row out of flow.
+   Force it back into normal block flow so the wrapper measures its
+   children. !important is required because vaul injects its CSS at
+   runtime via __insertCSS — it can't be beaten by specificity. Drag
+   detection still works because the data-vaul-handle attribute on the
+   parent is what vaul listens to. */
+[data-vaul-handle-hitarea] {
+  position: static !important;
+  width: auto !important;
+  height: auto !important;
+  inset: auto !important;
+}
