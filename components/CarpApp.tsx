@@ -415,12 +415,18 @@ export default function CarpApp() {
           existing={editTrip} me={me}
           onClose={() => { setShowAddTrip(false); setEditTrip(null); }}
           onSave={async (data, inviteIds) => {
-            if (editTrip) {
-              await db.upsertTrip({ ...data, id: editTrip.id });
-            } else {
-              await db.createTripWithInvites(data, inviteIds);
+            try {
+              if (editTrip) {
+                await db.upsertTrip({ ...data, id: editTrip.id });
+              } else {
+                await db.createTripWithInvites(data, inviteIds);
+              }
+              setShowAddTrip(false); setEditTrip(null);
+            } catch (e) {
+              // eslint-disable-next-line no-console
+              console.error('[CarpApp.onSaveTrip] db call failed', e);
+              throw e; // re-throw so the modal's catch surfaces a visible alert
             }
-            setShowAddTrip(false); setEditTrip(null);
           }}
         />
       )}
@@ -2126,21 +2132,28 @@ function AddTripModal({ existing, me, onClose, onSave }: {
   async function save() {
     if (!name.trim()) { alert('Trip needs a name'); return; }
     setSaving(true);
+    const payload = {
+      ...(existing ? { id: existing.id } : {}),
+      name: name.trim(),
+      // Prefer the picked lake's name as display location; fall back to
+      // whatever legacy text the existing trip already had.
+      location: selectedLake?.name || existing?.location || null,
+      lake_id: lakeId,
+      start_date: new Date(startDate + 'T00:00:00').toISOString(),
+      end_date: new Date(endDate + 'T23:59:59').toISOString(),
+      notes: notes.trim() || null,
+      visibility,
+      wager_enabled: wagerEnabled,
+      wager_description: wagerEnabled ? (wagerDescription.trim() || null) : null,
+    };
+    // eslint-disable-next-line no-console
+    console.log('[AddTrip] saving', payload, 'invitees', invitees.map(p => p.id));
     try {
-      await onSave({
-        ...(existing ? { id: existing.id } : {}),
-        name: name.trim(),
-        // Prefer the picked lake's name as display location; fall back to
-        // whatever legacy text the existing trip already had.
-        location: selectedLake?.name || existing?.location || null,
-        lake_id: lakeId,
-        start_date: new Date(startDate + 'T00:00:00').toISOString(),
-        end_date: new Date(endDate + 'T23:59:59').toISOString(),
-        notes: notes.trim() || null,
-        visibility,
-        wager_enabled: wagerEnabled,
-        wager_description: wagerEnabled ? (wagerDescription.trim() || null) : null,
-      }, invitees.map(p => p.id));
+      await onSave(payload, invitees.map(p => p.id));
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error('[AddTrip] save failed', e);
+      alert(`Couldn't save trip: ${e?.message || e?.toString() || 'unknown error'}`);
     } finally { setSaving(false); }
   }
 

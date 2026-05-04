@@ -276,6 +276,18 @@ export function useLakesEnriched() {
     savedIds.forEach(id => myLakeIds.add(id));
 
     const myLakes = lakes.filter(l => myLakeIds.has(l.id) || myLakeNames.has(norm(l.name)));
+    // eslint-disable-next-line no-console
+    console.log('[useLakesEnriched]', {
+      catches: catches.length,
+      lakesGlobal: lakes.length,
+      trips: trips.length,
+      savedIds: savedIds.length,
+      savedSample: savedIds.slice(0, 3),
+      myLakeIdsSize: myLakeIds.size,
+      myLakeIdsSample: Array.from(myLakeIds).slice(0, 3),
+      myLakesAfterFilter: myLakes.length,
+      mePresent: !!me,
+    });
 
     // Seed from MY lakes (subset of lakes table). Picks up trip-reserved
     // lakes and manually-saved lakes even when the user has zero catches.
