@@ -906,6 +906,10 @@ export async function listRodSpotsAtLake(lakeId: string): Promise<RodSpot[]> {
 export type RodSpotInput = {
   id?: string;
   lake_id: string;
+  // Optional on insert — when provided, this rod joins an existing swim
+  // group (a sibling rod cast from the same swim). Omit for a solo rod;
+  // the column default (gen_random_uuid()) gives it a fresh group.
+  swim_group_id?: string | null;
   swim_latitude: number;
   swim_longitude: number;
   swim_label?: string | null;
@@ -933,6 +937,7 @@ export async function createRodSpot(input: RodSpotInput): Promise<RodSpot> {
     wraps_actual: input.wraps_actual ?? null,
     features: input.features ?? null,
   };
+  if (input.swim_group_id) payload.swim_group_id = input.swim_group_id;
   const { data, error } = await supabase().from('rod_spots').insert(payload).select().single();
   if (error) throw error;
   return data as RodSpot;

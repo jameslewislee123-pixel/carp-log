@@ -61,8 +61,18 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
   type RodPlaceMode = 'idle' | 'await_swim' | 'await_spot';
   const [rodMode, setRodMode] = useState<RodPlaceMode>('idle');
   const [pendingSwim, setPendingSwim] = useState<{ lat: number; lng: number } | null>(null);
+  // When chaining additional rods to an already-saved swim, we carry the
+  // existing group_id and swim_label forward so the new sibling rod joins
+  // that swim group cleanly without forcing the user to re-type the label.
+  const [pendingGroupId, setPendingGroupId] = useState<string | null>(null);
+  const [pendingSwimLabel, setPendingSwimLabel] = useState<string | null>(null);
   const [rodFormDraft, setRodFormDraft] = useState<RodSpotDraft | null>(null);
   const [editingSpot, setEditingSpot] = useState<RodSpot | null>(null);
+  // The most recently saved swim — surfaces the inline "+ Add another rod
+  // from this swim" prompt below the map.
+  const [lastSavedSwim, setLastSavedSwim] = useState<{
+    lat: number; lng: number; group_id: string; swim_label: string | null;
+  } | null>(null);
 
   const rodSpotsQuery = useRodSpotsAtLake(lake.id);
   const rodSpots = rodSpotsQuery.data || [];
@@ -310,9 +320,19 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
           <button
             onClick={() => {
               if (rodMode !== 'idle') {
-                setRodMode('idle'); setPendingSwim(null);
+                setRodMode('idle');
+                setPendingSwim(null);
+                setPendingGroupId(null);
+                setPendingSwimLabel(null);
               } else {
-                setDropMode(false); setRodMode('await_swim');
+                // Starting a fresh swim+spot pair: clear any "last swim"
+                // chaining context so the prompt doesn't reappear after
+                // the user moves to a new location.
+                setDropMode(false);
+                setRodMode('await_swim');
+                setLastSavedSwim(null);
+                setPendingGroupId(null);
+                setPendingSwimLabel(null);
               }
             }}
             className="tap" style={{
@@ -331,53 +351,135 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
           </button>
         </div>
 
-        {/* My spots list — only when there are saved spots. Tapping opens
-            the same edit/delete sheet as tapping a marker. */}
+        {/* Chain prompt — shown after a successful save while the user is
+            idle, so adding a 2nd/3rd/4th rod from the same swim is a
+            single tap. */}
+        {rodMode === 'idle' && lastSavedSwim && (
+          <div style={{
+            marginTop: 10,
+            padding: '10px 12px',
+            borderRadius: 12,
+            border: '1px dashed rgba(234,201,136,0.35)',
+            background: 'rgba(212,182,115,0.06)',
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          }}>
+            <Ruler size={14} style={{ color: 'var(--gold-2)', flexShrink: 0 }} />
+            <div style={{ fontSize: 12, color: 'var(--text-2)', flex: 1, minWidth: 0 }}>
+              Saved{lastSavedSwim.swim_label ? ` at ${lastSavedSwim.swim_label}` : ''}.
+              Tap to place another rod from this swim.
+            </div>
+            <button
+              onClick={() => {
+                setDropMode(false);
+                setPendingSwim({ lat: lastSavedSwim.lat, lng: lastSavedSwim.lng });
+                setPendingGroupId(lastSavedSwim.group_id);
+                setPendingSwimLabel(lastSavedSwim.swim_label);
+                setRodMode('await_spot');
+              }}
+              className="tap"
+              style={{
+                padding: '8px 12px', borderRadius: 999,
+                background: 'var(--gold)', border: 'none',
+                color: '#1A1004', fontFamily: 'inherit',
+                fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
+              }}
+            >
+              <Plus size={12} /> Add another rod
+            </button>
+            <button
+              onClick={() => setLastSavedSwim(null)}
+              aria-label="Dismiss"
+              style={{
+                background: 'transparent', border: 'none', color: 'var(--text-3)',
+                cursor: 'pointer', padding: 4, flexShrink: 0,
+              }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
+        {/* My spots list — only when there are saved spots. Grouped by
+            swim_group_id so multi-rod swims show under one header. Tapping
+            any rod opens the same edit/delete sheet as the map markers. */}
         {rodSpots.length > 0 && (
           <div style={{ marginTop: 14 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--gold-2)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
               My spots
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {rodSpots.map(s => {
-                const wraps = s.wraps_actual ?? s.wraps_calculated ?? calculateWraps(
-                  s.swim_latitude, s.swim_longitude, s.spot_latitude, s.spot_longitude,
-                );
-                const title = s.spot_label || s.swim_label || 'Untitled spot';
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() => setEditingSpot(s)}
-                    className="card tap"
-                    style={{
-                      padding: 12, textAlign: 'left', cursor: 'pointer',
-                      fontFamily: 'inherit', color: 'var(--text)',
-                      display: 'flex', alignItems: 'center', gap: 12,
-                    }}
-                  >
-                    <Ruler size={16} style={{ color: 'var(--gold)', flexShrink: 0 }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {title}
-                      </div>
-                      {s.swim_label && s.spot_label && (
-                        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
-                          from {s.swim_label}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {(() => {
+                const groups = new Map<string, RodSpot[]>();
+                for (const s of rodSpots) {
+                  const arr = groups.get(s.swim_group_id);
+                  if (arr) arr.push(s);
+                  else groups.set(s.swim_group_id, [s]);
+                }
+                return Array.from(groups.entries()).map(([groupId, members]) => {
+                  const swimLabel = members.find(m => m.swim_label)?.swim_label || null;
+                  // Group header only earns its row when there's more than
+                  // one rod or a swim label worth showing — otherwise the
+                  // single rod card stands alone like the v1 layout.
+                  const showHeader = members.length > 1 || !!swimLabel;
+                  return (
+                    <div key={groupId} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {showHeader && (
+                        <div style={{
+                          display: 'flex', alignItems: 'center', gap: 6,
+                          fontSize: 11, color: 'var(--text-3)',
+                          textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700,
+                        }}>
+                          <span style={{ fontSize: 12 }}>⛺</span>
+                          <span>{swimLabel || 'Swim'}</span>
+                          {members.length > 1 && (
+                            <span style={{ color: 'var(--text-3)', fontWeight: 600 }}>· {members.length} rods</span>
+                          )}
                         </div>
                       )}
-                      {s.features && (
-                        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {s.features}
-                        </div>
-                      )}
+                      {members.map(s => {
+                        const wraps = s.wraps_actual ?? s.wraps_calculated ?? calculateWraps(
+                          s.swim_latitude, s.swim_longitude, s.spot_latitude, s.spot_longitude,
+                        );
+                        const title = s.spot_label || (showHeader ? `Rod ${members.indexOf(s) + 1}` : (s.swim_label || 'Untitled spot'));
+                        return (
+                          <button
+                            key={s.id}
+                            onClick={() => setEditingSpot(s)}
+                            className="card tap"
+                            style={{
+                              padding: 12, textAlign: 'left', cursor: 'pointer',
+                              fontFamily: 'inherit', color: 'var(--text)',
+                              display: 'flex', alignItems: 'center', gap: 12,
+                            }}
+                          >
+                            <Ruler size={16} style={{ color: 'var(--gold)', flexShrink: 0 }} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {title}
+                              </div>
+                              {!showHeader && s.swim_label && s.spot_label && (
+                                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                                  from {s.swim_label}
+                                </div>
+                              )}
+                              {s.features && (
+                                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {s.features}
+                                </div>
+                              )}
+                            </div>
+                            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                              <div className="num-display" style={{ fontSize: 18, color: 'var(--gold-2)', lineHeight: 1 }}>{wraps}</div>
+                              <div style={{ fontSize: 9, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginTop: 2 }}>wraps</div>
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <div className="num-display" style={{ fontSize: 18, color: 'var(--gold-2)', lineHeight: 1 }}>{wraps}</div>
-                      <div style={{ fontSize: 9, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginTop: 2 }}>wraps</div>
-                    </div>
-                  </button>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
           </div>
         )}
@@ -438,10 +540,25 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
         <RodSpotForm
           lakeId={lake.id}
           draft={rodFormDraft}
-          onClose={() => { setRodFormDraft(null); setPendingSwim(null); }}
-          onSaved={() => {
+          groupId={pendingGroupId}
+          initialSwimLabel={pendingSwimLabel}
+          onClose={() => {
             setRodFormDraft(null);
             setPendingSwim(null);
+            setPendingGroupId(null);
+            setPendingSwimLabel(null);
+          }}
+          onSaved={(saved) => {
+            setRodFormDraft(null);
+            setPendingSwim(null);
+            setPendingGroupId(null);
+            setPendingSwimLabel(null);
+            setLastSavedSwim({
+              lat: saved.swim_latitude,
+              lng: saved.swim_longitude,
+              group_id: saved.swim_group_id,
+              swim_label: saved.swim_label,
+            });
             qc.invalidateQueries({ queryKey: QK.lakes.rodSpots(lake.id) });
           }}
         />
@@ -458,7 +575,12 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
             spot_longitude: editingSpot.spot_longitude,
           }}
           onClose={() => setEditingSpot(null)}
-          onSaved={() => {
+          onSaved={(saved) => {
+            // If the user just deleted, clear any chain prompt anchored
+            // on this group — the saved row reference may now be stale.
+            if (lastSavedSwim?.group_id === saved.swim_group_id) {
+              setLastSavedSwim(null);
+            }
             setEditingSpot(null);
             qc.invalidateQueries({ queryKey: QK.lakes.rodSpots(lake.id) });
           }}

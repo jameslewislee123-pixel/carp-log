@@ -19,15 +19,22 @@ export type RodSpotDraft = {
 };
 
 export default function RodSpotForm({
-  lakeId, draft, existing, onClose, onSaved,
+  lakeId, draft, existing, groupId, initialSwimLabel, onClose, onSaved,
 }: {
   lakeId: string;
   draft: RodSpotDraft;
   existing?: RodSpot | null;        // present → edit mode
+  // For "add another rod from this swim" — preassign the new row's group
+  // id and seed the swim label so sibling rods share both fields.
+  groupId?: string | null;
+  initialSwimLabel?: string | null;
   onClose: () => void;
-  onSaved: () => void;
+  // After a successful save (insert or update) the form passes the saved
+  // RodSpot back so the parent can read swim_group_id and offer to add
+  // another rod from the same swim.
+  onSaved: (saved: RodSpot) => void;
 }) {
-  const [swimLabel, setSwimLabel] = useState(existing?.swim_label || '');
+  const [swimLabel, setSwimLabel] = useState(existing?.swim_label || initialSwimLabel || '');
   const [spotLabel, setSpotLabel] = useState(existing?.spot_label || '');
   const [features, setFeatures] = useState(existing?.features || '');
 
@@ -66,12 +73,15 @@ export default function RodSpotForm({
         wraps_actual: overrideUsed ? Number(wrapsActual) : null,
         features: features.trim() || null,
       };
+      let saved: RodSpot;
       if (existing) {
-        await db.updateRodSpot(existing.id, payload);
+        saved = await db.updateRodSpot(existing.id, payload);
       } else {
-        await db.createRodSpot(payload);
+        // Inherit caller's group_id when adding a sibling rod; otherwise
+        // let the column default mint a fresh group for this solo spot.
+        saved = await db.createRodSpot({ ...payload, swim_group_id: groupId || undefined });
       }
-      onSaved();
+      onSaved(saved);
     } catch (e: any) {
       alert(e?.message || 'Failed to save spot');
     } finally {
@@ -85,7 +95,7 @@ export default function RodSpotForm({
     setBusy(true);
     try {
       await db.deleteRodSpot(existing.id);
-      onSaved();
+      onSaved(existing); // pass the row that was deleted so caller can react
     } catch (e: any) {
       alert(e?.message || 'Failed to delete');
     } finally {

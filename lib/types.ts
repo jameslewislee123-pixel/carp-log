@@ -247,6 +247,9 @@ export type RodSpot = {
   id: string;
   user_id: string;
   lake_id: string;
+  // Sibling rods cast from the same swim share a swim_group_id. Solo
+  // single-rod spots get their own unique group_id (one rod per group).
+  swim_group_id: string;
   swim_latitude: number;
   swim_longitude: number;
   swim_label: string | null;

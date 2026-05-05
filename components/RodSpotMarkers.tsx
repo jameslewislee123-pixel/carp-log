@@ -43,38 +43,60 @@ export default function RodSpotMarkers({ spots, onOpen, swimPreview }: {
   // swim before tapping the rod spot.
   swimPreview?: { lat: number; lng: number } | null;
 }) {
+  // Group spots by swim_group_id so multi-rod swims render as one swim
+  // icon with several lines fanning out, rather than stacking duplicate
+  // swim icons on the same coordinate.
+  const groups = new Map<string, RodSpot[]>();
+  for (const s of spots) {
+    const arr = groups.get(s.swim_group_id);
+    if (arr) arr.push(s);
+    else groups.set(s.swim_group_id, [s]);
+  }
+
   return (
     <>
-      {spots.map(s => {
-        const swim: [number, number] = [s.swim_latitude, s.swim_longitude];
-        const spot: [number, number] = [s.spot_latitude, s.spot_longitude];
-        const mid = midpoint(s.swim_latitude, s.swim_longitude, s.spot_latitude, s.spot_longitude);
-        const wraps = effectiveWraps(s);
+      {Array.from(groups.entries()).map(([groupId, members]) => {
+        // All siblings in a group share swim coords. Take the first as the
+        // canonical swim and pick its label (first non-null wins).
+        const head = members[0];
+        const swim: [number, number] = [head.swim_latitude, head.swim_longitude];
+        const swimLabel = members.find(m => m.swim_label)?.swim_label || null;
+        // Tapping the shared swim icon opens the first rod's edit form —
+        // a reasonable default; per-rod edits still work via spot-pin taps.
         return (
-          <Fragment key={s.id}>
-            <Polyline
-              positions={[swim, spot]}
-              pathOptions={{ color: LINE_COLOR, weight: 3, opacity: 0.85, dashArray: '6 4' }}
-            />
-            <Marker position={swim} icon={swimIcon()} eventHandlers={{ click: () => onOpen(s) }}>
-              {s.swim_label && (
+          <Fragment key={groupId}>
+            <Marker position={swim} icon={swimIcon()} eventHandlers={{ click: () => onOpen(head) }}>
+              {swimLabel && (
                 <Tooltip direction="top" offset={[0, -10]} opacity={0.95}>
-                  {s.swim_label}
+                  {swimLabel}
                 </Tooltip>
               )}
             </Marker>
-            <Marker position={spot} icon={spotIcon()} eventHandlers={{ click: () => onOpen(s) }} />
-            {wraps != null && (
-              <Marker
-                position={[mid.lat, mid.lng]}
-                interactive={false}
-                icon={L.divIcon({
-                  className: 'rod-spot-wraps',
-                  html: `<div style="padding:3px 8px;border-radius:999px;background:rgba(10,24,22,0.92);border:1px solid rgba(234,201,136,0.5);color:#EAC988;font-family:Manrope,sans-serif;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.45);">${wraps} wrap${wraps === 1 ? '' : 's'}</div>`,
-                  iconSize: [60, 18], iconAnchor: [30, 9],
-                })}
-              />
-            )}
+            {members.map(s => {
+              const spot: [number, number] = [s.spot_latitude, s.spot_longitude];
+              const mid = midpoint(s.swim_latitude, s.swim_longitude, s.spot_latitude, s.spot_longitude);
+              const wraps = effectiveWraps(s);
+              return (
+                <Fragment key={s.id}>
+                  <Polyline
+                    positions={[swim, spot]}
+                    pathOptions={{ color: LINE_COLOR, weight: 3, opacity: 0.85, dashArray: '6 4' }}
+                  />
+                  <Marker position={spot} icon={spotIcon()} eventHandlers={{ click: () => onOpen(s) }} />
+                  {wraps != null && (
+                    <Marker
+                      position={[mid.lat, mid.lng]}
+                      interactive={false}
+                      icon={L.divIcon({
+                        className: 'rod-spot-wraps',
+                        html: `<div style="padding:3px 8px;border-radius:999px;background:rgba(10,24,22,0.92);border:1px solid rgba(234,201,136,0.5);color:#EAC988;font-family:Manrope,sans-serif;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.45);">${wraps} wrap${wraps === 1 ? '' : 's'}</div>`,
+                        iconSize: [60, 18], iconAnchor: [30, 9],
+                      })}
+                    />
+                  )}
+                </Fragment>
+              );
+            })}
           </Fragment>
         );
       })}
