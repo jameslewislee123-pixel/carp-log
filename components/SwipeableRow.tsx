@@ -127,7 +127,10 @@ export default function SwipeableRow({
       {/* Foreground row — draggable. Solid background is critical: it
           obscures the action button when the row is at rest. Without it,
           the semi-transparent .card underneath would let the color bleed
-          through. */}
+          through.
+          display:flex+stretch ensures inline-block children (e.g. <button>
+          cards in LakesView) fill the full row width, matching the layout
+          of unwrapped name-only rows above/below in the list. */}
       <motion.div
         drag="x"
         dragDirectionLock
@@ -139,6 +142,10 @@ export default function SwipeableRow({
           x,
           position: 'relative',
           zIndex: 1,
+          width: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'stretch',
           background: '#0A1816',
           touchAction: 'pan-y',
         }}

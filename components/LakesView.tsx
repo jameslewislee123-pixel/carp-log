@@ -247,7 +247,6 @@ export default function LakesView({ meId, onOpenLake }: { meId: string; onOpenLa
               {sorted.map(l => {
                 const isOwner = !!l.createdBy && l.createdBy === meId;
                 const actionLabel = isOwner ? 'Delete' : 'Remove';
-                const actionColor = isOwner ? '#ff3b30' : '#ff9500';
                 const rowOpen = openRowId === l.key;
                 const card = (
                   <LakeCard
@@ -270,7 +269,6 @@ export default function LakesView({ meId, onOpenLake }: { meId: string; onOpenLa
                     onClose={() => { if (rowOpen) setOpenRowId(null); }}
                     onAction={() => handleLakeAction(l)}
                     actionLabel={actionLabel}
-                    actionColor={actionColor}
                   >
                     {card}
                   </SwipeableRow>
