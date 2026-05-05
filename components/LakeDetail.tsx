@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import { Bookmark, BookmarkCheck, Check, Fish, Loader2, MapPinned, Navigation, Plus, Ruler, Trash2, X } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import * as db from '@/lib/db';
-import { useMySavedLakeIds, useRodSpotsAtLake } from '@/lib/queries';
+import { useMySavedLakeIds, useRodSpotsAtLake, useGearItems } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
 import type { Catch, Lake, LakeAnnotation, LakeAnnotationType, Profile, RodSpot } from '@/lib/types';
 import { formatWeight, totalOz } from '@/lib/util';
@@ -77,6 +77,15 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
 
   const rodSpotsQuery = useRodSpotsAtLake(lake.id);
   const rodSpots = rodSpotsQuery.data || [];
+  // Lookup for resolving each rod's default_*_id to a gear name in the
+  // "My spots" list. useGearItems returns the user's own gear, which is
+  // the only set rod-spot defaults can be drawn from.
+  const myGearQuery = useGearItems();
+  const gearById = useMemo(() => {
+    const map = new Map<string, { name: string }>();
+    (myGearQuery.data || []).forEach(g => map.set(g.id, { name: g.name }));
+    return map;
+  }, [myGearQuery.data]);
 
   async function refreshAnnos() {
     setAnnos(await db.listLakeAnnotations(lake.id));
@@ -443,6 +452,10 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
                           s.swim_latitude, s.swim_longitude, s.spot_latitude, s.spot_longitude,
                         );
                         const title = s.spot_label || (showHeader ? `Rod ${members.indexOf(s) + 1}` : (s.swim_label || 'Untitled spot'));
+                        const bait = s.default_bait_id ? gearById.get(s.default_bait_id) : null;
+                        const rig  = s.default_rig_id  ? gearById.get(s.default_rig_id)  : null;
+                        const hook = s.default_hook_id ? gearById.get(s.default_hook_id) : null;
+                        const hasGear = !!(bait || rig || hook);
                         return (
                           <button
                             key={s.id}
@@ -451,10 +464,10 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
                             style={{
                               padding: 12, textAlign: 'left', cursor: 'pointer',
                               fontFamily: 'inherit', color: 'var(--text)',
-                              display: 'flex', alignItems: 'center', gap: 12,
+                              display: 'flex', alignItems: 'flex-start', gap: 12,
                             }}
                           >
-                            <Ruler size={16} style={{ color: 'var(--gold)', flexShrink: 0 }} />
+                            <Ruler size={16} style={{ color: 'var(--gold)', flexShrink: 0, marginTop: 2 }} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {title}
@@ -467,6 +480,13 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
                               {s.features && (
                                 <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {s.features}
+                                </div>
+                              )}
+                              {hasGear && (
+                                <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-3)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                  {bait && <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Bait: <span style={{ color: 'var(--text-2)' }}>{bait.name}</span></div>}
+                                  {rig  && <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Rig: <span style={{ color: 'var(--text-2)' }}>{rig.name}</span></div>}
+                                  {hook && <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Hook: <span style={{ color: 'var(--text-2)' }}>{hook.name}</span></div>}
                                 </div>
                               )}
                             </div>
