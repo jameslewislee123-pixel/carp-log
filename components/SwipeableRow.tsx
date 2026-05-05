@@ -83,7 +83,10 @@ export default function SwipeableRow({
       }}
     >
       {/* Action button — sits at the right edge, behind the foreground row.
-          Hidden at rest because the opaque motion.div on top covers it. */}
+          Hidden at rest because the opaque motion.div on top covers it.
+          Right corners match the container's radius so the button visually
+          fills the rounded slot when revealed; left corners stay square
+          where it meets the foreground row. */}
       <div
         aria-hidden={!isOpen}
         style={{
@@ -93,6 +96,8 @@ export default function SwipeableRow({
           bottom: 0,
           width: BUTTON_WIDTH,
           background: actionColor,
+          borderTopRightRadius: 22,
+          borderBottomRightRadius: 22,
           zIndex: 0,
         }}
       >
