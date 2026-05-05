@@ -14,8 +14,12 @@ import { useAnyModalOpen } from './CarpApp';
 const THRESHOLD = 80;
 const MAX_PULL = 120;
 
-export default function PullToRefresh({ onRefresh, children }: {
+export default function PullToRefresh({ onRefresh, enabled = true, children }: {
   onRefresh: () => Promise<unknown> | void;
+  // Suspend the gesture entirely. Use when the wrapped content has its own
+  // vertical-drag-at-top gesture (e.g. a fullscreen map's pan-north) that
+  // would otherwise race the PTR.
+  enabled?: boolean;
   children: React.ReactNode;
 }) {
   const [pull, setPull] = useState(0);
@@ -25,10 +29,13 @@ export default function PullToRefresh({ onRefresh, children }: {
   const modalOpen = useAnyModalOpen();
   const modalOpenRef = useRef(modalOpen);
   modalOpenRef.current = modalOpen;
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
 
   useEffect(() => {
     function onTouchStart(e: TouchEvent) {
       if (refreshing) return;
+      if (!enabledRef.current) return;
       if (modalOpenRef.current) return;
       // Only arm when at the very top of the page.
       if (window.scrollY > 2) return;
@@ -37,6 +44,7 @@ export default function PullToRefresh({ onRefresh, children }: {
     }
     function onTouchMove(e: TouchEvent) {
       if (!tracking.current || startY.current == null) return;
+      if (!enabledRef.current) { tracking.current = false; setPull(0); return; }
       if (modalOpenRef.current) { tracking.current = false; setPull(0); return; }
       // Bail if the page has scrolled away from the top during the gesture.
       if (window.scrollY > 2) { tracking.current = false; setPull(0); return; }

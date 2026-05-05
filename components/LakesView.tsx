@@ -55,7 +55,13 @@ function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: num
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-export default function LakesView({ meId, onOpenLake }: { meId: string; onOpenLake: (name: string) => void }) {
+export default function LakesView({ meId, onOpenLake, onViewModeChange }: {
+  meId: string;
+  onOpenLake: (name: string) => void;
+  // Bubbled up so the parent can suspend pull-to-refresh while the map view
+  // is active (vertical map-pan would otherwise trigger PTR at scrollTop=0).
+  onViewModeChange?: (vm: ViewMode) => void;
+}) {
   const qc = useQueryClient();
   const enriched = useLakesEnriched();
   const lakesQuery = useLakes();
@@ -99,6 +105,7 @@ export default function LakesView({ meId, onOpenLake }: { meId: string; onOpenLa
   }
 
   useEffect(() => { setViewMode(readViewPref()); }, []);
+  useEffect(() => { onViewModeChange?.(viewMode); }, [viewMode, onViewModeChange]);
 
   // Filter
   const filtered = useMemo(() => {

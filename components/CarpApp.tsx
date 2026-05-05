@@ -131,6 +131,9 @@ export default function CarpApp() {
   const [showAddLake, setShowAddLake] = useState(false);
   const [editTrip, setEditTrip] = useState<Trip | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
+  // Mirrors LakesView's list/map toggle so we can suspend pull-to-refresh
+  // while the map is showing (vertical map-pan would otherwise race PTR).
+  const [lakesViewMode, setLakesViewMode] = useState<'list' | 'map'>('list');
 
   // Auth gate: if /me has resolved to null, send to sign-in.
   useEffect(() => {
@@ -364,13 +367,20 @@ export default function CarpApp() {
           </PullToRefresh>
         )}
         {view === 'lakes' && (
-          <PullToRefresh onRefresh={async () => {
-            await Promise.all([
-              qc.invalidateQueries({ queryKey: QK.lakes.all }),
-              qc.invalidateQueries({ queryKey: QK.catches.all }),
-            ]);
-          }}>
-            <LakesView meId={me.id} onOpenLake={(name) => setDetailLakeName(name)} />
+          <PullToRefresh
+            enabled={lakesViewMode === 'list'}
+            onRefresh={async () => {
+              await Promise.all([
+                qc.invalidateQueries({ queryKey: QK.lakes.all }),
+                qc.invalidateQueries({ queryKey: QK.catches.all }),
+              ]);
+            }}
+          >
+            <LakesView
+              meId={me.id}
+              onOpenLake={(name) => setDetailLakeName(name)}
+              onViewModeChange={setLakesViewMode}
+            />
           </PullToRefresh>
         )}
       </div>
