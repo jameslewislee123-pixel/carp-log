@@ -29,6 +29,7 @@ import PushSettings from './PushSettings';
 import CatchPhotoCarousel from './CatchPhotoCarousel';
 import CatchPhotoLightbox from './CatchPhotoLightbox';
 import PullToRefresh from './PullToRefresh';
+import SwipeableRow from './SwipeableRow';
 import { readBgAnimationEnabled, writeBgAnimationEnabled } from './UnderwaterLottie';
 import type { TripSwimRoll } from '@/lib/types';
 import { Dices } from 'lucide-react';
@@ -292,6 +293,12 @@ export default function CarpApp() {
     // Catches lose their trip_id, so refresh the catches cache too.
     qc.invalidateQueries({ queryKey: QK.catches.all });
   }
+
+  async function leaveTripHandler(id: string) {
+    await db.leaveTrip(id);
+    // The trip drops out of useTrips() once we're no longer a member.
+    qc.invalidateQueries({ queryKey: QK.trips.all });
+  }
   async function saveNotifyHandler(n: { token: string | null; chat_id: string | null; enabled: boolean }) {
     await db.saveMyNotify(n);
     qc.invalidateQueries({ queryKey: QK.notifyConfig });
@@ -341,6 +348,8 @@ export default function CarpApp() {
               me={me} trips={trips} catches={catches} profilesById={profilesById}
               onOpenTrip={setDetailTrip}
               onAddTrip={() => { setEditTrip(null); setShowAddTrip(true); }}
+              onDeleteTrip={deleteTripHandler}
+              onLeaveTrip={leaveTripHandler}
             />
           </PullToRefresh>
         )}
@@ -358,7 +367,7 @@ export default function CarpApp() {
               qc.invalidateQueries({ queryKey: QK.catches.all }),
             ]);
           }}>
-            <LakesView onOpenLake={(name) => setDetailLakeName(name)} />
+            <LakesView meId={me.id} onOpenLake={(name) => setDetailLakeName(name)} />
           </PullToRefresh>
         )}
       </div>
@@ -1644,11 +1653,14 @@ function EmptyState({ icon, title = 'No catches yet', subtitle = 'Tap the + butt
 }
 
 // ============ TRIPS ============
-function TripsView({ me, trips, catches, profilesById, onOpenTrip, onAddTrip }: {
+function TripsView({ me, trips, catches, profilesById, onOpenTrip, onAddTrip, onDeleteTrip, onLeaveTrip }: {
   me: Profile; trips: Trip[]; catches: CatchT[]; profilesById: Record<string, Profile>;
   onOpenTrip: (t: Trip) => void; onAddTrip: () => void;
+  onDeleteTrip: (id: string) => Promise<void>;
+  onLeaveTrip: (id: string) => Promise<void>;
 }) {
   const qc = useQueryClient();
+  const [openRowId, setOpenRowId] = useState<string | null>(null);
   const sorted = useMemo(() => [...trips].sort((a, b) => +new Date(b.start_date) - +new Date(a.start_date)), [trips]);
   const tripStats = (id: string) => {
     const tc = catches.filter(c => c.trip_id === id);
@@ -1659,6 +1671,22 @@ function TripsView({ me, trips, catches, profilesById, onOpenTrip, onAddTrip }: 
     return { count: landed.length, lost: lost.length, biggest, totalWeightOz };
   };
   const isActive = (t: Trip) => { const now = Date.now(); return +new Date(t.start_date) <= now && +new Date(t.end_date) >= now - 86400000; };
+
+  async function handleRowAction(t: Trip) {
+    const isOwner = t.owner_id === me.id;
+    const ok = isOwner
+      ? confirm(`Delete "${t.name}"? Catches stay but become unlinked. This can't be undone.`)
+      : confirm(`Leave "${t.name}"?`);
+    if (!ok) return;
+    setOpenRowId(null);
+    try {
+      if (isOwner) await onDeleteTrip(t.id);
+      else await onLeaveTrip(t.id);
+    } catch (e: any) {
+      alert(e?.message || 'Action failed');
+    }
+  }
+
   return (
     <div style={{ padding: '8px 20px' }}>
       {sorted.length === 0 ? <EmptyState icon={<Tent size={48} />} title="No trips yet" subtitle="Tap the + button to plan your first trip" /> : (
@@ -1667,30 +1695,42 @@ function TripsView({ me, trips, catches, profilesById, onOpenTrip, onAddTrip }: 
             const s = tripStats(t.id);
             const active = isActive(t);
             const owner = profilesById[t.owner_id];
+            const isOwner = t.owner_id === me.id;
+            const rowOpen = openRowId === t.id;
             return (
-              <div key={t.id} className="card tap fade-in"
-                onClick={() => onOpenTrip(t)}
-                onTouchStart={() => prefetchTrip(qc, t.id)}
-                onMouseEnter={() => prefetchTrip(qc, t.id)}
-                style={{ padding: 16, cursor: 'pointer' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    {active && <span style={{ width: 7, height: 7, borderRadius: 999, background: 'var(--sage)', boxShadow: '0 0 8px var(--sage)' }} />}
-                    <h3 className="display-font" style={{ fontSize: 19, margin: 0, fontWeight: 500 }}>{t.name}</h3>
+              <SwipeableRow
+                key={t.id}
+                isOpen={rowOpen}
+                onOpen={() => setOpenRowId(t.id)}
+                onClose={() => { if (rowOpen) setOpenRowId(null); }}
+                onAction={() => handleRowAction(t)}
+                actionLabel={isOwner ? 'Delete' : 'Leave'}
+                actionColor={isOwner ? '#dc2626' : '#b45309'}
+              >
+                <div className="card tap fade-in"
+                  onClick={() => { if (rowOpen) { setOpenRowId(null); return; } onOpenTrip(t); }}
+                  onTouchStart={() => prefetchTrip(qc, t.id)}
+                  onMouseEnter={() => prefetchTrip(qc, t.id)}
+                  style={{ padding: 16, cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {active && <span style={{ width: 7, height: 7, borderRadius: 999, background: 'var(--sage)', boxShadow: '0 0 8px var(--sage)' }} />}
+                      <h3 className="display-font" style={{ fontSize: 19, margin: 0, fontWeight: 500 }}>{t.name}</h3>
+                    </div>
+                    <ChevronRight size={16} style={{ color: 'var(--text-3)' }} />
                   </div>
-                  <ChevronRight size={16} style={{ color: 'var(--text-3)' }} />
+                  <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <Calendar size={11} /> {formatDateRange(t.start_date, t.end_date)}
+                    {t.location && <><span>·</span><MapPin size={11} />{t.location}</>}
+                    {owner && owner.id !== me.id && <span>· hosted by {owner.display_name}</span>}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                    <MiniStat label="Fish" value={s.count} />
+                    <MiniStat label="Biggest" value={s.biggest ? formatWeight(s.biggest.lbs, s.biggest.oz) : '—'} />
+                    <MiniStat label="Total" value={s.totalWeightOz ? `${Math.floor(s.totalWeightOz / 16)}lb` : '—'} />
+                  </div>
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  <Calendar size={11} /> {formatDateRange(t.start_date, t.end_date)}
-                  {t.location && <><span>·</span><MapPin size={11} />{t.location}</>}
-                  {owner && owner.id !== me.id && <span>· hosted by {owner.display_name}</span>}
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                  <MiniStat label="Fish" value={s.count} />
-                  <MiniStat label="Biggest" value={s.biggest ? formatWeight(s.biggest.lbs, s.biggest.oz) : '—'} />
-                  <MiniStat label="Total" value={s.totalWeightOz ? `${Math.floor(s.totalWeightOz / 16)}lb` : '—'} />
-                </div>
-              </div>
+              </SwipeableRow>
             );
           })}
         </div>

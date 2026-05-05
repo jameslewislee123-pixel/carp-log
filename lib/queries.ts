@@ -258,6 +258,7 @@ export type EnrichedLake = {
   id: string | null;           // lakes.id if a row exists, else null
   name: string;                // display name
   source: 'manual' | 'osm' | 'imported' | null;
+  createdBy: string | null;    // lakes.created_by — null for seed/legacy rows
   latitude: number | null;
   longitude: number | null;
   catchCount: number;          // by current user
@@ -295,6 +296,7 @@ export function useLakesEnriched() {
         id: l.id,
         name: l.name,
         source: (l.source as EnrichedLake['source']) || 'manual',
+        createdBy: l.created_by ?? null,
         latitude: l.latitude,
         longitude: l.longitude,
         catchCount: 0,
@@ -329,6 +331,7 @@ export function useLakesEnriched() {
           id: matchedLake?.id || null,
           name: matchedLake?.name || lakeName,
           source: (matchedLake?.source as EnrichedLake['source']) || null,
+          createdBy: matchedLake?.created_by ?? null,
           latitude: matchedLake?.latitude ?? c.latitude ?? null,
           longitude: matchedLake?.longitude ?? c.longitude ?? null,
           catchCount: 0,
@@ -369,6 +372,7 @@ export function useLakesEnriched() {
         id: e.id,
         name: e.name,
         source: e.source,
+        createdBy: e.createdBy,
         latitude: e.latitude,
         longitude: e.longitude,
         catchCount: e.catchCount,

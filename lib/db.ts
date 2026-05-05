@@ -134,6 +134,16 @@ export async function deleteTrip(id: string): Promise<void> {
   if (error) throw error;
 }
 
+// Remove the current user from a trip they joined. RLS allows an angler
+// to delete their own trip_members row; the trip itself stays intact.
+export async function leaveTrip(tripId: string): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { error } = await supabase().from('trip_members').delete()
+    .eq('trip_id', tripId).eq('angler_id', user.id);
+  if (error) throw error;
+}
+
 // ============ TRIP MEMBERS ============
 export async function listTripMembers(tripId: string): Promise<TripMember[]> {
   const { data } = await supabase().from('trip_members').select('*').eq('trip_id', tripId);
@@ -737,6 +747,30 @@ export async function unsaveLakeForUser(lakeId: string): Promise<void> {
   if (!user) throw new Error('Not signed in');
   const { error } = await supabase().from('user_saved_lakes').delete()
     .eq('user_id', user.id).eq('lake_id', lakeId);
+  if (error) throw error;
+}
+
+// Best-effort count of catches by other anglers at a lake. Bounded by RLS
+// (catches_select) — we only see public catches + ours + friends'/trip-mates'.
+// A non-zero result is a strong signal "other people have catches here";
+// zero means no visible foreign catches, which is good enough to allow a
+// creator-initiated lake delete.
+export async function countOtherAnglerCatchesAtLake(lakeId: string): Promise<number> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return 0;
+  const { count } = await supabase()
+    .from('catches')
+    .select('id', { count: 'exact', head: true })
+    .eq('lake_id', lakeId)
+    .neq('angler_id', user.id);
+  return count || 0;
+}
+
+// Hard-delete a lake row. RLS (lakes_delete_creator) restricts this to
+// the creator. catches.lake_id and trips.lake_id are both ON DELETE SET
+// NULL so existing references survive as unlinked free-text entries.
+export async function deleteLake(lakeId: string): Promise<void> {
+  const { error } = await supabase().from('lakes').delete().eq('id', lakeId);
   if (error) throw error;
 }
 

@@ -5,7 +5,9 @@ import { List as ListIcon, Loader2, Map as MapIcon, MapPinned } from 'lucide-rea
 import { useQueryClient } from '@tanstack/react-query';
 import * as db from '@/lib/db';
 import { useCatches, useLakes, useLakesEnriched, useUserLocationOnce, prefetchLake, type EnrichedLake } from '@/lib/queries';
+import { QK } from '@/lib/queryKeys';
 import { formatWeight, totalOz } from '@/lib/util';
+import SwipeableRow from './SwipeableRow';
 
 const LakesMapInner = dynamic(() => import('./LakesMapInner'), {
   ssr: false,
@@ -53,7 +55,7 @@ function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: num
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-export default function LakesView({ onOpenLake }: { onOpenLake: (name: string) => void }) {
+export default function LakesView({ meId, onOpenLake }: { meId: string; onOpenLake: (name: string) => void }) {
   const qc = useQueryClient();
   const enriched = useLakesEnriched();
   const lakesQuery = useLakes();
@@ -63,6 +65,38 @@ export default function LakesView({ onOpenLake }: { onOpenLake: (name: string) =
   const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<Sort>('count');
   const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [openRowId, setOpenRowId] = useState<string | null>(null);
+
+  // Decide what the swipe action should do for a given lake.
+  //  - Owner of a manual lake with no other anglers' catches → hard delete
+  //  - Anyone else (saved seed/OSM lakes, lakes with foreign catches) → unsave
+  // Lake rows that are name-only (no lakes.id row) can't be swiped — there's
+  // nothing to delete or unsave.
+  async function handleLakeAction(lake: EnrichedLake) {
+    if (!lake.id) return;
+    const isOwner = !!lake.createdBy && lake.createdBy === meId;
+    setOpenRowId(null);
+    try {
+      if (isOwner) {
+        const otherCount = await db.countOtherAnglerCatchesAtLake(lake.id);
+        if (otherCount > 0) {
+          alert(`Other anglers have catches at "${lake.name}", so it can't be deleted. Removed from your saved lakes instead.`);
+          await db.unsaveLakeForUser(lake.id);
+        } else {
+          if (!confirm(`Delete "${lake.name}"? Your catches stay but lose their lake link. This can't be undone.`)) return;
+          await db.deleteLake(lake.id);
+        }
+      } else {
+        if (!confirm(`Remove "${lake.name}" from your lakes?`)) return;
+        await db.unsaveLakeForUser(lake.id);
+      }
+      qc.invalidateQueries({ queryKey: QK.lakes.all });
+      qc.invalidateQueries({ queryKey: QK.lakes.mySaved });
+      qc.invalidateQueries({ queryKey: QK.catches.all });
+    } catch (e: any) {
+      alert(e?.message || 'Action failed');
+    }
+  }
 
   useEffect(() => { setViewMode(readViewPref()); }, []);
 
@@ -210,18 +244,38 @@ export default function LakesView({ onOpenLake }: { onOpenLake: (name: string) =
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {sorted.map(l => (
-                <LakeCard
-                  key={l.key}
-                  lake={l}
-                  myCoords={myCoords}
-                  onOpen={() => onOpenLake(l.name)}
-                  onPrefetch={async () => {
-                    if (l.id) prefetchLake(qc, l.id);
-                    else { const row = await db.getLakeByName(l.name); if (row) prefetchLake(qc, row.id); }
-                  }}
-                />
-              ))}
+              {sorted.map(l => {
+                const isOwner = !!l.createdBy && l.createdBy === meId;
+                const actionLabel = isOwner ? 'Delete' : 'Remove';
+                const actionColor = isOwner ? '#dc2626' : '#b45309';
+                const rowOpen = openRowId === l.key;
+                const card = (
+                  <LakeCard
+                    lake={l}
+                    myCoords={myCoords}
+                    onOpen={() => { if (rowOpen) { setOpenRowId(null); return; } onOpenLake(l.name); }}
+                    onPrefetch={async () => {
+                      if (l.id) prefetchLake(qc, l.id);
+                      else { const row = await db.getLakeByName(l.name); if (row) prefetchLake(qc, row.id); }
+                    }}
+                  />
+                );
+                // Name-only entries (no lakes.id row) can't be deleted or unsaved.
+                if (!l.id) return <div key={l.key}>{card}</div>;
+                return (
+                  <SwipeableRow
+                    key={l.key}
+                    isOpen={rowOpen}
+                    onOpen={() => setOpenRowId(l.key)}
+                    onClose={() => { if (rowOpen) setOpenRowId(null); }}
+                    onAction={() => handleLakeAction(l)}
+                    actionLabel={actionLabel}
+                    actionColor={actionColor}
+                  >
+                    {card}
+                  </SwipeableRow>
+                );
+              })}
             </div>
           )}
         </>
