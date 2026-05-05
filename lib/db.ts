@@ -201,6 +201,10 @@ export type CatchInput = {
   date: string;
   lake?: string | null; lake_id?: string | null;
   swim?: string | null; bait?: string | null; rig?: string | null; hook?: string | null; notes?: string | null;
+  // Optional links to the angler's pinned swim group + rod spot. Both
+  // nullable — text-only swims set rod_spot_id and swim_group_id to null.
+  swim_group_id?: string | null;
+  rod_spot_id?: string | null;
   has_photo: boolean;
   weather: Weather | null;
   moon: Moon | null;
@@ -958,6 +962,11 @@ export async function updateRodSpot(id: string, patch: Partial<RodSpotInput>): P
 export async function deleteRodSpot(id: string): Promise<void> {
   const { error } = await supabase().from('rod_spots').delete().eq('id', id);
   if (error) throw error;
+}
+
+export async function getRodSpot(id: string): Promise<RodSpot | null> {
+  const { data } = await supabase().from('rod_spots').select('*').eq('id', id).maybeSingle();
+  return (data as RodSpot) || null;
 }
 
 // ============ NOTIFICATIONS ============

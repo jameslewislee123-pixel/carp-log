@@ -30,6 +30,7 @@ import CatchPhotoCarousel from './CatchPhotoCarousel';
 import CatchPhotoLightbox from './CatchPhotoLightbox';
 import PullToRefresh from './PullToRefresh';
 import SwipeableRow from './SwipeableRow';
+import SwimRodPicker from './SwimRodPicker';
 import { readBgAnimationEnabled, writeBgAnimationEnabled } from './UnderwaterLottie';
 import type { TripSwimRoll } from '@/lib/types';
 import { Dices } from 'lucide-react';
@@ -41,10 +42,12 @@ import { directionsUrl } from '@/lib/osm';
 import {
   useMe, useCatches, useTrips, useMyNotifyConfig, useUnreadCount,
   useProfilesByIds, useCommentCounts, useLakeStatsTiles, useLakesEnriched,
-  useCatchLikeCounts, useMyCatchLikes,
+  useCatchLikeCounts, useMyCatchLikes, useRodSpot,
   prefetchTrip, prefetchLake, prefetchNotifications, prefetchFriendships,
   type EnrichedLake,
 } from '@/lib/queries';
+import { calculateWraps as calcWraps } from '@/lib/wraps';
+import { bottomTypeMeta as bottomMeta } from '@/lib/bottomTypes';
 import { QK } from '@/lib/queryKeys';
 import type {
   Profile, Catch as CatchT, Comment, Moon as MoonT, NotifyConfig, Trip, TripMember, Weather, CatchVisibility, TripVisibility, Lake,
@@ -2930,6 +2933,10 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
   // case handleSave defers to db.resolveOrCreateLake at submit-time.
   const [pickedLakeId, setPickedLakeId] = useState<string | null>(existing?.lake_id || null);
   const [swim, setSwim] = useState(existing?.swim || '');
+  // Optional links to a pinned swim group + rod spot. Set when the user
+  // picks from SwimRodPicker; null when they type swim freely.
+  const [swimGroupId, setSwimGroupId] = useState<string | null>(existing?.swim_group_id || null);
+  const [rodSpotId, setRodSpotId] = useState<string | null>(existing?.rod_spot_id || null);
   const [bait, setBait] = useState(existing?.bait || '');
   const [rig, setRig] = useState(existing?.rig || '');
   const [hook, setHook] = useState(existing?.hook || '');
@@ -3184,6 +3191,11 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
         date: new Date(date).toISOString(), trip_id,
         lake: trimmedLake || null, lake_id: resolvedLakeId,
         swim: swim.trim() || null,
+        // Persist the picker selection. If the user typed a free-text
+        // swim, both ids are null and the catch behaves like a legacy
+        // text-only entry.
+        swim_group_id: swimGroupId,
+        rod_spot_id: rodSpotId,
         bait: bait.trim() || null, rig: rig.trim() || null, hook: hook.trim() || null, notes: notes.trim() || null,
         weather, moon,
         latitude: lat, longitude: lng,
@@ -3387,7 +3399,15 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
             }}
           />
           <PrivacyLabel text="Swim / Peg" hidden={fieldVis.swim === 'private'} onToggle={() => toggleFieldVis('swim')} />
-          <input className="input" placeholder="e.g. 12" value={swim} onChange={(e) => setSwim(e.target.value)} style={{ marginBottom: 14 }} />
+          <SwimRodPicker
+            lakeId={pickedLakeId}
+            value={{ swim: swim || null, swim_group_id: swimGroupId, rod_spot_id: rodSpotId }}
+            onChange={(v) => {
+              setSwim(v.swim || '');
+              setSwimGroupId(v.swim_group_id);
+              setRodSpotId(v.rod_spot_id);
+            }}
+          />
           <PrivacyLabel text="Bait" hidden={fieldVis.bait === 'private'} onToggle={() => toggleFieldVis('bait')} />
           <div style={{ marginBottom: 14 }}><GearItemPicker type="bait" value={bait} onChange={setBait} meId={me.id} /></div>
           <PrivacyLabel text="Rig" hidden={fieldVis.rig === 'private'} onToggle={() => toggleFieldVis('rig')} />
@@ -3851,6 +3871,10 @@ export function CatchDetail({ catchData, me, profilesById, trips, stackLevel, on
   const trip = catchData.trip_id ? trips.find(t => t.id === catchData.trip_id) : null;
   const weather = catchData.weather;
   const moon = catchData.moon;
+  // Resolve the linked rod spot when present so the swim row can render
+  // wraps + bottom-type alongside the swim/rod labels.
+  const rodSpotQuery = useRodSpot(catchData.rod_spot_id);
+  const rodSpot = rodSpotQuery.data || null;
   // Resolved photo URL list. Multi-photo catches read directly from
   // photo_urls; legacy single-photo rows fall back to the derived path
   // until the migration backfill catches them.
@@ -4012,9 +4036,33 @@ export function CatchDetail({ catchData, me, profilesById, trips, stackLevel, on
           if (!value) return null;
           return <DetailRow key={key} icon={icon} label={label} value={value} privateBadge={isPrivate} />;
         };
+        // Swim/rod rows. When the catch is linked to a rod_spot we can show
+        // rich data (label + wraps + bottom type); otherwise we fall back
+        // to the legacy free-text swim row. Privacy still applies — if the
+        // angler hid 'swim' from non-creators, both rich rows go to "Hidden".
+        const swimPrivate = fv.swim === 'private';
+        let swimRows: React.ReactNode[] = [];
+        if (swimPrivate && !isMyCatch) {
+          swimRows = [<DetailRow key="swim" icon={<Lock size={14} />} label="Swim" value="Hidden by angler" muted />];
+        } else if (rodSpot) {
+          const wraps = rodSpot.wraps_actual ?? rodSpot.wraps_calculated ?? calcWraps(
+            rodSpot.swim_latitude, rodSpot.swim_longitude, rodSpot.spot_latitude, rodSpot.spot_longitude,
+          );
+          const bottom = bottomMeta(rodSpot.bottom_type);
+          const swimText = rodSpot.swim_label || catchData.swim || '—';
+          const rodLabel = rodSpot.spot_label || 'Rod';
+          const rodValue = `${rodLabel} · ${wraps} wrap${wraps === 1 ? '' : 's'}${bottom ? ` · ${bottom.emoji} ${bottom.label}` : ''}`;
+          swimRows = [
+            <DetailRow key="swim" icon={<MapPin size={14} />} label="Swim" value={swimText} privateBadge={swimPrivate} />,
+            <DetailRow key="rod" label="Rod" value={rodValue} privateBadge={swimPrivate} />,
+          ];
+        } else {
+          const fallback = renderField('swim', 'Swim', <MapPin size={14} />);
+          if (fallback) swimRows = [fallback];
+        }
         const rows = [
           renderField('lake', 'Lake', <MapPin size={14} />),
-          renderField('swim', 'Swim', <MapPin size={14} />),
+          ...swimRows,
           renderField('bait', 'Bait'),
           renderField('rig', 'Rig'),
         ].filter(Boolean);

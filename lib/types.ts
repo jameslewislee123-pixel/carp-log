@@ -138,6 +138,11 @@ export type Catch = {
   latitude: number | null;
   longitude: number | null;
   lake_id: string | null;
+  // Optional links to the angler's pinned swim/rod data. Both nullable —
+  // catches saved with text-only `swim` keep working unchanged. swim_group_id
+  // matches rod_spots.swim_group_id; rod_spot_id is a true FK.
+  swim_group_id: string | null;
+  rod_spot_id: string | null;
   visibility: CatchVisibility;
   field_visibility: FieldVisibility;
   // Ordered list of public storage URLs. Index 0 is the cover. Always has
