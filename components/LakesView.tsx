@@ -247,7 +247,7 @@ export default function LakesView({ meId, onOpenLake }: { meId: string; onOpenLa
               {sorted.map(l => {
                 const isOwner = !!l.createdBy && l.createdBy === meId;
                 const actionLabel = isOwner ? 'Delete' : 'Remove';
-                const actionColor = isOwner ? '#dc2626' : '#b45309';
+                const actionColor = isOwner ? '#ff3b30' : '#ff9500';
                 const rowOpen = openRowId === l.key;
                 const card = (
                   <LakeCard

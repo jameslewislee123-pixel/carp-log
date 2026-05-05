@@ -30,7 +30,7 @@ export default function SwipeableRow({
   children,
   onAction,
   actionLabel = 'Delete',
-  actionColor = '#dc2626',
+  actionColor = '#ff3b30',
   isOpen,
   onOpen,
   onClose,
@@ -80,11 +80,10 @@ export default function SwipeableRow({
         position: 'relative',
         overflow: 'hidden',
         borderRadius: 22,
-        // Solid backing so the action color can't bleed past the rounded card.
-        background: '#0A1816',
       }}
     >
-      {/* Action button revealed underneath */}
+      {/* Action button — sits at the right edge, behind the foreground row.
+          Hidden at rest because the opaque motion.div on top covers it. */}
       <div
         aria-hidden={!isOpen}
         style={{
@@ -94,8 +93,6 @@ export default function SwipeableRow({
           bottom: 0,
           width: BUTTON_WIDTH,
           background: actionColor,
-          display: 'flex',
-          alignItems: 'stretch',
           zIndex: 0,
         }}
       >
@@ -105,7 +102,6 @@ export default function SwipeableRow({
           tabIndex={isOpen ? 0 : -1}
           aria-label={actionLabel}
           style={{
-            flex: 1,
             background: 'transparent',
             border: 'none',
             color: 'white',
@@ -113,6 +109,8 @@ export default function SwipeableRow({
             fontSize: 13,
             fontWeight: 600,
             cursor: 'pointer',
+            width: '100%',
+            height: '100%',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -121,12 +119,15 @@ export default function SwipeableRow({
             padding: 0,
           }}
         >
-          <Trash2 size={20} />
-          {actionLabel}
+          <Trash2 size={20} strokeWidth={2.2} />
+          <span>{actionLabel}</span>
         </button>
       </div>
 
-      {/* Foreground row — draggable */}
+      {/* Foreground row — draggable. Solid background is critical: it
+          obscures the action button when the row is at rest. Without it,
+          the semi-transparent .card underneath would let the color bleed
+          through. */}
       <motion.div
         drag="x"
         dragDirectionLock
@@ -134,7 +135,13 @@ export default function SwipeableRow({
         dragElastic={{ left: 0.15, right: 0 }}
         dragMomentum={false}
         onDragEnd={handleDragEnd}
-        style={{ x, position: 'relative', zIndex: 1, touchAction: 'pan-y' }}
+        style={{
+          x,
+          position: 'relative',
+          zIndex: 1,
+          background: '#0A1816',
+          touchAction: 'pan-y',
+        }}
         animate={{ x: isOpen ? -BUTTON_WIDTH : 0 }}
         transition={{ type: 'spring', stiffness: 500, damping: 40 }}
       >

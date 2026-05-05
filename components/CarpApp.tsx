@@ -1705,7 +1705,7 @@ function TripsView({ me, trips, catches, profilesById, onOpenTrip, onAddTrip, on
                 onClose={() => { if (rowOpen) setOpenRowId(null); }}
                 onAction={() => handleRowAction(t)}
                 actionLabel={isOwner ? 'Delete' : 'Leave'}
-                actionColor={isOwner ? '#dc2626' : '#b45309'}
+                actionColor={isOwner ? '#ff3b30' : '#ff9500'}
               >
                 <div className="card tap fade-in"
                   onClick={() => { if (rowOpen) { setOpenRowId(null); return; } onOpenTrip(t); }}
