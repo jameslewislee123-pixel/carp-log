@@ -2886,6 +2886,10 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
       ? { lat: existing.latitude, lng: existing.longitude }
       : null,
   );
+  // Captures the canonical lakes.id when the user picks an autocomplete
+  // result. Cleared whenever they edit the typed name freely; in that
+  // case handleSave defers to db.resolveOrCreateLake at submit-time.
+  const [pickedLakeId, setPickedLakeId] = useState<string | null>(existing?.lake_id || null);
   const [swim, setSwim] = useState(existing?.swim || '');
   const [bait, setBait] = useState(existing?.bait || '');
   const [rig, setRig] = useState(existing?.rig || '');
@@ -3114,13 +3118,33 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
         } catch {}
       }
 
+      // Resolve the lake to a canonical lakes.id BEFORE insert. If the
+      // user picked a lake from the autocomplete we already have it.
+      // Otherwise look it up case-insensitively or create a manual row
+      // at the catch's coords. We do this client-side so the typed name
+      // "Linear" links to the seed lake "Linear" instead of the
+      // ensure_lake_row trigger creating a duplicate manual row.
+      // Failure is non-fatal: we let the trigger fall back to its
+      // own auto-link path so the catch save still succeeds.
+      let resolvedLakeId: string | null = pickedLakeId;
+      const trimmedLake = lake.trim();
+      if (!resolvedLakeId && trimmedLake) {
+        try {
+          const r = await db.resolveOrCreateLake({ name: trimmedLake, fallbackLat: lat, fallbackLng: lng });
+          resolvedLakeId = r.id;
+        } catch (e) {
+          console.warn('[handleSave] resolveOrCreateLake failed, deferring to ensure_lake_row trigger', e);
+        }
+      }
+
       const slots = lost ? [] : photoSlots;
       const payload: db.CatchInput = {
         ...(existing ? { id: existing.id } : {}),
         lost, lbs: lost ? 0 : (parseInt(lbs) || 0), oz: lost ? 0 : (parseInt(oz) || 0),
         species: lost ? null : species,
         date: new Date(date).toISOString(), trip_id,
-        lake: lake.trim() || null, swim: swim.trim() || null,
+        lake: trimmedLake || null, lake_id: resolvedLakeId,
+        swim: swim.trim() || null,
         bait: bait.trim() || null, rig: rig.trim() || null, hook: hook.trim() || null, notes: notes.trim() || null,
         weather, moon,
         latitude: lat, longitude: lng,
@@ -3312,9 +3336,10 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
           <PrivacyLabel text="Lake" hidden={fieldVis.lake === 'private'} onToggle={() => toggleFieldVis('lake')} />
           <LakeAutocomplete
             value={lake}
-            onChange={(v) => { setLake(v); setLakeCoordOverride(null); }}
+            onChange={(v) => { setLake(v); setLakeCoordOverride(null); setPickedLakeId(null); }}
             onPickLake={(l) => {
               setLake(l.name);
+              setPickedLakeId(l.id);
               if (l.latitude != null && l.longitude != null) {
                 setLakeCoordOverride({ lat: l.latitude, lng: l.longitude });
               } else {
@@ -3414,10 +3439,20 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
 // as the user types, plus a "Browse saved" link that opens a full picker.
 // Pure UI; the parent owns the lake string state and the coord override.
 // ============================================================
+// What a parent receives when the user picks a lake from the autocomplete.
+// id can be null for the "use this typed name" fallback (the parent then
+// resolves at save-time via db.resolveOrCreateLake).
+type PickedLake = {
+  id: string | null;
+  name: string;
+  latitude: number | null;
+  longitude: number | null;
+};
+
 function LakeAutocomplete({ value, onChange, onPickLake }: {
   value: string;
   onChange: (v: string) => void;
-  onPickLake: (lake: EnrichedLake) => void;
+  onPickLake: (lake: PickedLake) => void;
 }) {
   const enriched = useLakesEnriched();
   const [focused, setFocused] = useState(false);
@@ -3438,10 +3473,37 @@ function LakeAutocomplete({ value, onChange, onPickLake }: {
       .slice(0, 6);
   }, [value, enriched]);
 
-  const showDropdown = focused && matches.length > 0;
+  // Server-side ILIKE against the seed dataset (UK + France imports).
+  // Debounced 250ms, ≥3 chars, suppresses lakes the user already has in
+  // their related set so we don't duplicate a row above as a "seed" pill.
+  const localIds = useMemo(() => new Set(matches.map(m => m.id).filter(Boolean) as string[]), [matches]);
+  const localNames = useMemo(() => new Set(matches.map(m => m.name.toLowerCase())), [matches]);
+  const [seedResults, setSeedResults] = useState<Lake[]>([]);
+  useEffect(() => {
+    const trimmed = value.trim();
+    if (trimmed.length < 3) { setSeedResults([]); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const results = await db.searchSeedLakes(trimmed, 6);
+        if (!cancelled) setSeedResults(results);
+      } catch { if (!cancelled) setSeedResults([]); }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [value]);
+  const seedToShow = useMemo(
+    () => seedResults.filter(l => !localIds.has(l.id) && !localNames.has(l.name.toLowerCase())).slice(0, 5),
+    [seedResults, localIds, localNames],
+  );
+
   // If the typed name exactly matches a saved lake we don't need to suggest
   // it (the user is already there). Hide the dropdown in that case.
-  const exactMatch = matches.length === 1 && matches[0].name.toLowerCase() === value.trim().toLowerCase();
+  const trimmed = value.trim();
+  const exactInLocal = matches.some(m => m.name.toLowerCase() === trimmed.toLowerCase());
+  const exactInSeed = seedResults.some(l => l.name.toLowerCase() === trimmed.toLowerCase());
+  const exactMatch = exactInLocal || exactInSeed;
+  const showFallback = focused && trimmed.length >= 3 && !exactMatch;
+  const showDropdown = focused && (matches.length > 0 || seedToShow.length > 0 || showFallback);
 
   return (
     <div style={{ position: 'relative', marginBottom: 14 }}>
@@ -3454,10 +3516,10 @@ function LakeAutocomplete({ value, onChange, onPickLake }: {
         // Defer blur so a tap on a dropdown row registers before we hide it.
         onBlur={() => setTimeout(() => setFocused(false), 150)}
       />
-      {showDropdown && !exactMatch && (
+      {showDropdown && (
         <div style={{
           position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 5,
-          maxHeight: 240, overflowY: 'auto',
+          maxHeight: 280, overflowY: 'auto',
           background: 'rgba(10, 24, 22, 0.96)',
           backdropFilter: 'blur(28px) saturate(180%)', WebkitBackdropFilter: 'blur(28px) saturate(180%)',
           border: '1px solid rgba(234,201,136,0.18)',
@@ -3466,8 +3528,39 @@ function LakeAutocomplete({ value, onChange, onPickLake }: {
           padding: 4,
         }}>
           {matches.map(l => (
-            <LakeAutocompleteRow key={l.key} lake={l} onPick={() => onPickLake(l)} />
+            <LakeAutocompleteRow key={l.key} lake={l} onPick={() => onPickLake({
+              id: l.id, name: l.name, latitude: l.latitude, longitude: l.longitude,
+            })} />
           ))}
+          {seedToShow.length > 0 && matches.length > 0 && (
+            <div style={{ height: 1, background: 'rgba(234,201,136,0.12)', margin: '4px 8px' }} />
+          )}
+          {seedToShow.map(l => (
+            <SeedAutocompleteRow key={l.id} lake={l} onPick={() => onPickLake({
+              id: l.id, name: l.name, latitude: l.latitude, longitude: l.longitude,
+            })} />
+          ))}
+          {showFallback && (
+            <button
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); onPickLake({ id: null, name: trimmed, latitude: null, longitude: null }); }}
+              onTouchStart={(e) => { e.preventDefault(); onPickLake({ id: null, name: trimmed, latitude: null, longitude: null }); }}
+              className="tap"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                width: '100%', padding: '10px 10px',
+                background: 'transparent', border: 'none', borderTop: matches.length + seedToShow.length > 0 ? '1px solid rgba(234,201,136,0.12)' : 'none',
+                borderRadius: 10,
+                color: 'var(--gold-2)', textAlign: 'left', fontFamily: 'inherit',
+                cursor: 'pointer', fontSize: 13, fontWeight: 600,
+              }}
+            >
+              <Plus size={14} style={{ flexShrink: 0 }} />
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                Use “{trimmed}” as a new lake at current location
+              </span>
+            </button>
+          )}
         </div>
       )}
       <button
@@ -3483,11 +3576,44 @@ function LakeAutocomplete({ value, onChange, onPickLake }: {
       >Or browse saved lakes →</button>
       {showPicker && (
         <LakePicker
-          onSelect={(l) => { onPickLake(l); setShowPicker(false); }}
+          onSelect={(l) => { onPickLake({ id: l.id, name: l.name, latitude: l.latitude, longitude: l.longitude }); setShowPicker(false); }}
           onClose={() => setShowPicker(false)}
         />
       )}
     </div>
+  );
+}
+
+function SeedAutocompleteRow({ lake, onPick }: { lake: Lake; onPick: () => void }) {
+  return (
+    <button
+      type="button"
+      onMouseDown={(e) => { e.preventDefault(); onPick(); }}
+      onTouchStart={(e) => { e.preventDefault(); onPick(); }}
+      className="tap"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        width: '100%', padding: '10px 10px',
+        background: 'transparent', border: 'none', borderRadius: 10,
+        color: 'var(--text)', textAlign: 'left', fontFamily: 'inherit',
+        cursor: 'pointer',
+      }}
+    >
+      <MapPinned size={14} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lake.name}</div>
+        {(lake.region || lake.country) && (
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {[lake.region, lake.country].filter(Boolean).join(', ')}
+          </div>
+        )}
+      </div>
+      <span style={{
+        fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 999,
+        background: 'rgba(212,182,115,0.12)', color: 'var(--gold-2)',
+        border: '1px solid rgba(234,201,136,0.3)', flexShrink: 0,
+      }}>Seed</span>
+    </button>
   );
 }
 
@@ -4775,7 +4901,14 @@ function LakeDetailLoader({ name, catches, profilesById, me, onClose, onOpenCatc
     return () => { cancelled = true; };
   }, [name]);
   if (!lake) return null;
-  const lakeCatches = catches.filter(c => (c.lake || '').trim().toLowerCase() === lake.name.trim().toLowerCase());
+  // Prefer the FK link (set at save-time by AddCatch via resolveOrCreateLake,
+  // or by the ensure_lake_row trigger). Fall back to case-insensitive name
+  // match so legacy catches that pre-date the lake_id backfill still surface.
+  const lakeNameLower = lake.name.trim().toLowerCase();
+  const lakeCatches = catches.filter(c =>
+    (c.lake_id && c.lake_id === lake.id) ||
+    (!c.lake_id && (c.lake || '').trim().toLowerCase() === lakeNameLower)
+  );
   return <LakeDetail lake={lake} lakeCatches={lakeCatches} profilesById={profilesById} me={me} onClose={onClose} onOpenCatch={onOpenCatch} />;
 }
 

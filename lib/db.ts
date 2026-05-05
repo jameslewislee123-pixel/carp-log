@@ -189,7 +189,8 @@ export type CatchInput = {
   lbs: number; oz: number;
   species: string | null;
   date: string;
-  lake?: string | null; swim?: string | null; bait?: string | null; rig?: string | null; hook?: string | null; notes?: string | null;
+  lake?: string | null; lake_id?: string | null;
+  swim?: string | null; bait?: string | null; rig?: string | null; hook?: string | null; notes?: string | null;
   has_photo: boolean;
   weather: Weather | null;
   moon: Moon | null;
@@ -660,6 +661,52 @@ export async function getLakeByName(name: string): Promise<Lake | null> {
   // case-insensitive lookup
   const { data } = await supabase().from('lakes').select('*').ilike('name', name.trim()).maybeSingle();
   return (data as Lake) || null;
+}
+
+// Resolve a typed lake name to a canonical lakes.id, creating a manual
+// row if no existing lake matches. Always bookmarks the resolved lake
+// for the current user so it surfaces in the Lakes tab afterwards.
+//
+// Used by AddCatch's save flow: user types "Linear" → we look up the
+// lake row (matching seed lakes case-insensitively), or create a new
+// manual row at fallback coords if nothing matches. This avoids the
+// duplicate-row problem the ensure_lake_row trigger creates when a
+// typed name doesn't exact-match a seed lake.
+export async function resolveOrCreateLake(input: {
+  name: string;
+  fallbackLat?: number | null;
+  fallbackLng?: number | null;
+}): Promise<{ id: string; created: boolean }> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const trimmed = input.name.trim();
+  if (!trimmed) throw new Error('Lake name required');
+
+  // Case-insensitive exact match against ANY existing lake row (user's
+  // related set, seed dataset, OSM/Nominatim picks). The lakes.name
+  // column has a `lower(name)` index from migration 0007, so this is
+  // a btree lookup, not a sequential scan.
+  const { data: matches } = await supabase()
+    .from('lakes').select('id').ilike('name', trimmed).limit(1);
+  if (matches && matches[0]) {
+    const id = (matches[0] as { id: string }).id;
+    try { await saveLakeForUser(id); } catch (e) { console.warn('[resolveOrCreateLake] bookmark failed', e); }
+    return { id, created: false };
+  }
+
+  // No match — create a manual lake at the fallback coords (caller
+  // typically passes the catch's GPS or the device's cached location).
+  const { data: created, error } = await supabase().from('lakes').insert({
+    name: trimmed,
+    latitude: input.fallbackLat ?? null,
+    longitude: input.fallbackLng ?? null,
+    created_by: user.id,
+    source: 'manual',
+  }).select('id').single();
+  if (error) throw error;
+  const id = (created as { id: string }).id;
+  try { await saveLakeForUser(id); } catch (e) { console.warn('[resolveOrCreateLake] bookmark failed', e); }
+  return { id, created: true };
 }
 
 // ============ USER-SAVED LAKES (bookmarks) ============
