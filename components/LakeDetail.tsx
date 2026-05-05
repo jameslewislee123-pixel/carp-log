@@ -7,7 +7,6 @@ import * as db from '@/lib/db';
 import { useRodSpotsAtLake, useGearItems } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
 import type { Catch, Lake, LakeAnnotation, LakeAnnotationType, Profile, RodSpot } from '@/lib/types';
-import { formatWeight, totalOz } from '@/lib/util';
 import { geocodeLake } from '@/lib/weather';
 import { directionsUrl } from '@/lib/osm';
 import { calculateWraps } from '@/lib/wraps';
@@ -112,14 +111,6 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
     return () => { cancelled = true; };
   }, [lake.id]); // eslint-disable-line
 
-  const stats = useMemo(() => {
-    const landed = lakeCatches.filter(c => !c.lost);
-    const biggest = landed.reduce<Catch | null>((m, c) => !m || totalOz(c.lbs, c.oz) > totalOz(m.lbs, m.oz) ? c : m, null);
-    const totalOzAll = landed.reduce((s, c) => s + totalOz(c.lbs, c.oz), 0);
-    const distinctAnglers = new Set(landed.map(c => c.angler_id)).size;
-    return { count: landed.length, biggest, totalOzAll, distinctAnglers };
-  }, [lakeCatches]);
-
   const visibleAnnos = filter === 'all' ? annos : annos.filter(a => a.type === filter);
   const myCatchesHere = lakeCatches.filter(c => c.angler_id === me.id).length;
   const canAnnotate = myCatchesHere > 0;
@@ -152,6 +143,26 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
                 border: '1px solid rgba(234,201,136,0.25)',
               }}>Satellite</span>
             )}
+            {center && (
+              <a
+                href={directionsUrl(center.lat, center.lng, lake.name)}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`Get directions to ${lake.name}`}
+                style={{
+                  position: 'absolute', top: 10, right: 10,
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '8px 12px', borderRadius: 10,
+                  background: 'rgba(5,14,13,0.85)',
+                  border: '1px solid rgba(234,201,136,0.3)',
+                  backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+                  color: 'var(--gold-2)', fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
+                  textDecoration: 'none', cursor: 'pointer',
+                }}
+              >
+                <Navigation size={13} /> Directions
+              </a>
+            )}
             <div style={{ position: 'absolute', left: 14, right: 14, bottom: 14 }}>
               <div style={{ fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--gold-2)', fontWeight: 700, marginBottom: 4, textShadow: '0 1px 4px rgba(0,0,0,0.6)' }}>Lake</div>
               <h2 className="display-font" style={{ fontSize: 26, margin: 0, fontWeight: 500, lineHeight: 1.1, color: 'var(--text)', textShadow: '0 2px 12px rgba(0,0,0,0.7)', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
@@ -166,40 +177,37 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
             </div>
           </div>
         ) : (
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--gold-2)', fontWeight: 700, marginBottom: 4 }}>Lake</div>
-            <h2 className="display-font" style={{ fontSize: 28, margin: 0, fontWeight: 500, lineHeight: 1.1, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-              <MapPinned size={20} style={{ color: 'var(--gold)' }} />
-              {lake.name}
-            </h2>
+          <div style={{
+            marginBottom: 14, display: 'flex', alignItems: 'flex-start', gap: 10,
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--gold-2)', fontWeight: 700, marginBottom: 4 }}>Lake</div>
+              <h2 className="display-font" style={{ fontSize: 28, margin: 0, fontWeight: 500, lineHeight: 1.1, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <MapPinned size={20} style={{ color: 'var(--gold)' }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{lake.name}</span>
+              </h2>
+            </div>
+            {center && (
+              <a
+                href={directionsUrl(center.lat, center.lng, lake.name)}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`Get directions to ${lake.name}`}
+                style={{
+                  flexShrink: 0, marginTop: 4,
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '8px 12px', borderRadius: 10,
+                  background: 'rgba(234,201,136,0.12)',
+                  border: '1px solid rgba(234,201,136,0.3)',
+                  color: 'var(--gold-2)', fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
+                  textDecoration: 'none', cursor: 'pointer',
+                }}
+              >
+                <Navigation size={13} /> Directions
+              </a>
+            )}
           </div>
         )}
-
-        {center && (
-          <a
-            href={directionsUrl(center.lat, center.lng, lake.name)}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={`Get directions to ${lake.name}`}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 8,
-              padding: '10px 16px', marginBottom: 14,
-              background: 'rgba(234,201,136,0.12)',
-              border: '1px solid rgba(234,201,136,0.3)',
-              borderRadius: 12,
-              color: 'var(--gold-2)', fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
-              textDecoration: 'none', cursor: 'pointer',
-            }}
-          >
-            <Navigation size={14} /> Directions
-          </a>
-        )}
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 14 }}>
-          <Stat label="Fish" value={stats.count} />
-          <Stat label="Biggest" value={stats.biggest ? formatWeight(stats.biggest.lbs, stats.biggest.oz) : '—'} />
-          <Stat label="Anglers" value={stats.distinctAnglers} />
-        </div>
 
         {center && (
           <MapInner
@@ -657,15 +665,6 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
         />
       )}
     </>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div style={{ background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', borderRadius: 14, padding: 12, textAlign: 'center' }}>
-      <div className="num-display" style={{ fontSize: 20, color: 'var(--gold-2)' }}>{value}</div>
-      <div style={{ fontSize: 10, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600, marginTop: 2 }}>{label}</div>
-    </div>
   );
 }
 

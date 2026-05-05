@@ -363,7 +363,7 @@ export default function CarpApp() {
           <PullToRefresh onRefresh={async () => {
             await qc.invalidateQueries({ queryKey: QK.catches.all });
           }}>
-            <Stats catches={catches} profilesById={profilesById} me={me} onOpen={setDetailCatch} />
+            <Stats catches={catches} profilesById={profilesById} me={me} onOpen={setDetailCatch} onOpenLake={setDetailLakeName} />
           </PullToRefresh>
         )}
         {view === 'lakes' && (
@@ -2398,9 +2398,10 @@ function AddTripModal({ existing, me, onClose, onSave }: {
 }
 
 // ============ STATS ============
-function Stats({ catches, profilesById, me, onOpen }: {
+function Stats({ catches, profilesById, me, onOpen, onOpenLake }: {
   catches: CatchT[]; profilesById: Record<string, Profile>; me: Profile;
   onOpen: (c: CatchT) => void;
+  onOpenLake: (name: string) => void;
 }) {
   const [tab, setTab] = useState<'personal' | 'crew' | 'time' | 'bait' | 'lakes'>('personal');
   if (catches.length === 0) return <div style={{ padding: '40px 20px' }}><EmptyState /></div>;
@@ -2435,7 +2436,7 @@ function Stats({ catches, profilesById, me, onOpen }: {
       {tab === 'crew' && <StatsCrew catches={catches} profilesById={profilesById} me={me} onOpen={onOpen} />}
       {tab === 'time' && <StatsTime catches={catches} />}
       {tab === 'bait' && <StatsBait catches={catches} />}
-      {tab === 'lakes' && <StatsLakesTab />}
+      {tab === 'lakes' && <StatsLakesTab onOpenLake={onOpenLake} />}
     </div>
   );
 }
@@ -2446,7 +2447,7 @@ function Stats({ catches, profilesById, me, onOpen }: {
 // venue management. Both surfaces read from useLakeStatsTiles so the
 // numbers stay in sync. Below the tiles is a per-lake breakdown — one
 // row per lake with count / biggest / total / anglers / last visit.
-function StatsLakesTab() {
+function StatsLakesTab({ onOpenLake }: { onOpenLake: (name: string) => void }) {
   const t = useLakeStatsTiles();
   const catches = useCatches().data || [];
   const enriched = useLakesEnriched();
@@ -2515,15 +2516,23 @@ function StatsLakesTab() {
             Per-lake breakdown
           </div>
           {rows.map(r => (
-            <div key={r.key} className="card" style={{
-              padding: 12, display: 'flex', flexDirection: 'column', gap: 6,
-              background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.14)',
-            }}>
+            <button
+              key={r.key}
+              onClick={() => onOpenLake(r.name)}
+              className="card tap"
+              style={{
+                padding: 12, display: 'flex', flexDirection: 'column', gap: 6,
+                background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.14)',
+                textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--text)',
+                width: '100%',
+              }}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                 <MapPinned size={14} style={{ color: 'var(--gold)', flexShrink: 0 }} />
                 <div className="display-font" style={{ fontSize: 15, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
                   {r.name}
                 </div>
+                <ChevronRight size={14} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
                 <PerLakeStat label="Catches" value={r.count} />
@@ -2536,7 +2545,7 @@ function StatsLakesTab() {
                   Last visit: {r.lastAt.toLocaleDateString()}
                 </div>
               )}
-            </div>
+            </button>
           ))}
         </div>
       )}
