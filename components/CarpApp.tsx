@@ -42,7 +42,7 @@ import { directionsUrl } from '@/lib/osm';
 import {
   useMe, useCatches, useTrips, useMyNotifyConfig, useUnreadCount,
   useProfilesByIds, useCommentCounts, useLakeStatsTiles, useLakesEnriched,
-  useCatchLikeCounts, useMyCatchLikes, useRodSpot,
+  useCatchLikeCounts, useMyCatchLikes, useRodSpot, useGearItems,
   prefetchTrip, prefetchLake, prefetchNotifications, prefetchFriendships,
   type EnrichedLake,
 } from '@/lib/queries';
@@ -2940,6 +2940,37 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
   const [bait, setBait] = useState(existing?.bait || '');
   const [rig, setRig] = useState(existing?.rig || '');
   const [hook, setHook] = useState(existing?.hook || '');
+  // Tracks whether bait/rig/hook were last set by rod-spot auto-fill (vs.
+  // manually). Lets us show "Auto-filled from rod" hints that disappear
+  // the moment the user picks a different value.
+  const [autoFromRod, setAutoFromRod] = useState<{ bait?: boolean; rig?: boolean; hook?: boolean }>({});
+  // Skip auto-fill for the rod the catch was originally saved with — when
+  // editing, the user's existing bait/rig/hook are intentional and we
+  // shouldn't replay rod defaults over them.
+  const initialRodSpotIdRef = useRef<string | null>(existing?.rod_spot_id || null);
+  const lastAutoFilledRodRef = useRef<string | null>(initialRodSpotIdRef.current);
+  const rodSpotForAutoFillQuery = useRodSpot(rodSpotId);
+  const myGearQuery = useGearItems();
+  useEffect(() => {
+    const rs = rodSpotForAutoFillQuery.data;
+    if (!rs) return;
+    if (rs.id === lastAutoFilledRodRef.current) return;
+    lastAutoFilledRodRef.current = rs.id;
+    const gearList = myGearQuery.data || [];
+    const nameOf = (id: string | null) => id ? gearList.find(g => g.id === id)?.name || '' : '';
+    const baitName = nameOf(rs.default_bait_id);
+    const rigName  = nameOf(rs.default_rig_id);
+    const hookName = nameOf(rs.default_hook_id);
+    const next: typeof autoFromRod = {};
+    if (baitName && !bait) { setBait(baitName); next.bait = true; }
+    if (rigName  && !rig)  { setRig(rigName);   next.rig  = true; }
+    if (hookName && !hook) { setHook(hookName); next.hook = true; }
+    if (Object.keys(next).length) setAutoFromRod(prev => ({ ...prev, ...next }));
+    // Read the latest bait/rig/hook from closure on each rod-spot change;
+    // re-running on bait/rig/hook keystrokes would defeat the "only fill
+    // empty fields" rule.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rodSpotForAutoFillQuery.data, myGearQuery.data]);
   const [notes, setNotes] = useState(existing?.notes || '');
   const [showNotes, setShowNotes] = useState(!!existing?.notes);
   // Per-field privacy map. Anything not in the map (or 'public') is visible
@@ -3409,11 +3440,20 @@ export function AddCatchModal({ me, trips, activeTrips, onClose, onSave, existin
             }}
           />
           <PrivacyLabel text="Bait" hidden={fieldVis.bait === 'private'} onToggle={() => toggleFieldVis('bait')} />
-          <div style={{ marginBottom: 14 }}><GearItemPicker type="bait" value={bait} onChange={setBait} meId={me.id} /></div>
+          <div style={{ marginBottom: autoFromRod.bait ? 4 : 14 }}>
+            <GearItemPicker type="bait" value={bait} onChange={(v) => { setBait(v); setAutoFromRod(p => ({ ...p, bait: false })); }} meId={me.id} />
+          </div>
+          {autoFromRod.bait && <AutoFillHint />}
           <PrivacyLabel text="Rig" hidden={fieldVis.rig === 'private'} onToggle={() => toggleFieldVis('rig')} />
-          <div style={{ marginBottom: 14 }}><GearItemPicker type="rig" value={rig} onChange={setRig} meId={me.id} /></div>
+          <div style={{ marginBottom: autoFromRod.rig ? 4 : 14 }}>
+            <GearItemPicker type="rig" value={rig} onChange={(v) => { setRig(v); setAutoFromRod(p => ({ ...p, rig: false })); }} meId={me.id} />
+          </div>
+          {autoFromRod.rig && <AutoFillHint />}
           <label className="label">Hook</label>
-          <div style={{ marginBottom: 14 }}><GearItemPicker type="hook" value={hook} onChange={setHook} meId={me.id} /></div>
+          <div style={{ marginBottom: autoFromRod.hook ? 4 : 14 }}>
+            <GearItemPicker type="hook" value={hook} onChange={(v) => { setHook(v); setAutoFromRod(p => ({ ...p, hook: false })); }} meId={me.id} />
+          </div>
+          {autoFromRod.hook && <AutoFillHint />}
           {showNotes ? (
             <>
               <PrivacyLabel text="Notes" hidden={fieldVis.notes === 'private'} onToggle={() => toggleFieldVis('notes')} />
@@ -3763,6 +3803,20 @@ function LakePicker({ onSelect, onClose }: { onSelect: (l: EnrichedLake) => void
 // Label + eye-toggle row for privacy-aware fields on AddCatchModal.
 // Tapping the eye flips the field between visible (default) and private —
 // when private, other viewers see "Hidden by angler" in CatchDetail.
+// Subtle hint shown under bait/rig/hook fields when the value came from
+// the picked rod's defaults. Disappears the moment the user changes the
+// field (the parent flips the autoFromRod flag in the picker's onChange).
+function AutoFillHint() {
+  return (
+    <div style={{
+      fontSize: 11, color: 'var(--gold-2)', fontStyle: 'italic',
+      marginTop: 4, marginBottom: 14, paddingLeft: 4,
+    }}>
+      Auto-filled from rod
+    </div>
+  );
+}
+
 function PrivacyLabel({ text, hidden, onToggle }: { text: string; hidden: boolean; onToggle: () => void }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>

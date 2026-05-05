@@ -268,6 +268,12 @@ export type RodSpot = {
   // nuance like "gravel patch with weed edge"; bottom_type is the
   // at-a-glance icon. Optional.
   bottom_type: string | null;
+  // Default gear for this rod spot — when set, AddCatch's SwimRodPicker
+  // pre-fills the catch's bait/rig/hook on rod selection (only if that
+  // catch field is still empty). All optional FKs to gear_items.id.
+  default_bait_id: string | null;
+  default_rig_id: string | null;
+  default_hook_id: string | null;
   created_at?: string;
   updated_at?: string;
 };

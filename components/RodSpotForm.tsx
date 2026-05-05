@@ -1,10 +1,11 @@
 'use client';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Check, Loader2, Trash2 } from 'lucide-react';
 import * as db from '@/lib/db';
-import type { RodSpot } from '@/lib/types';
+import type { RodSpot, GearItem, GearType } from '@/lib/types';
 import { calculateWraps, haversineMeters } from '@/lib/wraps';
 import { BOTTOM_TYPES, type BottomType } from '@/lib/bottomTypes';
+import { useGearItems } from '@/lib/queries';
 import { VaulModalShell } from './CarpApp';
 
 // Combined create / edit form for a single rod spot. Lives in a vaul sheet
@@ -41,6 +42,19 @@ export default function RodSpotForm({
   const [bottomType, setBottomType] = useState<BottomType | ''>(
     (existing?.bottom_type as BottomType) || '',
   );
+  const [defaultBaitId, setDefaultBaitId] = useState<string>(existing?.default_bait_id || '');
+  const [defaultRigId, setDefaultRigId] = useState<string>(existing?.default_rig_id || '');
+  const [defaultHookId, setDefaultHookId] = useState<string>(existing?.default_hook_id || '');
+
+  const gearQuery = useGearItems();
+  const gearByType = useMemo(() => {
+    const all = gearQuery.data || [];
+    const out: Record<GearType, GearItem[]> = { bait: [], rig: [], hook: [] };
+    for (const g of all) {
+      if (g.type in out) out[g.type as GearType].push(g);
+    }
+    return out;
+  }, [gearQuery.data]);
 
   const calculatedWraps = calculateWraps(
     draft.swim_latitude, draft.swim_longitude,
@@ -77,6 +91,9 @@ export default function RodSpotForm({
         wraps_actual: overrideUsed ? Number(wrapsActual) : null,
         features: features.trim() || null,
         bottom_type: bottomType || null,
+        default_bait_id: defaultBaitId || null,
+        default_rig_id: defaultRigId || null,
+        default_hook_id: defaultHookId || null,
       };
       let saved: RodSpot;
       if (existing) {
@@ -208,6 +225,10 @@ export default function RodSpotForm({
         })}
       </div>
 
+      <DefaultGearSelect label="Default bait"  type="bait" items={gearByType.bait} value={defaultBaitId} onChange={setDefaultBaitId} />
+      <DefaultGearSelect label="Default rig"   type="rig"  items={gearByType.rig}  value={defaultRigId}  onChange={setDefaultRigId}  />
+      <DefaultGearSelect label="Default hook"  type="hook" items={gearByType.hook} value={defaultHookId} onChange={setDefaultHookId} />
+
       <label className="label">Features (optional)</label>
       <textarea
         className="input"
@@ -233,5 +254,40 @@ export default function RodSpotForm({
         </button>
       )}
     </VaulModalShell>
+  );
+}
+
+function DefaultGearSelect({ label, type, items, value, onChange }: {
+  label: string;
+  type: GearType;
+  items: GearItem[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <>
+      <label className="label">{label} (optional)</label>
+      {items.length === 0 ? (
+        <div style={{
+          padding: '10px 12px', borderRadius: 12, marginBottom: 12,
+          background: 'rgba(10,24,22,0.5)', border: '1px dashed rgba(234,201,136,0.18)',
+          color: 'var(--text-3)', fontSize: 12, lineHeight: 1.4,
+        }}>
+          No saved {type === 'bait' ? 'baits' : type === 'rig' ? 'rigs' : 'hooks'}. Add some in Settings → Tackle Box.
+        </div>
+      ) : (
+        <select
+          className="input"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={{ marginBottom: 12, appearance: 'auto', fontFamily: 'inherit' }}
+        >
+          <option value="">None</option>
+          {items.map(g => (
+            <option key={g.id} value={g.id}>{g.name}</option>
+          ))}
+        </select>
+      )}
+    </>
   );
 }

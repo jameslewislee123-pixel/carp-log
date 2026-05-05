@@ -11,12 +11,16 @@ import AvatarBubble from './AvatarBubble';
 import CatchPhotoCarousel from './CatchPhotoCarousel';
 
 const SPECIES = [
-  { id: 'common',  label: 'Common',  hue: '#B07A3F' },
-  { id: 'mirror',  label: 'Mirror',  hue: '#C9A961' },
-  { id: 'leather', label: 'Leather', hue: '#7A5A2E' },
-  { id: 'ghost',   label: 'Ghost',   hue: '#D8D2C0' },
-  { id: 'koi',     label: 'Koi',     hue: '#D85B47' },
-  { id: 'other',   label: 'Other',   hue: '#8A9D96' },
+  { id: 'common',     label: 'Common',     hue: '#B07A3F' },
+  { id: 'mirror',     label: 'Mirror',     hue: '#C9A961' },
+  { id: 'leather',    label: 'Leather',    hue: '#7A5A2E' },
+  { id: 'ghost',      label: 'Ghost',      hue: '#D8D2C0' },
+  { id: 'koi',        label: 'Koi',        hue: '#D85B47' },
+  { id: 'grass_carp', label: 'Grass carp', hue: '#9BB07A' },
+  { id: 'sturgeon',   label: 'Sturgeon',   hue: '#5A6A78' },
+  { id: 'tench',      label: 'Tench',      hue: '#6B8E5A' },
+  { id: 'catfish',    label: 'Catfish',    hue: '#3F4A52' },
+  { id: 'other',      label: 'Other',      hue: '#8A9D96' },
 ];
 
 function PBPeel() {

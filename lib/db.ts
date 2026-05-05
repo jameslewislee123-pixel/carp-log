@@ -605,6 +605,13 @@ export async function listMyGear(types?: GearType[]): Promise<GearItem[]> {
   return (data || []) as GearItem[];
 }
 
+// Single gear item by id. Used to resolve rod-spot default gear back to
+// a name string for AddCatch's bait/rig/hook fields. RLS gates access.
+export async function getGearItemById(id: string): Promise<GearItem | null> {
+  const { data } = await supabase().from('gear_items').select('*').eq('id', id).maybeSingle();
+  return (data as GearItem) || null;
+}
+
 // Returns mine + shared-by-friends, deduped by (angler_id, name).
 export async function listVisibleGear(type: GearType): Promise<GearItem[]> {
   const { data: { user } } = await supabase().auth.getUser();
@@ -925,6 +932,11 @@ export type RodSpotInput = {
   features?: string | null;
   // Value from lib/bottomTypes.ts (e.g. 'gravel', 'heavy_silt'). Optional.
   bottom_type?: string | null;
+  // Optional default gear ids — when set on a rod spot, AddCatch's
+  // SwimRodPicker auto-fills the catch's bait/rig/hook on rod selection.
+  default_bait_id?: string | null;
+  default_rig_id?: string | null;
+  default_hook_id?: string | null;
 };
 
 export async function createRodSpot(input: RodSpotInput): Promise<RodSpot> {
@@ -943,6 +955,9 @@ export async function createRodSpot(input: RodSpotInput): Promise<RodSpot> {
     wraps_actual: input.wraps_actual ?? null,
     features: input.features ?? null,
     bottom_type: input.bottom_type ?? null,
+    default_bait_id: input.default_bait_id ?? null,
+    default_rig_id: input.default_rig_id ?? null,
+    default_hook_id: input.default_hook_id ?? null,
   };
   if (input.swim_group_id) payload.swim_group_id = input.swim_group_id;
   const { data, error } = await supabase().from('rod_spots').insert(payload).select().single();
