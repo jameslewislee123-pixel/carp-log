@@ -4432,7 +4432,7 @@ const modalListeners = new Set<() => void>();
 function subscribeModal(cb: () => void) { modalListeners.add(cb); return () => { modalListeners.delete(cb); }; }
 function getModalSnapshot() { return modalOpenCount; }
 function getModalServerSnapshot() { return 0; }
-function useAnyModalOpen() {
+export function useAnyModalOpen() {
   return React.useSyncExternalStore(subscribeModal, getModalSnapshot, getModalServerSnapshot) > 0;
 }
 

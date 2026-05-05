@@ -1,14 +1,16 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { useAnyModalOpen } from './CarpApp';
 
 // Lightweight pull-to-refresh wrapper. Wraps full-page content (where the
 // page scroll is the window). Detects touchstart at scrollY === 0, follows
 // the finger up to MAX_PULL with a rubber-band feel, and on release past
 // THRESHOLD calls onRefresh and shows a spinner until the promise resolves.
 //
-// Intentionally NOT used inside vaul modal scroll regions — those have
-// their own touchAction/overscroll behaviour that this would fight with.
+// Suspended whenever any VaulModalShell is mounted — vaul drawers manage
+// their own swipe-to-close from scrollTop=0, and a window-level PTR would
+// race that gesture and trigger a refresh on every drawer dismissal.
 const THRESHOLD = 80;
 const MAX_PULL = 120;
 
@@ -20,10 +22,14 @@ export default function PullToRefresh({ onRefresh, children }: {
   const [refreshing, setRefreshing] = useState(false);
   const startY = useRef<number | null>(null);
   const tracking = useRef(false);
+  const modalOpen = useAnyModalOpen();
+  const modalOpenRef = useRef(modalOpen);
+  modalOpenRef.current = modalOpen;
 
   useEffect(() => {
     function onTouchStart(e: TouchEvent) {
       if (refreshing) return;
+      if (modalOpenRef.current) return;
       // Only arm when at the very top of the page.
       if (window.scrollY > 2) return;
       startY.current = e.touches[0].clientY;
@@ -31,6 +37,7 @@ export default function PullToRefresh({ onRefresh, children }: {
     }
     function onTouchMove(e: TouchEvent) {
       if (!tracking.current || startY.current == null) return;
+      if (modalOpenRef.current) { tracking.current = false; setPull(0); return; }
       // Bail if the page has scrolled away from the top during the gesture.
       if (window.scrollY > 2) { tracking.current = false; setPull(0); return; }
       const dy = e.touches[0].clientY - startY.current;
