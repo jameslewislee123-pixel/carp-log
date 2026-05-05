@@ -2444,25 +2444,111 @@ function Stats({ catches, profilesById, me, onOpen }: {
 // Lakes top-level page; they live here now so Stats remains the home for
 // "what does my year look like" summaries while the Lakes tab is purely
 // venue management. Both surfaces read from useLakeStatsTiles so the
-// numbers stay in sync.
+// numbers stay in sync. Below the tiles is a per-lake breakdown — one
+// row per lake with count / biggest / total / anglers / last visit.
 function StatsLakesTab() {
   const t = useLakeStatsTiles();
+  const catches = useCatches().data || [];
+  const enriched = useLakesEnriched();
+  const rows = useMemo(() => {
+    type Row = {
+      key: string; name: string;
+      count: number; biggest: CatchT | null; totalOz: number;
+      anglers: Set<string>; lastAt: Date | null;
+    };
+    // Build a name → row map. We bucket by lake name (lowercased) since
+    // catches reference lakes by free-text name, matching the pattern in
+    // useLakesEnriched. Lake rows the user has saved-but-never-fished
+    // contribute zero metrics and are filtered out below.
+    const byKey = new Map<string, Row>();
+    enriched.forEach(l => {
+      byKey.set(l.name.toLowerCase(), {
+        key: l.key, name: l.name,
+        count: 0, biggest: null, totalOz: 0,
+        anglers: new Set(), lastAt: null,
+      });
+    });
+    catches.forEach(c => {
+      if (!c.lake) return;
+      const k = c.lake.toLowerCase();
+      let row = byKey.get(k);
+      if (!row) {
+        row = { key: `name:${k}`, name: c.lake, count: 0, biggest: null, totalOz: 0, anglers: new Set(), lastAt: null };
+        byKey.set(k, row);
+      }
+      if (c.lost) return;
+      row.count++;
+      const oz = totalOz(c.lbs, c.oz);
+      row.totalOz += oz;
+      if (!row.biggest || oz > totalOz(row.biggest.lbs, row.biggest.oz)) row.biggest = c;
+      row.anglers.add(c.angler_id);
+      const d = new Date(c.date);
+      if (!row.lastAt || d > row.lastAt) row.lastAt = d;
+    });
+    return Array.from(byKey.values())
+      .filter(r => r.count > 0)
+      .sort((a, b) => b.count - a.count);
+  }, [catches, enriched]);
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
-      <LakeStatTile label="Lakes fished" value={t.lakesFished} />
-      <LakeStatTile label="Saved venues" value={t.savedVenues} />
-      <LakeStatTile
-        label="Biggest fish at"
-        value={t.biggestLakeName || '—'}
-        sub={t.biggest ? formatWeight(t.biggest.lbs, t.biggest.oz) : undefined}
-        small
-      />
-      <LakeStatTile
-        label="Most productive"
-        value={t.productiveName || '—'}
-        sub={t.productiveCount > 0 ? `${t.productiveCount} catches` : undefined}
-        small
-      />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+        <LakeStatTile label="Lakes fished" value={t.lakesFished} />
+        <LakeStatTile label="Saved venues" value={t.savedVenues} />
+        <LakeStatTile
+          label="Biggest fish at"
+          value={t.biggestLakeName || '—'}
+          sub={t.biggest ? formatWeight(t.biggest.lbs, t.biggest.oz) : undefined}
+          small
+        />
+        <LakeStatTile
+          label="Most productive"
+          value={t.productiveName || '—'}
+          sub={t.productiveCount > 0 ? `${t.productiveCount} catches` : undefined}
+          small
+        />
+      </div>
+
+      {rows.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--gold-2)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>
+            Per-lake breakdown
+          </div>
+          {rows.map(r => (
+            <div key={r.key} className="card" style={{
+              padding: 12, display: 'flex', flexDirection: 'column', gap: 6,
+              background: 'rgba(10,24,22,0.55)', border: '1px solid rgba(234,201,136,0.14)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <MapPinned size={14} style={{ color: 'var(--gold)', flexShrink: 0 }} />
+                <div className="display-font" style={{ fontSize: 15, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
+                  {r.name}
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                <PerLakeStat label="Catches" value={r.count} />
+                <PerLakeStat label="Biggest" value={r.biggest ? formatWeight(r.biggest.lbs, r.biggest.oz) : '—'} />
+                <PerLakeStat label="Total" value={r.totalOz ? `${Math.floor(r.totalOz / 16)}lb` : '—'} />
+                <PerLakeStat label="Anglers" value={r.anglers.size} />
+              </div>
+              {r.lastAt && (
+                <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                  Last visit: {r.lastAt.toLocaleDateString()}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PerLakeStat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div style={{ background: 'rgba(10,24,22,0.45)', borderRadius: 10, padding: '6px 8px', textAlign: 'center', minWidth: 0 }}>
+      <div className="num-display" style={{ fontSize: 14, color: 'var(--gold-2)', lineHeight: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
+      <div style={{ fontSize: 9, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600, marginTop: 3 }}>{label}</div>
     </div>
   );
 }

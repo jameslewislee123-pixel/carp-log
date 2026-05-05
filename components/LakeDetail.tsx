@@ -1,10 +1,10 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { Bookmark, BookmarkCheck, Check, Fish, Loader2, MapPinned, Navigation, Plus, Ruler, Trash2, X } from 'lucide-react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Check, Loader2, MapPinned, MoreHorizontal, Navigation, Plus, Ruler, Trash2, X } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import * as db from '@/lib/db';
-import { useMySavedLakeIds, useRodSpotsAtLake, useGearItems } from '@/lib/queries';
+import { useRodSpotsAtLake, useGearItems } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
 import type { Catch, Lake, LakeAnnotation, LakeAnnotationType, Profile, RodSpot } from '@/lib/types';
 import { formatWeight, totalOz } from '@/lib/util';
@@ -74,6 +74,10 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
   const [lastSavedSwim, setLastSavedSwim] = useState<{
     lat: number; lng: number; group_id: string; swim_label: string | null;
   } | null>(null);
+  // Which swim-group's action menu is open in the My spots list (null = none).
+  // Lives at the LakeDetail level so opening another menu auto-collapses any
+  // currently-open one.
+  const [openSwimMenuId, setOpenSwimMenuId] = useState<string | null>(null);
 
   const rodSpotsQuery = useRodSpotsAtLake(lake.id);
   const rodSpots = rodSpotsQuery.data || [];
@@ -120,73 +124,11 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
   const myCatchesHere = lakeCatches.filter(c => c.angler_id === me.id).length;
   const canAnnotate = myCatchesHere > 0;
 
-  // Saved/Fishing status. Optimistic save/unsave via TanStack mutations.
   const qc = useQueryClient();
-  const savedIdsQuery = useMySavedLakeIds();
-  const isSaved = (savedIdsQuery.data || []).includes(lake.id);
-  const saveMut = useMutation({
-    mutationFn: () => db.saveLakeForUser(lake.id),
-    onMutate: async () => {
-      await qc.cancelQueries({ queryKey: QK.lakes.mySaved });
-      const prev = qc.getQueryData<string[]>(QK.lakes.mySaved);
-      qc.setQueryData<string[]>(QK.lakes.mySaved, (old) => (old || []).includes(lake.id) ? (old || []) : [...(old || []), lake.id]);
-      return { prev };
-    },
-    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(QK.lakes.mySaved, ctx.prev); },
-    onSettled: () => { qc.invalidateQueries({ queryKey: QK.lakes.mySaved }); qc.invalidateQueries({ queryKey: QK.lakes.all }); },
-  });
-  const unsaveMut = useMutation({
-    mutationFn: () => db.unsaveLakeForUser(lake.id),
-    onMutate: async () => {
-      await qc.cancelQueries({ queryKey: QK.lakes.mySaved });
-      const prev = qc.getQueryData<string[]>(QK.lakes.mySaved);
-      qc.setQueryData<string[]>(QK.lakes.mySaved, (old) => (old || []).filter(id => id !== lake.id));
-      return { prev };
-    },
-    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(QK.lakes.mySaved, ctx.prev); },
-    onSettled: () => { qc.invalidateQueries({ queryKey: QK.lakes.mySaved }); qc.invalidateQueries({ queryKey: QK.lakes.all }); },
-  });
-  function handleUnsave() {
-    if (!confirm(`Remove "${lake.name}" from your saved lakes?`)) return;
-    unsaveMut.mutate();
-  }
-
-  const statusPill = myCatchesHere > 0 ? (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6,
-      padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-      background: 'rgba(141,191,157,0.14)', color: 'var(--sage)',
-      border: '1px solid rgba(141,191,157,0.4)',
-    }}>
-      <Fish size={12} /> Fishing here
-    </span>
-  ) : isSaved ? (
-    <button onClick={handleUnsave} disabled={unsaveMut.isPending} className="tap" style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6,
-      padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
-      background: 'rgba(212,182,115,0.14)', color: 'var(--gold-2)',
-      border: '1px solid var(--gold)', cursor: 'pointer',
-    }}>
-      <BookmarkCheck size={12} /> Saved
-    </button>
-  ) : (
-    <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending} className="tap" style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6,
-      padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
-      background: 'transparent', color: 'var(--gold-2)',
-      border: '1px dashed rgba(234,201,136,0.4)', cursor: 'pointer',
-    }}>
-      <Bookmark size={12} /> Save
-    </button>
-  );
 
   return (
     <>
       <VaulModalShell hideTitle onClose={onClose} stackLevel={stackLevel}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-          {statusPill}
-        </div>
-
         {lake.photo_url ? (
           <div style={{
             position: 'relative', width: '100%', height: 200, marginBottom: 14,
@@ -428,30 +370,133 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
                 }
                 return Array.from(groups.entries()).map(([groupId, members]) => {
                   const swimLabel = members.find(m => m.swim_label)?.swim_label || null;
-                  // Group header only earns its row when there's more than
-                  // one rod or a swim label worth showing — otherwise the
-                  // single rod card stands alone like the v1 layout.
-                  const showHeader = members.length > 1 || !!swimLabel;
+                  // Header is always shown now so the manage-swim menu is
+                  // reachable for every group. For solo unlabeled groups it
+                  // renders as a quiet "Swim" placeholder so the visual
+                  // weight matches the previous v1 layout.
+                  const menuOpen = openSwimMenuId === groupId;
+                  const firstMember = members[0];
                   return (
                     <div key={groupId} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {showHeader && (
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        fontSize: 11, color: 'var(--text-3)',
+                        textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700,
+                      }}>
+                        <span style={{ fontSize: 12 }}>⛺</span>
+                        <span>{swimLabel || 'Swim'}</span>
+                        {members.length > 1 && (
+                          <span style={{ color: 'var(--text-3)', fontWeight: 600 }}>· {members.length} rods</span>
+                        )}
+                        <button
+                          onClick={() => setOpenSwimMenuId(menuOpen ? null : groupId)}
+                          aria-label="Manage swim"
+                          aria-expanded={menuOpen}
+                          className="tap"
+                          style={{
+                            marginLeft: 'auto',
+                            background: menuOpen ? 'rgba(212,182,115,0.15)' : 'transparent',
+                            border: '1px solid rgba(234,201,136,0.18)',
+                            borderRadius: 8, width: 26, height: 22,
+                            color: menuOpen ? 'var(--gold-2)' : 'var(--text-3)',
+                            cursor: 'pointer', padding: 0,
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          }}
+                        >
+                          <MoreHorizontal size={13} />
+                        </button>
+                      </div>
+                      {menuOpen && (
                         <div style={{
-                          display: 'flex', alignItems: 'center', gap: 6,
-                          fontSize: 11, color: 'var(--text-3)',
-                          textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700,
+                          display: 'flex', gap: 6, flexWrap: 'wrap',
+                          padding: 8, borderRadius: 12,
+                          background: 'rgba(10,24,22,0.6)',
+                          border: '1px solid rgba(234,201,136,0.18)',
                         }}>
-                          <span style={{ fontSize: 12 }}>⛺</span>
-                          <span>{swimLabel || 'Swim'}</span>
-                          {members.length > 1 && (
-                            <span style={{ color: 'var(--text-3)', fontWeight: 600 }}>· {members.length} rods</span>
-                          )}
+                          <button
+                            className="tap"
+                            onClick={() => {
+                              setOpenSwimMenuId(null);
+                              setDropMode(false);
+                              setLastSavedSwim(null);
+                              setPendingSwim({ lat: firstMember.swim_latitude, lng: firstMember.swim_longitude });
+                              setPendingGroupId(groupId);
+                              setPendingSwimLabel(swimLabel);
+                              setRodMode('await_spot');
+                            }}
+                            style={{
+                              flex: 1, minWidth: 0,
+                              padding: '8px 10px', borderRadius: 8,
+                              background: 'var(--gold)', border: 'none',
+                              color: '#1A1004', fontFamily: 'inherit',
+                              fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                            }}
+                          >
+                            <Plus size={12} /> Add rod
+                          </button>
+                          <button
+                            className="tap"
+                            onClick={async () => {
+                              setOpenSwimMenuId(null);
+                              const next = window.prompt('Swim label (e.g. Peg 12). Leave blank to clear.', swimLabel || '');
+                              if (next === null) return;
+                              const trimmed = next.trim();
+                              try {
+                                await db.updateSwimGroupLabel(groupId, trimmed || null);
+                                qc.invalidateQueries({ queryKey: QK.lakes.rodSpots(lake.id) });
+                              } catch (e: any) {
+                                alert(e?.message || 'Failed to update label');
+                              }
+                            }}
+                            style={{
+                              flex: 1, minWidth: 0,
+                              padding: '8px 10px', borderRadius: 8,
+                              background: 'rgba(20,42,38,0.7)',
+                              border: '1px solid rgba(234,201,136,0.18)',
+                              color: 'var(--text-2)', fontFamily: 'inherit',
+                              fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                            }}
+                          >
+                            Edit label
+                          </button>
+                          <button
+                            className="tap"
+                            onClick={async () => {
+                              setOpenSwimMenuId(null);
+                              const msg = members.length > 1
+                                ? `Delete this swim and all ${members.length} rods? This can't be undone.`
+                                : `Delete this swim and its rod? This can't be undone.`;
+                              if (!confirm(msg)) return;
+                              try {
+                                await db.deleteSwimGroup(groupId);
+                                if (lastSavedSwim?.group_id === groupId) setLastSavedSwim(null);
+                                qc.invalidateQueries({ queryKey: QK.lakes.rodSpots(lake.id) });
+                              } catch (e: any) {
+                                alert(e?.message || 'Failed to delete swim');
+                              }
+                            }}
+                            style={{
+                              flex: 1, minWidth: 0,
+                              padding: '8px 10px', borderRadius: 8,
+                              background: 'rgba(220,107,88,0.12)',
+                              border: '1px solid rgba(220,107,88,0.4)',
+                              color: '#ff8276', fontFamily: 'inherit',
+                              fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                            }}
+                          >
+                            <Trash2 size={11} /> Delete swim
+                          </button>
                         </div>
                       )}
                       {members.map(s => {
                         const wraps = s.wraps_actual ?? s.wraps_calculated ?? calculateWraps(
                           s.swim_latitude, s.swim_longitude, s.spot_latitude, s.spot_longitude,
                         );
-                        const title = s.spot_label || (showHeader ? `Rod ${members.indexOf(s) + 1}` : (s.swim_label || 'Untitled spot'));
+                        const title = s.spot_label
+                          || (members.length > 1 ? `Rod ${members.indexOf(s) + 1}` : 'Untitled spot');
                         const bait = s.default_bait_id ? gearById.get(s.default_bait_id) : null;
                         const rig  = s.default_rig_id  ? gearById.get(s.default_rig_id)  : null;
                         const hook = s.default_hook_id ? gearById.get(s.default_hook_id) : null;
@@ -472,11 +517,6 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
                               <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {title}
                               </div>
-                              {!showHeader && s.swim_label && s.spot_label && (
-                                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
-                                  from {s.swim_label}
-                                </div>
-                              )}
                               {s.features && (
                                 <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {s.features}

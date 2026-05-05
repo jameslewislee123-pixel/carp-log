@@ -984,6 +984,31 @@ export async function getRodSpot(id: string): Promise<RodSpot | null> {
   return (data as RodSpot) || null;
 }
 
+// Group-level operations: edit label across every rod in a swim, or delete
+// the entire swim (all sibling rods). Both filter by user_id explicitly so
+// nothing leaks past RLS in clients that share auth state during dev.
+export async function updateSwimGroupLabel(swimGroupId: string, label: string | null): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { error } = await supabase()
+    .from('rod_spots')
+    .update({ swim_label: label, updated_at: new Date().toISOString() })
+    .eq('swim_group_id', swimGroupId)
+    .eq('user_id', user.id);
+  if (error) throw error;
+}
+
+export async function deleteSwimGroup(swimGroupId: string): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { error } = await supabase()
+    .from('rod_spots')
+    .delete()
+    .eq('swim_group_id', swimGroupId)
+    .eq('user_id', user.id);
+  if (error) throw error;
+}
+
 // ============ NOTIFICATIONS ============
 export async function listNotifications(): Promise<AppNotification[]> {
   const { data } = await supabase().from('notifications').select('*').order('created_at', { ascending: false }).limit(100);

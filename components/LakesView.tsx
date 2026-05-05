@@ -290,29 +290,6 @@ export default function LakesView({ meId, onOpenLake, onViewModeChange }: {
   );
 }
 
-function Sparkline({ values }: { values: number[] }) {
-  const max = Math.max(1, ...values);
-  const W = 60, H = 18, gap = 2;
-  const barW = (W - gap * (values.length - 1)) / values.length;
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-hidden="true">
-      {values.map((v, i) => {
-        const h = (v / max) * H;
-        return (
-          <rect key={i}
-            x={i * (barW + gap)}
-            y={H - h}
-            width={barW}
-            height={h || 1}
-            fill={v > 0 ? 'rgba(141,191,157,0.85)' : 'rgba(141,191,157,0.18)'}
-            rx={1}
-          />
-        );
-      })}
-    </svg>
-  );
-}
-
 function LakeCard({ lake, myCoords, onOpen, onPrefetch }: {
   lake: EnrichedLake;
   myCoords: { lat: number; lng: number } | null;
@@ -327,7 +304,7 @@ function LakeCard({ lake, myCoords, onOpen, onPrefetch }: {
     <button onClick={onOpen} onTouchStart={onPrefetch} onMouseEnter={onPrefetch}
       className="card tap" style={{
         padding: 14,
-        display: 'flex', flexDirection: 'column', gap: 8,
+        display: 'flex', flexDirection: 'column', gap: 6,
         background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
         cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', color: 'var(--text)',
       }}>
@@ -351,15 +328,6 @@ function LakeCard({ lake, myCoords, onOpen, onPrefetch }: {
       {lake.topBait && (
         <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
           <span style={{ color: 'var(--gold-2)', fontWeight: 600 }}>Best bait:</span> {lake.topBait}
-        </div>
-      )}
-
-      {lake.catchCount > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
-          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
-            {lake.catchCount} catch{lake.catchCount === 1 ? '' : 'es'} · last 6mo
-          </div>
-          <Sparkline values={lake.monthlySparkline} />
         </div>
       )}
     </button>
