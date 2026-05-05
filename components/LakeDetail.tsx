@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { ArrowLeft, Bookmark, BookmarkCheck, Check, Fish, Loader2, MapPinned, Navigation, Plus, Trash2, X } from 'lucide-react';
+import { Bookmark, BookmarkCheck, Check, Fish, Loader2, MapPinned, Navigation, Plus, Trash2, X } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import * as db from '@/lib/db';
 import { useMySavedLakeIds } from '@/lib/queries';
@@ -10,6 +10,7 @@ import type { Catch, Lake, LakeAnnotation, LakeAnnotationType, Profile } from '@
 import { formatWeight, totalOz } from '@/lib/util';
 import { geocodeLake } from '@/lib/weather';
 import { directionsUrl } from '@/lib/osm';
+import { VaulModalShell } from './CarpApp';
 
 const ANN_TYPES: { id: LakeAnnotationType; label: string; emoji: string }[] = [
   { id: 'hot_spot',        label: 'Hot spot',   emoji: '🔥' },
@@ -27,13 +28,14 @@ const MapInner = dynamic(() => import('./LakeMapInner'), {
   ),
 });
 
-export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClose, onOpenCatch }: {
+export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClose, onOpenCatch, stackLevel = 0 }: {
   lake: Lake;
   lakeCatches: Catch[];
   profilesById: Record<string, Profile>;
   me: Profile;
   onClose: () => void;
   onOpenCatch: (c: Catch) => void;
+  stackLevel?: number;
 }) {
   const [annos, setAnnos] = useState<LakeAnnotation[]>([]);
   const [filter, setFilter] = useState<'all' | LakeAnnotationType>('all');
@@ -43,8 +45,6 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
   const [dropMode, setDropMode] = useState(false);
   const [pendingDrop, setPendingDrop] = useState<{ lat: number; lng: number } | null>(null);
   const [openAnno, setOpenAnno] = useState<LakeAnnotation | null>(null);
-
-  useEffect(() => { document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = ''; }; }, []);
 
   async function refreshAnnos() {
     setAnnos(await db.listLakeAnnotations(lake.id));
@@ -110,57 +110,40 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
     unsaveMut.mutate();
   }
 
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 100,
-      background: 'rgba(3,10,9,0.85)',
-      backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
-      display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-      touchAction: 'none',
-    }} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="slide-up" style={{
-        width: '100%', maxWidth: 480, maxHeight: '94vh',
-        background: 'rgba(10,24,22,0.95)',
-        backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-        borderRadius: '28px 28px 0 0', border: '1px solid rgba(234,201,136,0.14)', borderBottom: 'none',
-        overflowY: 'auto', overflowX: 'hidden',
-        padding: '20px 20px max(40px, env(safe-area-inset-bottom))',
-        touchAction: 'pan-y', overscrollBehavior: 'contain',
-      }}>
-        <div className="sheet-handle" />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, paddingTop: 8 }}>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6, padding: 4, fontFamily: 'inherit', fontSize: 14, cursor: 'pointer' }}>
-            <ArrowLeft size={18} /> Back
-          </button>
+  const statusPill = myCatchesHere > 0 ? (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+      background: 'rgba(141,191,157,0.14)', color: 'var(--sage)',
+      border: '1px solid rgba(141,191,157,0.4)',
+    }}>
+      <Fish size={12} /> Fishing here
+    </span>
+  ) : isSaved ? (
+    <button onClick={handleUnsave} disabled={unsaveMut.isPending} className="tap" style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
+      background: 'rgba(212,182,115,0.14)', color: 'var(--gold-2)',
+      border: '1px solid var(--gold)', cursor: 'pointer',
+    }}>
+      <BookmarkCheck size={12} /> Saved
+    </button>
+  ) : (
+    <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending} className="tap" style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
+      background: 'transparent', color: 'var(--gold-2)',
+      border: '1px dashed rgba(234,201,136,0.4)', cursor: 'pointer',
+    }}>
+      <Bookmark size={12} /> Save
+    </button>
+  );
 
-          {myCatchesHere > 0 ? (
-            <span style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-              background: 'rgba(141,191,157,0.14)', color: 'var(--sage)',
-              border: '1px solid rgba(141,191,157,0.4)',
-            }}>
-              <Fish size={12} /> Fishing here
-            </span>
-          ) : isSaved ? (
-            <button onClick={handleUnsave} disabled={unsaveMut.isPending} className="tap" style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
-              background: 'rgba(212,182,115,0.14)', color: 'var(--gold-2)',
-              border: '1px solid var(--gold)', cursor: 'pointer',
-            }}>
-              <BookmarkCheck size={12} /> Saved
-            </button>
-          ) : (
-            <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending} className="tap" style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
-              background: 'transparent', color: 'var(--gold-2)',
-              border: '1px dashed rgba(234,201,136,0.4)', cursor: 'pointer',
-            }}>
-              <Bookmark size={12} /> Save
-            </button>
-          )}
+  return (
+    <>
+      <VaulModalShell hideTitle onClose={onClose} stackLevel={stackLevel}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+          {statusPill}
         </div>
 
         {lake.photo_url ? (
@@ -312,7 +295,7 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
             );
           })}
         </div>
-      </div>
+      </VaulModalShell>
 
       {pendingDrop && (
         <NewAnnotationForm lakeId={lake.id} lat={pendingDrop.lat} lng={pendingDrop.lng}
@@ -323,7 +306,7 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
       {openAnno && (
         <AnnotationDetail anno={openAnno} author={profilesById[openAnno.angler_id]} onClose={() => setOpenAnno(null)} />
       )}
-    </div>
+    </>
   );
 }
 

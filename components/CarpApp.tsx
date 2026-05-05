@@ -398,7 +398,7 @@ export default function CarpApp() {
       {detailCatch && (
         <CatchDetail
           catchData={detailCatch} me={me} profilesById={profilesById} trips={trips}
-          stackLevel={detailTrip ? 1 : 0}
+          stackLevel={(detailTrip || detailLakeName) ? 1 : 0}
           onClose={() => {
             setDetailCatch(null);
             if (catchBackTo) { const dest = catchBackTo; setCatchBackTo(null); router.push(dest); }
