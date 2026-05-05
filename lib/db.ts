@@ -3,7 +3,7 @@ import { supabase } from './supabase/client';
 import type {
   AppNotification, Catch, CatchComment, CatchLike, CatchVisibility, Comment, CommentLike, FieldVisibility,
   Friendship, GearItem, GearType, Lake, LakeAnnotation, LakeAnnotationType, Moon,
-  NotifyConfig, Profile, SwimRollResult, Trip, TripActivity, TripMember, TripMessage,
+  NotifyConfig, Profile, RodSpot, SwimRollResult, Trip, TripActivity, TripMember, TripMessage,
   TripStake, TripSwimRoll, TripVisibility, Weather,
 } from './types';
 
@@ -888,6 +888,68 @@ export async function createLakeAnnotation(input: {
 }
 export async function deleteLakeAnnotation(id: string): Promise<void> {
   await supabase().from('lake_annotations').delete().eq('id', id);
+}
+
+// ============ ROD SPOTS ============
+// Per-user, per-lake "swim → bait" line bookmarks. Private to the creator
+// (RLS on rod_spots only exposes own rows).
+
+export async function listRodSpotsAtLake(lakeId: string): Promise<RodSpot[]> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return [];
+  const { data } = await supabase().from('rod_spots').select('*')
+    .eq('lake_id', lakeId).eq('user_id', user.id)
+    .order('created_at', { ascending: true });
+  return (data || []) as RodSpot[];
+}
+
+export type RodSpotInput = {
+  id?: string;
+  lake_id: string;
+  swim_latitude: number;
+  swim_longitude: number;
+  swim_label?: string | null;
+  spot_latitude: number;
+  spot_longitude: number;
+  spot_label?: string | null;
+  wraps_calculated?: number | null;
+  wraps_actual?: number | null;
+  features?: string | null;
+};
+
+export async function createRodSpot(input: RodSpotInput): Promise<RodSpot> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const payload: any = {
+    user_id: user.id,
+    lake_id: input.lake_id,
+    swim_latitude: input.swim_latitude,
+    swim_longitude: input.swim_longitude,
+    swim_label: input.swim_label ?? null,
+    spot_latitude: input.spot_latitude,
+    spot_longitude: input.spot_longitude,
+    spot_label: input.spot_label ?? null,
+    wraps_calculated: input.wraps_calculated ?? null,
+    wraps_actual: input.wraps_actual ?? null,
+    features: input.features ?? null,
+  };
+  const { data, error } = await supabase().from('rod_spots').insert(payload).select().single();
+  if (error) throw error;
+  return data as RodSpot;
+}
+
+export async function updateRodSpot(id: string, patch: Partial<RodSpotInput>): Promise<RodSpot> {
+  const payload: any = { ...patch, updated_at: new Date().toISOString() };
+  delete payload.id;
+  delete payload.lake_id; // never reassign lake
+  const { data, error } = await supabase().from('rod_spots').update(payload).eq('id', id).select().single();
+  if (error) throw error;
+  return data as RodSpot;
+}
+
+export async function deleteRodSpot(id: string): Promise<void> {
+  const { error } = await supabase().from('rod_spots').delete().eq('id', id);
+  if (error) throw error;
 }
 
 // ============ NOTIFICATIONS ============

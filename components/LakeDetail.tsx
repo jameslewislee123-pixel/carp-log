@@ -1,16 +1,24 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { Bookmark, BookmarkCheck, Check, Fish, Loader2, MapPinned, Navigation, Plus, Trash2, X } from 'lucide-react';
+import { Bookmark, BookmarkCheck, Check, Fish, Loader2, MapPinned, Navigation, Plus, Ruler, Trash2, X } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import * as db from '@/lib/db';
-import { useMySavedLakeIds } from '@/lib/queries';
+import { useMySavedLakeIds, useRodSpotsAtLake } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
-import type { Catch, Lake, LakeAnnotation, LakeAnnotationType, Profile } from '@/lib/types';
+import type { Catch, Lake, LakeAnnotation, LakeAnnotationType, Profile, RodSpot } from '@/lib/types';
 import { formatWeight, totalOz } from '@/lib/util';
 import { geocodeLake } from '@/lib/weather';
 import { directionsUrl } from '@/lib/osm';
+import { calculateWraps } from '@/lib/wraps';
 import { VaulModalShell } from './CarpApp';
+import type { RodSpotDraft } from './RodSpotForm';
+
+// Leaflet-using helpers live in their own files behind dynamic imports
+// (matching how LakeMapInner is loaded) — keeps `import 'leaflet'` and
+// 'react-leaflet' off the SSR module graph for this page.
+const RodSpotMarkers = dynamic(() => import('./RodSpotMarkers'), { ssr: false });
+const RodSpotForm = dynamic(() => import('./RodSpotForm'), { ssr: false });
 
 const ANN_TYPES: { id: LakeAnnotationType; label: string; emoji: string }[] = [
   { id: 'hot_spot',        label: 'Hot spot',   emoji: '🔥' },
@@ -45,6 +53,19 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
   const [dropMode, setDropMode] = useState(false);
   const [pendingDrop, setPendingDrop] = useState<{ lat: number; lng: number } | null>(null);
   const [openAnno, setOpenAnno] = useState<LakeAnnotation | null>(null);
+
+  // Rod-spot placement state machine.
+  // 'idle'        — no placement in progress
+  // 'await_swim'  — next map tap places the swim point
+  // 'await_spot'  — swim is placed; next map tap places the spot, then opens form
+  type RodPlaceMode = 'idle' | 'await_swim' | 'await_spot';
+  const [rodMode, setRodMode] = useState<RodPlaceMode>('idle');
+  const [pendingSwim, setPendingSwim] = useState<{ lat: number; lng: number } | null>(null);
+  const [rodFormDraft, setRodFormDraft] = useState<RodSpotDraft | null>(null);
+  const [editingSpot, setEditingSpot] = useState<RodSpot | null>(null);
+
+  const rodSpotsQuery = useRodSpotsAtLake(lake.id);
+  const rodSpots = rodSpotsQuery.data || [];
 
   async function refreshAnnos() {
     setAnnos(await db.listLakeAnnotations(lake.id));
@@ -224,24 +245,56 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
             catches={lakeCatches}
             annotations={annos}
             profilesById={profilesById}
-            dropMode={dropMode}
-            onDropPick={(lat, lng) => { setPendingDrop({ lat, lng }); setDropMode(false); }}
+            dropMode={dropMode || rodMode !== 'idle'}
+            dropHint={
+              rodMode === 'await_swim' ? 'Tap your swim location' :
+              rodMode === 'await_spot' ? 'Tap your rod spot' :
+              undefined
+            }
+            onDropPick={(lat, lng) => {
+              if (rodMode === 'await_swim') {
+                setPendingSwim({ lat, lng });
+                setRodMode('await_spot');
+              } else if (rodMode === 'await_spot' && pendingSwim) {
+                setRodFormDraft({
+                  swim_latitude: pendingSwim.lat,
+                  swim_longitude: pendingSwim.lng,
+                  spot_latitude: lat,
+                  spot_longitude: lng,
+                });
+                setRodMode('idle');
+              } else {
+                setPendingDrop({ lat, lng });
+                setDropMode(false);
+              }
+            }}
             onOpenCatch={onOpenCatch}
             onOpenAnnotation={setOpenAnno}
             lakeName={lake.name}
-          />
+          >
+            <RodSpotMarkers
+              spots={rodSpots}
+              onOpen={setEditingSpot}
+              swimPreview={rodMode === 'await_spot' ? pendingSwim : null}
+            />
+          </MapInner>
         )}
 
         <div style={{ display: 'flex', gap: 6, marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           {canAnnotate ? (
-            <button onClick={() => setDropMode(d => !d)} className="tap" style={{
-              padding: '10px 14px', borderRadius: 999,
-              border: `1px solid ${dropMode ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
-              background: dropMode ? 'rgba(212,182,115,0.15)' : 'rgba(10,24,22,0.5)',
-              color: dropMode ? 'var(--gold-2)' : 'var(--text-2)',
-              fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-            }}>
+            <button
+              onClick={() => {
+                if (rodMode !== 'idle') { setRodMode('idle'); setPendingSwim(null); }
+                setDropMode(d => !d);
+              }}
+              className="tap" style={{
+                padding: '10px 14px', borderRadius: 999,
+                border: `1px solid ${dropMode ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
+                background: dropMode ? 'rgba(212,182,115,0.15)' : 'rgba(10,24,22,0.5)',
+                color: dropMode ? 'var(--gold-2)' : 'var(--text-2)',
+                fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+              }}>
               <Plus size={12} /> {dropMode ? 'Tap map to place…' : 'Add annotation'}
             </button>
           ) : (
@@ -253,7 +306,81 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
               You haven't fished here yet. Annotations are visible to anglers who have.
             </div>
           )}
+
+          <button
+            onClick={() => {
+              if (rodMode !== 'idle') {
+                setRodMode('idle'); setPendingSwim(null);
+              } else {
+                setDropMode(false); setRodMode('await_swim');
+              }
+            }}
+            className="tap" style={{
+              padding: '10px 14px', borderRadius: 999,
+              border: `1px solid ${rodMode !== 'idle' ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
+              background: rodMode !== 'idle' ? 'rgba(212,182,115,0.15)' : 'rgba(10,24,22,0.5)',
+              color: rodMode !== 'idle' ? 'var(--gold-2)' : 'var(--text-2)',
+              fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}>
+            <Ruler size={12} /> {
+              rodMode === 'await_swim' ? 'Cancel placement' :
+              rodMode === 'await_spot' ? 'Cancel placement' :
+              'Add a spot'
+            }
+          </button>
         </div>
+
+        {/* My spots list — only when there are saved spots. Tapping opens
+            the same edit/delete sheet as tapping a marker. */}
+        {rodSpots.length > 0 && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--gold-2)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+              My spots
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {rodSpots.map(s => {
+                const wraps = s.wraps_actual ?? s.wraps_calculated ?? calculateWraps(
+                  s.swim_latitude, s.swim_longitude, s.spot_latitude, s.spot_longitude,
+                );
+                const title = s.spot_label || s.swim_label || 'Untitled spot';
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setEditingSpot(s)}
+                    className="card tap"
+                    style={{
+                      padding: 12, textAlign: 'left', cursor: 'pointer',
+                      fontFamily: 'inherit', color: 'var(--text)',
+                      display: 'flex', alignItems: 'center', gap: 12,
+                    }}
+                  >
+                    <Ruler size={16} style={{ color: 'var(--gold)', flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {title}
+                      </div>
+                      {s.swim_label && s.spot_label && (
+                        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                          from {s.swim_label}
+                        </div>
+                      )}
+                      {s.features && (
+                        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {s.features}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div className="num-display" style={{ fontSize: 18, color: 'var(--gold-2)', lineHeight: 1 }}>{wraps}</div>
+                      <div style={{ fontSize: 9, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginTop: 2 }}>wraps</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* filter chips */}
         <div className="scrollbar-thin" style={{ display: 'flex', gap: 6, overflowX: 'auto', marginTop: 14, paddingBottom: 4 }}>
@@ -305,6 +432,37 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
       )}
       {openAnno && (
         <AnnotationDetail anno={openAnno} author={profilesById[openAnno.angler_id]} onClose={() => setOpenAnno(null)} />
+      )}
+      {/* Rod-spot create form (after two-step placement) */}
+      {rodFormDraft && (
+        <RodSpotForm
+          lakeId={lake.id}
+          draft={rodFormDraft}
+          onClose={() => { setRodFormDraft(null); setPendingSwim(null); }}
+          onSaved={() => {
+            setRodFormDraft(null);
+            setPendingSwim(null);
+            qc.invalidateQueries({ queryKey: QK.lakes.rodSpots(lake.id) });
+          }}
+        />
+      )}
+      {/* Rod-spot edit/delete form (tap an existing spot) */}
+      {editingSpot && (
+        <RodSpotForm
+          lakeId={lake.id}
+          existing={editingSpot}
+          draft={{
+            swim_latitude: editingSpot.swim_latitude,
+            swim_longitude: editingSpot.swim_longitude,
+            spot_latitude: editingSpot.spot_latitude,
+            spot_longitude: editingSpot.spot_longitude,
+          }}
+          onClose={() => setEditingSpot(null)}
+          onSaved={() => {
+            setEditingSpot(null);
+            qc.invalidateQueries({ queryKey: QK.lakes.rodSpots(lake.id) });
+          }}
+        />
       )}
     </>
   );

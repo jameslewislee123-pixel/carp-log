@@ -242,6 +242,23 @@ export type LakeAnnotation = {
   description: string | null;
   created_at?: string;
 };
+
+export type RodSpot = {
+  id: string;
+  user_id: string;
+  lake_id: string;
+  swim_latitude: number;
+  swim_longitude: number;
+  swim_label: string | null;
+  spot_latitude: number;
+  spot_longitude: number;
+  spot_label: string | null;
+  wraps_calculated: number | null;
+  wraps_actual: number | null;
+  features: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
 export type AppNotification = {
   id: string;
   recipient_id: string;

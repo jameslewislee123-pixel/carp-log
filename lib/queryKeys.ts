@@ -42,6 +42,7 @@ export const QK = {
     byName: (name: string) => ['lakes', 'name', name.toLowerCase()] as const,
     annotations: (lakeId: string) => ['lakes', lakeId, 'annotations'] as const,
     mySaved: ['lakes', 'saved', 'mine'] as const,
+    rodSpots: (lakeId: string) => ['lakes', lakeId, 'rod_spots'] as const,
   },
   gear: ['gear'] as const,
   notifyConfig: ['notify-config'] as const,

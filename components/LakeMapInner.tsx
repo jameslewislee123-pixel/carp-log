@@ -56,6 +56,7 @@ function ClickCapture({ enabled, onPick }: { enabled: boolean; onPick: (lat: num
 
 export default function LakeMapInner({
   center, catches, annotations, profilesById, dropMode, onDropPick, onOpenCatch, onOpenAnnotation, lakeName,
+  dropHint, children,
 }: {
   center: { lat: number; lng: number };
   catches: Catch[];
@@ -66,6 +67,11 @@ export default function LakeMapInner({
   onOpenCatch: (c: Catch) => void;
   onOpenAnnotation: (a: LakeAnnotation) => void;
   lakeName?: string;
+  // Optional override for the placement banner (e.g. "Tap your swim").
+  dropHint?: string;
+  // Extra map layers (markers, polylines, tooltips) injected into the
+  // MapContainer context. Used by rod-spot pins.
+  children?: React.ReactNode;
 }) {
   const bounds = useMemo(() => {
     const pts: [number, number][] = [];
@@ -156,6 +162,8 @@ export default function LakeMapInner({
             </Popup>
           </Marker>
         ))}
+
+        {children}
       </MapContainer>
 
       <MapLayerToggle layer={layer} onChange={setLayer} />
@@ -167,7 +175,7 @@ export default function LakeMapInner({
           fontFamily: 'Manrope, sans-serif', fontSize: 13, fontWeight: 700,
           boxShadow: '0 6px 18px rgba(0,0,0,0.4)', zIndex: 1000, pointerEvents: 'none',
         }}>
-          Tap on the map to drop a pin
+          {dropHint || 'Tap on the map to drop a pin'}
         </div>
       )}
     </div>

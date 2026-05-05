@@ -247,6 +247,16 @@ export function useMySavedLakeIds() {
   });
 }
 
+export function useRodSpotsAtLake(lakeId: string | null | undefined) {
+  return useQuery({
+    queryKey: lakeId ? QK.lakes.rodSpots(lakeId) : ['lakes', 'no-lake', 'rod_spots'],
+    queryFn: () => db.listRodSpotsAtLake(lakeId as string),
+    enabled: !!lakeId,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
 // ============================================================
 // useLakesEnriched: union of (lakes the user has caught at) and (rows in
 // the lakes table — including 'osm' venues saved-but-unfished). Catches and
