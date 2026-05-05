@@ -11,6 +11,7 @@ import { formatWeight, totalOz } from '@/lib/util';
 import { geocodeLake } from '@/lib/weather';
 import { directionsUrl } from '@/lib/osm';
 import { calculateWraps } from '@/lib/wraps';
+import { bottomTypeMeta } from '@/lib/bottomTypes';
 import { VaulModalShell } from './CarpApp';
 import type { RodSpotDraft } from './RodSpotForm';
 
@@ -472,6 +473,15 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
                             <div style={{ textAlign: 'right', flexShrink: 0 }}>
                               <div className="num-display" style={{ fontSize: 18, color: 'var(--gold-2)', lineHeight: 1 }}>{wraps}</div>
                               <div style={{ fontSize: 9, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginTop: 2 }}>wraps</div>
+                              {(() => {
+                                const bottom = bottomTypeMeta(s.bottom_type);
+                                if (!bottom) return null;
+                                return (
+                                  <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 4, whiteSpace: 'nowrap' }}>
+                                    {bottom.emoji} {bottom.label}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </button>
                         );

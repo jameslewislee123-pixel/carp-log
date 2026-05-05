@@ -259,6 +259,10 @@ export type RodSpot = {
   wraps_calculated: number | null;
   wraps_actual: number | null;
   features: string | null;
+  // Categorical substrate from BOTTOM_TYPES. Free-text 'features' covers
+  // nuance like "gravel patch with weed edge"; bottom_type is the
+  // at-a-glance icon. Optional.
+  bottom_type: string | null;
   created_at?: string;
   updated_at?: string;
 };

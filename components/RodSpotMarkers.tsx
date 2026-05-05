@@ -4,6 +4,7 @@ import { Marker, Polyline, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
 import type { RodSpot } from '@/lib/types';
 import { midpoint } from '@/lib/wraps';
+import { bottomTypeMeta } from '@/lib/bottomTypes';
 
 // Renders saved rod spots as a swim icon, a spot icon, a connecting line,
 // and a centred "X wraps" label. Mounted as a child of MapContainer (via
@@ -83,17 +84,21 @@ export default function RodSpotMarkers({ spots, onOpen, swimPreview }: {
                     pathOptions={{ color: LINE_COLOR, weight: 3, opacity: 0.85, dashArray: '6 4' }}
                   />
                   <Marker position={spot} icon={spotIcon()} eventHandlers={{ click: () => onOpen(s) }} />
-                  {wraps != null && (
-                    <Marker
-                      position={[mid.lat, mid.lng]}
-                      interactive={false}
-                      icon={L.divIcon({
-                        className: 'rod-spot-wraps',
-                        html: `<div style="padding:3px 8px;border-radius:999px;background:rgba(10,24,22,0.92);border:1px solid rgba(234,201,136,0.5);color:#EAC988;font-family:Manrope,sans-serif;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.45);">${wraps} wrap${wraps === 1 ? '' : 's'}</div>`,
-                        iconSize: [60, 18], iconAnchor: [30, 9],
-                      })}
-                    />
-                  )}
+                  {wraps != null && (() => {
+                    const bottom = bottomTypeMeta(s.bottom_type);
+                    const text = `${wraps} wrap${wraps === 1 ? '' : 's'}${bottom ? ` · ${bottom.emoji}` : ''}`;
+                    return (
+                      <Marker
+                        position={[mid.lat, mid.lng]}
+                        interactive={false}
+                        icon={L.divIcon({
+                          className: 'rod-spot-wraps',
+                          html: `<div style="padding:3px 8px;border-radius:999px;background:rgba(10,24,22,0.92);border:1px solid rgba(234,201,136,0.5);color:#EAC988;font-family:Manrope,sans-serif;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.45);">${text}</div>`,
+                          iconSize: [80, 18], iconAnchor: [40, 9],
+                        })}
+                      />
+                    );
+                  })()}
                 </Fragment>
               );
             })}

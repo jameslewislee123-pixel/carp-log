@@ -919,6 +919,8 @@ export type RodSpotInput = {
   wraps_calculated?: number | null;
   wraps_actual?: number | null;
   features?: string | null;
+  // Value from lib/bottomTypes.ts (e.g. 'gravel', 'heavy_silt'). Optional.
+  bottom_type?: string | null;
 };
 
 export async function createRodSpot(input: RodSpotInput): Promise<RodSpot> {
@@ -936,6 +938,7 @@ export async function createRodSpot(input: RodSpotInput): Promise<RodSpot> {
     wraps_calculated: input.wraps_calculated ?? null,
     wraps_actual: input.wraps_actual ?? null,
     features: input.features ?? null,
+    bottom_type: input.bottom_type ?? null,
   };
   if (input.swim_group_id) payload.swim_group_id = input.swim_group_id;
   const { data, error } = await supabase().from('rod_spots').insert(payload).select().single();

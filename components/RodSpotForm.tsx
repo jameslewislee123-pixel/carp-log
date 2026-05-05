@@ -4,6 +4,7 @@ import { Check, Loader2, Trash2 } from 'lucide-react';
 import * as db from '@/lib/db';
 import type { RodSpot } from '@/lib/types';
 import { calculateWraps, haversineMeters } from '@/lib/wraps';
+import { BOTTOM_TYPES, type BottomType } from '@/lib/bottomTypes';
 import { VaulModalShell } from './CarpApp';
 
 // Combined create / edit form for a single rod spot. Lives in a vaul sheet
@@ -37,6 +38,9 @@ export default function RodSpotForm({
   const [swimLabel, setSwimLabel] = useState(existing?.swim_label || initialSwimLabel || '');
   const [spotLabel, setSpotLabel] = useState(existing?.spot_label || '');
   const [features, setFeatures] = useState(existing?.features || '');
+  const [bottomType, setBottomType] = useState<BottomType | ''>(
+    (existing?.bottom_type as BottomType) || '',
+  );
 
   const calculatedWraps = calculateWraps(
     draft.swim_latitude, draft.swim_longitude,
@@ -72,6 +76,7 @@ export default function RodSpotForm({
         wraps_calculated: calculatedWraps,
         wraps_actual: overrideUsed ? Number(wrapsActual) : null,
         features: features.trim() || null,
+        bottom_type: bottomType || null,
       };
       let saved: RodSpot;
       if (existing) {
@@ -175,6 +180,19 @@ export default function RodSpotForm({
           </div>
         )}
       </div>
+
+      <label className="label">Bottom type (optional)</label>
+      <select
+        className="input"
+        value={bottomType}
+        onChange={(e) => setBottomType((e.target.value || '') as BottomType | '')}
+        style={{ marginBottom: 12, appearance: 'auto', fontFamily: 'inherit' }}
+      >
+        <option value="">Select…</option>
+        {BOTTOM_TYPES.map(t => (
+          <option key={t.value} value={t.value}>{t.emoji} {t.label}</option>
+        ))}
+      </select>
 
       <label className="label">Features (optional)</label>
       <textarea
