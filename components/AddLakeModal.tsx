@@ -25,6 +25,19 @@ const DiscoverVenuesMap = dynamic(() => import('./DiscoverVenuesMap'), {
   ),
 });
 
+const LakePinPlacer = dynamic(() => import('./LakePinPlacer'), {
+  ssr: false,
+  loading: () => (
+    <div style={{ width: '100%', height: 280, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 16, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.18)' }}>
+      <Loader2 size={20} className="spin" style={{ color: 'var(--text-3)' }} />
+    </div>
+  ),
+});
+
+// Roughly the centre of England — used when GPS is denied and the user
+// hasn't run "find nearby" yet. They'll drag/zoom from here.
+const FALLBACK_CENTER = { lat: 54.5, lng: -3.0 };
+
 type Status = 'idle' | 'fetching' | 'success' | 'error' | 'empty';
 
 // Shared lake-picker modal. Used by:
@@ -124,6 +137,10 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
   const [manualOpen, setManualOpen] = useState(false);
   const [manualName, setManualName] = useState('');
   const [savingManual, setSavingManual] = useState(false);
+  const [manualPin, setManualPin] = useState<{ lat: number; lng: number } | null>(null);
+  const [manualPinMoved, setManualPinMoved] = useState(false);
+  const [manualGpsTried, setManualGpsTried] = useState(false);
+  const manualPinMovedRef = useRef(false);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 500);
@@ -218,15 +235,55 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
 
   async function saveManual() {
     const name = manualName.trim();
-    if (!name) return;
+    if (!name || !manualPin || !manualPinMoved) return;
     setSavingManual(true);
     try {
-      const created = await db.createManualLake({ name, latitude: null, longitude: null });
+      const created = await db.createManualLake({ name, latitude: manualPin.lat, longitude: manualPin.lng });
       await bookmarkAndFinish(created);
     } catch (e: any) {
       alert(e?.message || 'Failed to add lake');
     } finally { setSavingManual(false); }
   }
+
+  function openManual() {
+    setManualOpen(true);
+    if (query.trim()) setManualName(query.trim());
+    // Seed the pin: use a known centre if we have one, else UK fallback.
+    const start = center || FALLBACK_CENTER;
+    setManualPin(start);
+    setManualPinMoved(false);
+    manualPinMovedRef.current = false;
+  }
+
+  function closeManual() {
+    setManualOpen(false);
+    setManualName('');
+    setManualPin(null);
+    setManualPinMoved(false);
+    manualPinMovedRef.current = false;
+  }
+
+  function handlePinChange(p: { lat: number; lng: number }) {
+    setManualPin(p);
+    setManualPinMoved(true);
+    manualPinMovedRef.current = true;
+  }
+
+  // Quietly fetch GPS the first time manual entry opens. If the user
+  // hasn't dragged/tapped by the time GPS resolves, snap the pin (and
+  // the map, via flyTo) to their actual location — much better starting
+  // point than the UK centroid. Uses a ref so a fast user tap during the
+  // async wait isn't overwritten by the late-arriving GPS reply.
+  useEffect(() => {
+    if (!manualOpen || manualGpsTried) return;
+    setManualGpsTried(true);
+    (async () => {
+      const loc = await getCurrentLocation();
+      if (!loc) return;
+      setCenter((c) => c || loc);
+      if (!manualPinMovedRef.current) setManualPin(loc);
+    })();
+  }, [manualOpen, manualGpsTried]);
 
   async function pickGlobal(g: GlobalLakeResult) {
     try {
@@ -355,7 +412,7 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
 
       {/* Manual entry */}
       {!manualOpen ? (
-        <button onClick={() => { setManualOpen(true); if (query.trim()) setManualName(query.trim()); }} className="tap" style={{
+        <button onClick={openManual} className="tap" style={{
           width: '100%', padding: '12px 14px', borderRadius: 12,
           background: 'transparent', border: '1px dashed rgba(234,201,136,0.3)',
           color: 'var(--gold-2)', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, cursor: 'pointer',
@@ -370,11 +427,34 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
           <input className="input" autoFocus value={manualName} maxLength={120}
             onChange={(e) => setManualName(e.target.value)}
             placeholder="e.g. Étang du Moulin" style={{ marginBottom: 10 }} />
+
+          {manualPin && (
+            <LakePinPlacer
+              position={manualPin}
+              onChange={handlePinChange}
+              flyTo={!manualPinMoved ? manualPin : null}
+            />
+          )}
+
+          <p style={{
+            fontSize: 12, color: manualPinMoved ? 'var(--sage)' : 'var(--text-3)',
+            margin: '10px 0', textAlign: 'center', lineHeight: 1.4,
+          }}>
+            {manualPinMoved
+              ? `Pin set · ${manualPin!.lat.toFixed(4)}, ${manualPin!.lng.toFixed(4)}`
+              : 'Tap or drag the pin to set the lake location'}
+          </p>
+
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => { setManualOpen(false); setManualName(''); }} className="btn btn-ghost"
+            <button onClick={closeManual} className="btn btn-ghost"
               style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)' }}>Cancel</button>
-            <button onClick={saveManual} disabled={!manualName.trim() || savingManual} className="btn btn-primary" style={{ flex: 1 }}>
-              {savingManual ? <Loader2 size={14} className="spin" /> : <Check size={14} />} Save
+            <button
+              onClick={saveManual}
+              disabled={!manualName.trim() || !manualPinMoved || savingManual}
+              className="btn btn-primary"
+              style={{ flex: 2 }}
+            >
+              {savingManual ? <Loader2 size={14} className="spin" /> : <Check size={14} />} Save lake
             </button>
           </div>
         </div>
