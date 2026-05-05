@@ -182,17 +182,31 @@ export default function RodSpotForm({
       </div>
 
       <label className="label">Bottom type (optional)</label>
-      <select
-        className="input"
-        value={bottomType}
-        onChange={(e) => setBottomType((e.target.value || '') as BottomType | '')}
-        style={{ marginBottom: 12, appearance: 'auto', fontFamily: 'inherit' }}
-      >
-        <option value="">Select…</option>
-        {BOTTOM_TYPES.map(t => (
-          <option key={t.value} value={t.value}>{t.emoji} {t.label}</option>
-        ))}
-      </select>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 14 }}>
+        {BOTTOM_TYPES.map(t => {
+          const selected = bottomType === t.value;
+          return (
+            <button
+              key={t.value}
+              type="button"
+              onClick={() => setBottomType(selected ? '' : t.value)}
+              className="tap"
+              style={{
+                padding: '10px 6px', borderRadius: 12,
+                border: `1px solid ${selected ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
+                background: selected ? 'rgba(212,182,115,0.12)' : 'rgba(10,24,22,0.5)',
+                color: selected ? 'var(--gold-2)' : 'var(--text-2)',
+                fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                minHeight: 56,
+              }}
+            >
+              <span style={{ fontSize: 18, lineHeight: 1 }}>{t.emoji}</span>
+              <span style={{ lineHeight: 1.1 }}>{t.label}</span>
+            </button>
+          );
+        })}
+      </div>
 
       <label className="label">Features (optional)</label>
       <textarea
