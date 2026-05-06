@@ -1,11 +1,12 @@
 'use client';
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import type { MarkerCatch } from './TripMap';
-import type { LakeAnnotation } from '@/lib/types';
+import type { LakeAnnotation, RodSpot } from '@/lib/types';
 import { useMemo, useState } from 'react';
 import { TILE_LAYERS, type MapLayer } from '@/lib/mapTiles';
 import MapLayerToggle from './MapLayerToggle';
+import RodSpotMarkers from './RodSpotMarkers';
 
 // Build a colored circular div-icon — avoids the default-icon webpack hassle entirely.
 function pinIcon(color: string, label: string) {
@@ -33,6 +34,28 @@ function annoIcon(type: LakeAnnotation['type']) {
   });
 }
 
+// Standalone swim icon — used when an active setup exists but has zero rods
+// yet, so RodSpotMarkers (which only renders swims it derives from rods)
+// would show nothing. Same SAGE color as the rod-spot swim icon.
+function setupSwimIcon() {
+  return L.divIcon({
+    className: 'rod-spot-swim',
+    html: `<div style="width:30px;height:30px;border-radius:8px;background:#7BA888;border:2px solid #050E0D;box-shadow:0 4px 10px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;color:#0A1816;font-size:16px;line-height:1;">⛺</div>`,
+    iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -16],
+  });
+}
+
+// Dashed-border preview swim — shown after the user taps the map in
+// 'await_swim' mode but BEFORE the New Setup modal is confirmed. Visual
+// cue that the marker is not yet saved.
+function pendingSwimIcon() {
+  return L.divIcon({
+    className: 'rod-spot-swim-preview',
+    html: `<div style="width:30px;height:30px;border-radius:8px;background:#7BA888;border:2px dashed #050E0D;box-shadow:0 4px 10px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;color:#0A1816;font-size:16px;line-height:1;opacity:0.85;">⛺</div>`,
+    iconSize: [30, 30], iconAnchor: [15, 15],
+  });
+}
+
 function ClickCapture({ enabled, onPick }: { enabled: boolean; onPick: (lat: number, lng: number) => void }) {
   useMapEvents({ click(e) { if (enabled) onPick(e.latlng.lat, e.latlng.lng); } });
   return null;
@@ -42,6 +65,7 @@ export default function TripMapInner({
   center, markers, onOpenCatch, photoUrl,
   annotations = [], onOpenAnnotation,
   dropMode = false, dropHint, onDropPick,
+  setupSwim = null, setupRods = [], pendingSwim = null, onOpenRodSpot,
 }: {
   center: { lat: number; lng: number };
   markers: MarkerCatch[];
@@ -57,14 +81,28 @@ export default function TripMapInner({
   dropMode?: boolean;
   dropHint?: string;
   onDropPick?: (lat: number, lng: number) => void;
+  // Active setup overlays. setupSwim is the swim's coords + label (rendered
+  // standalone when setupRods is empty so the user can see the placed swim
+  // before adding any rods). setupRods feeds RodSpotMarkers, which handles
+  // rendering the shared swim icon + rod pins + connecting polylines for
+  // anything > 0 rods.
+  setupSwim?: { lat: number; lng: number; label: string | null } | null;
+  setupRods?: RodSpot[];
+  pendingSwim?: { lat: number; lng: number } | null;
+  onOpenRodSpot?: (s: RodSpot) => void;
 }) {
-  // Auto-zoom to fit markers + annotations (city-zoom if too few points).
+  // Auto-zoom to fit markers + annotations + setup pin (city-zoom if too few points).
   const bounds = useMemo(() => {
     const pts: [number, number][] = [];
     markers.forEach(m => pts.push([m.lat, m.lng]));
     annotations.forEach(a => pts.push([a.latitude, a.longitude]));
+    if (setupSwim) pts.push([setupSwim.lat, setupSwim.lng]);
+    setupRods.forEach(r => {
+      pts.push([r.swim_latitude, r.swim_longitude]);
+      pts.push([r.spot_latitude, r.spot_longitude]);
+    });
     return pts.length >= 2 ? L.latLngBounds(pts) : null;
-  }, [markers, annotations]);
+  }, [markers, annotations, setupSwim, setupRods]);
 
   const [layer, setLayer] = useState<MapLayer>('satellite');
   return (
@@ -132,6 +170,37 @@ export default function TripMapInner({
             </Popup>
           </Marker>
         ))}
+
+        {/* Active-setup rods + their derived swim icon (one per swim_group) */}
+        {setupRods.length > 0 && (
+          <RodSpotMarkers
+            spots={setupRods}
+            onOpen={(s) => onOpenRodSpot?.(s)}
+          />
+        )}
+
+        {/* Standalone swim icon when the active setup has no rods yet —
+            otherwise RodSpotMarkers above already renders a swim from the
+            rod's swim coords (which are copied from this same setup row). */}
+        {setupSwim && setupRods.length === 0 && (
+          <Marker position={[setupSwim.lat, setupSwim.lng]} icon={setupSwimIcon()}>
+            {setupSwim.label && (
+              <Tooltip direction="top" offset={[0, -10]} opacity={0.95}>
+                {setupSwim.label}
+              </Tooltip>
+            )}
+          </Marker>
+        )}
+
+        {/* Pending (unsaved) swim preview while the New Setup modal is
+            open or while in await_rod after a fresh setup is saved. */}
+        {pendingSwim && (
+          <Marker
+            position={[pendingSwim.lat, pendingSwim.lng]}
+            interactive={false}
+            icon={pendingSwimIcon()}
+          />
+        )}
       </MapContainer>
       <MapLayerToggle layer={layer} onChange={setLayer} />
 

@@ -1032,6 +1032,73 @@ export async function listPastTripSwimGroups(tripId: string, userId: string): Pr
   return (data || []) as TripSwimGroup[];
 }
 
+// One-active-per-user enforcement: returns the row, if any, that the user
+// has open right now ACROSS all their trips. Caller offers a confirm
+// before starting a new setup elsewhere — confirm → endTripSwimGroup on
+// the returned row, then proceed.
+export async function getMyActiveTripSwimGroup(): Promise<TripSwimGroup | null> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return null;
+  const { data } = await supabase()
+    .from('trip_swim_groups').select('*')
+    .eq('user_id', user.id).is('ended_at', null)
+    .order('started_at', { ascending: false }).limit(1).maybeSingle();
+  return (data as TripSwimGroup) || null;
+}
+
+export async function createTripSwimGroup(input: {
+  trip_id: string;
+  swim_latitude: number;
+  swim_longitude: number;
+  swim_label: string | null;
+  notes?: string | null;
+}): Promise<TripSwimGroup> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  // swim_group_id is server-assigned via DB default (gen_random_uuid()) so
+  // the new row mints its own id without us having to import a uuid lib.
+  // started_at defaults to now() in the schema; we set it explicitly so the
+  // returned row matches client-side ordering even on clock-skewed clients.
+  const payload = {
+    trip_id: input.trip_id,
+    user_id: user.id,
+    swim_group_id: crypto.randomUUID(),
+    swim_latitude: input.swim_latitude,
+    swim_longitude: input.swim_longitude,
+    swim_label: input.swim_label,
+    notes: input.notes ?? null,
+    started_at: new Date().toISOString(),
+  };
+  const { data, error } = await supabase()
+    .from('trip_swim_groups').insert(payload).select().single();
+  if (error) throw error;
+  return data as TripSwimGroup;
+}
+
+export async function endTripSwimGroup(id: string): Promise<void> {
+  const { error } = await supabase()
+    .from('trip_swim_groups').update({ ended_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+// Hard-delete a setup row. Used by Past Setups swipe-to-delete. The
+// rod_spots in this swim_group are removed via deleteSwimGroup (rod_spots
+// table) — call that BEFORE this so catches lose their FK gracefully.
+export async function deleteTripSwimGroup(id: string): Promise<void> {
+  const { error } = await supabase()
+    .from('trip_swim_groups').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// Inline-edit swim name on the Active Setup card.
+export async function updateTripSwimGroupLabel(id: string, label: string | null): Promise<void> {
+  const { error } = await supabase()
+    .from('trip_swim_groups').update({ swim_label: label })
+    .eq('id', id);
+  if (error) throw error;
+}
+
 // ============ TRIPS AT LAKE ============
 // Used by Lake Detail's "Trips at this lake" section. Returns trips where:
 //   - lake_id matches AND
