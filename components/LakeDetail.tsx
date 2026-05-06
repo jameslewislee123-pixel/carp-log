@@ -1,10 +1,9 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { Calendar, Check, ChevronRight, Eye, EyeOff, Fish, Loader2, MapPinned, Navigation, Plus, Trash2, X } from 'lucide-react';
+import { Calendar, Check, ChevronRight, Fish, Loader2, MapPinned, Navigation, Plus, Trash2, X } from 'lucide-react';
 import * as db from '@/lib/db';
 import { useTripsAtLake } from '@/lib/queries';
-import { useAnnotationsVisible } from '@/lib/annotationsVisible';
 import type { Catch, Lake, LakeAnnotation, LakeAnnotationType, Profile, Trip } from '@/lib/types';
 import { tripStatus } from '@/lib/types';
 import { geocodeLake } from '@/lib/weather';
@@ -51,8 +50,6 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
   const [openAnno, setOpenAnno] = useState<LakeAnnotation | null>(null);
   const [fabOpen, setFabOpen] = useState(false);
 
-  const [annosVisible, toggleAnnosVisible] = useAnnotationsVisible();
-
   async function refreshAnnos() {
     setAnnos(await db.listLakeAnnotations(lake.id));
   }
@@ -81,10 +78,10 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
   const myCatchesHere = lakeCatches.filter(c => c.angler_id === me.id).length;
   const canAnnotate = myCatchesHere > 0;
 
-  // Annotations passed to the map: filter list applies, AND the visibility
-  // toggle hides them entirely when off. Keeps the map clean for users who
-  // just want to look at the satellite shot.
-  const mapAnnotations = annosVisible ? visibleAnnos : [];
+  // Lake Map is the authoring surface for annotations — they always render
+  // here (regardless of any visibility preference set on the Trip Map). The
+  // filter chips below the map still narrow the rendered set by type.
+  const mapAnnotations = visibleAnnos;
 
   const tripsQuery = useTripsAtLake(lake.id);
   const trips = tripsQuery.data || [];
@@ -92,11 +89,6 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
   function startDrop(t: LakeAnnotationType) {
     setPendingType(t);
     setFabOpen(false);
-    // If annotations are hidden, briefly flip them on so the user can see
-    // existing pins while choosing where to drop the new one. Don't persist
-    // the change — restore the prior preference once they finish or cancel.
-    // (Simplest: do nothing — they chose hidden, respect it. Revisit if it
-    // turns out to be confusing on real-device testing.)
   }
   function cancelDrop() {
     setPendingType(null);
@@ -214,27 +206,6 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
               onOpenAnnotation={setOpenAnno}
               lakeName={lake.name}
             />
-
-            {/* Annotation visibility toggle — sits above the FAB */}
-            <button
-              onClick={toggleAnnosVisible}
-              aria-label={annosVisible ? 'Hide annotations' : 'Show annotations'}
-              aria-pressed={annosVisible}
-              className="tap"
-              style={{
-                position: 'absolute', right: 12, bottom: 76, zIndex: 1000,
-                width: 40, height: 40, borderRadius: 999,
-                background: 'rgba(10,24,22,0.92)',
-                border: `1px solid ${annosVisible ? 'rgba(234,201,136,0.45)' : 'rgba(234,201,136,0.18)'}`,
-                color: annosVisible ? 'var(--gold-2)' : 'var(--text-3)',
-                cursor: 'pointer', padding: 0,
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.45)',
-                backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-              }}
-            >
-              {annosVisible ? <Eye size={16} /> : <EyeOff size={16} />}
-            </button>
 
             {/* FAB — adds an annotation. Only shown if the user has fished
                 here (annotations are visible to anglers who have, and

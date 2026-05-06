@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { Eye, EyeOff, Loader2, MapPinned, Plus, Ruler, X } from 'lucide-react';
+import { Eye, EyeOff, Loader2, MapPinned, Plus, Ruler } from 'lucide-react';
 import * as db from '@/lib/db';
 import { useActiveSetupForTrip, usePastSetupsForTrip } from '@/lib/queries';
 import { useAnnotationsVisible } from '@/lib/annotationsVisible';
@@ -17,6 +17,8 @@ function colorFor(seed: string) {
   return COLORS[Math.abs(h) % COLORS.length];
 }
 
+// Lake-annotation labels are looked up here for the popup detail view only.
+// Trip Map is read-only for annotations — creation lives on Lake Detail.
 const ANN_TYPES: { id: LakeAnnotationType; label: string; emoji: string }[] = [
   { id: 'hot_spot',        label: 'Hot spot',   emoji: '🔥' },
   { id: 'productive_spot', label: 'Productive', emoji: '⭐' },
@@ -49,9 +51,13 @@ export type MarkerCatch = {
 type SetupTab = 'active' | 'past';
 
 // Trip Map tab — primary surface for swim/rod management. PR1 lays down the
-// shell (map with annotation FAB+toggle, big "Set up" CTA, Active/Past tabs
-// with empty states). PR2 wires up the Set up + Add a rod flows; PR3 adds
-// cross-trip Past Setups library and Use this setup copy flow.
+// shell (map with read-only annotation visibility toggle, big "Set up" CTA,
+// Active/Past tabs with empty states). PR2 wires up the Set up + Add a rod
+// flows; PR3 adds cross-trip Past Setups library and Use this setup copy.
+//
+// Annotation creation is intentionally NOT available here — the Trip Map is
+// a consuming context; authoring belongs on Lake Detail, the source of
+// truth. The eye toggle controls only whether existing annotations render.
 export default function TripMap({ trip, me, catches, profilesById, onOpenCatch }: {
   trip: Trip;
   me: Profile;
@@ -62,9 +68,6 @@ export default function TripMap({ trip, me, catches, profilesById, onOpenCatch }
   const [center, setCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [annotations, setAnnotations] = useState<LakeAnnotation[]>([]);
   const [annosVisible, toggleAnnosVisible] = useAnnotationsVisible();
-  const [pendingType, setPendingType] = useState<LakeAnnotationType | null>(null);
-  const [fabOpen, setFabOpen] = useState(false);
-  const [pendingDrop, setPendingDrop] = useState<{ lat: number; lng: number } | null>(null);
   const [openAnno, setOpenAnno] = useState<LakeAnnotation | null>(null);
   const [tab, setTab] = useState<SetupTab>('active');
 
@@ -134,15 +137,17 @@ export default function TripMap({ trip, me, catches, profilesById, onOpenCatch }
   /* eslint-disable-next-line */
   }, [trip.id]);
 
-  // Annotations live on the lake the trip is linked to. Refresh on mount,
-  // and after the user adds one via the FAB. PR2 will subscribe to realtime
-  // changes too — for now a manual refresh is enough.
-  async function refreshAnnotations() {
-    if (!trip.lake_id) { setAnnotations([]); return; }
-    const list = await db.listLakeAnnotations(trip.lake_id);
-    setAnnotations(list);
-  }
-  useEffect(() => { refreshAnnotations(); /* eslint-disable-next-line */ }, [trip.lake_id]);
+  // Annotations live on the lake the trip is linked to. Refresh on mount.
+  // No write path on this surface — authoring is on Lake Detail.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!trip.lake_id) { if (!cancelled) setAnnotations([]); return; }
+      const list = await db.listLakeAnnotations(trip.lake_id);
+      if (!cancelled) setAnnotations(list);
+    })();
+    return () => { cancelled = true; };
+  }, [trip.lake_id]);
 
   // Setups — empty in PR1; the queries return [] / null until trip_swim_groups
   // gets populated by the PR2 Set up flow.
@@ -151,22 +156,10 @@ export default function TripMap({ trip, me, catches, profilesById, onOpenCatch }
   const activeSetup = activeQuery.data || null;
   const pastSetups = pastQuery.data || [];
 
-  function startDrop(t: LakeAnnotationType) {
-    setPendingType(t);
-    setFabOpen(false);
-  }
-  function cancelDrop() {
-    setPendingType(null);
-    setFabOpen(false);
-  }
-
   // Lookup helper for catch markers → original Catch row.
   const lookupCatch = (id: string) => catches.find(c => c.id === id) || null;
 
-  // Loading / no-coords gate. The shell still renders below the map
-  // (CTA + tabs) so an empty-coords trip is still useful.
   const mapAnnotations = annosVisible ? annotations : [];
-  const canAnnotate = !!trip.lake_id;
   const canStartSetup = !!trip.lake_id;
 
   return (
@@ -185,23 +178,18 @@ export default function TripMap({ trip, me, catches, profilesById, onOpenCatch }
             photoUrl={(m) => m.cover_url}
             annotations={mapAnnotations}
             onOpenAnnotation={setOpenAnno}
-            dropMode={pendingType !== null}
-            dropHint={pendingType ? `Tap to drop ${ANN_TYPES.find(t => t.id === pendingType)?.label.toLowerCase()}` : undefined}
-            onDropPick={(lat, lng) => {
-              if (!pendingType || !trip.lake_id) return;
-              setPendingDrop({ lat, lng });
-            }}
           />
 
-          {/* Annotation visibility toggle */}
+          {/* Annotation visibility toggle — only control on this surface.
+              Annotation creation belongs on Lake Detail. */}
           <button
             onClick={toggleAnnosVisible}
             aria-label={annosVisible ? 'Hide annotations' : 'Show annotations'}
             aria-pressed={annosVisible}
             className="tap"
             style={{
-              position: 'absolute', right: 12, bottom: 76, zIndex: 1000,
-              width: 40, height: 40, borderRadius: 999,
+              position: 'absolute', right: 12, bottom: 12, zIndex: 1000,
+              width: 44, height: 44, borderRadius: 999,
               background: 'rgba(10,24,22,0.92)',
               border: `1px solid ${annosVisible ? 'rgba(234,201,136,0.45)' : 'rgba(234,201,136,0.18)'}`,
               color: annosVisible ? 'var(--gold-2)' : 'var(--text-3)',
@@ -211,24 +199,8 @@ export default function TripMap({ trip, me, catches, profilesById, onOpenCatch }
               backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
             }}
           >
-            {annosVisible ? <Eye size={16} /> : <EyeOff size={16} />}
+            {annosVisible ? <Eye size={18} /> : <EyeOff size={18} />}
           </button>
-
-          {/* FAB — adds a lake annotation. Only enabled if the trip has a
-              linked lake (lake_id). For legacy trips with a free-text
-              location only, the FAB is hidden — the user can switch to the
-              lake's detail page to annotate. */}
-          {canAnnotate && (
-            <FabAddAnnotation
-              open={fabOpen}
-              onToggle={() => {
-                if (pendingType) { cancelDrop(); return; }
-                setFabOpen(o => !o);
-              }}
-              onPick={startDrop}
-              cancelLabel={pendingType ? 'Cancel' : null}
-            />
-          )}
         </div>
       )}
 
@@ -239,8 +211,6 @@ export default function TripMap({ trip, me, catches, profilesById, onOpenCatch }
         canStart={canStartSetup}
         hasActive={!!activeSetup}
         onClick={() => {
-          // PR1 placeholder: surface the planned flow without committing
-          // to the data layer yet.
           alert(activeSetup
             ? 'Add a rod — coming in PR2.'
             : 'Set up — coming in PR2.');
@@ -277,80 +247,9 @@ export default function TripMap({ trip, me, catches, profilesById, onOpenCatch }
           : <div /> /* PR2 renders the list here */
       )}
 
-      {pendingDrop && pendingType && trip.lake_id && (
-        <NewAnnotationForm
-          lakeId={trip.lake_id}
-          lat={pendingDrop.lat}
-          lng={pendingDrop.lng}
-          initialType={pendingType}
-          onClose={() => { setPendingDrop(null); setPendingType(null); }}
-          onSaved={async () => {
-            setPendingDrop(null);
-            setPendingType(null);
-            await refreshAnnotations();
-          }}
-        />
-      )}
       {openAnno && (
         <AnnotationDetail anno={openAnno} author={profilesById[openAnno.angler_id]} onClose={() => setOpenAnno(null)} />
       )}
-    </div>
-  );
-}
-
-function FabAddAnnotation({ open, onToggle, onPick, cancelLabel }: {
-  open: boolean;
-  onToggle: () => void;
-  onPick: (t: LakeAnnotationType) => void;
-  cancelLabel: string | null;
-}) {
-  return (
-    <div style={{ position: 'absolute', right: 12, bottom: 12, zIndex: 1000 }}>
-      {open && (
-        <div className="fade-in" style={{
-          position: 'absolute', right: 0, bottom: 56,
-          minWidth: 180,
-          background: 'rgba(10,24,22,0.96)',
-          border: '1px solid rgba(234,201,136,0.25)',
-          borderRadius: 14, padding: 6,
-          boxShadow: '0 10px 30px rgba(0,0,0,0.6)',
-          backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
-          display: 'flex', flexDirection: 'column', gap: 2,
-        }}>
-          {ANN_TYPES.map(t => (
-            <button
-              key={t.id}
-              onClick={() => onPick(t.id)}
-              className="tap"
-              style={{
-                background: 'transparent', border: 'none',
-                padding: '10px 12px', borderRadius: 10,
-                color: 'var(--text)', fontFamily: 'inherit',
-                fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                textAlign: 'left',
-                display: 'inline-flex', alignItems: 'center', gap: 10,
-              }}
-            >
-              <span style={{ fontSize: 16 }}>{t.emoji}</span> {t.label}
-            </button>
-          ))}
-        </div>
-      )}
-      <button
-        onClick={onToggle}
-        aria-label={cancelLabel || 'Add annotation'}
-        className="tap"
-        style={{
-          width: 52, height: 52, borderRadius: 999,
-          background: cancelLabel ? 'rgba(220,107,88,0.95)' : 'var(--gold)',
-          border: 'none', color: cancelLabel ? '#fff' : '#1A1004',
-          cursor: 'pointer', padding: 0,
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          boxShadow: '0 6px 18px rgba(0,0,0,0.55)',
-        }}
-      >
-        {cancelLabel ? <X size={22} /> : <Plus size={22} />}
-      </button>
     </div>
   );
 }
@@ -424,75 +323,6 @@ function PastSetupsEmpty() {
       <div style={{ fontSize: 13, color: 'var(--text-2)', fontWeight: 600, marginBottom: 4 }}>No past setups</div>
       <div style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45 }}>
         Past setups will appear here once you've ended a session.
-      </div>
-    </div>
-  );
-}
-
-function NewAnnotationForm({ lakeId, lat, lng, initialType, onClose, onSaved }: {
-  lakeId: string; lat: number; lng: number; initialType: LakeAnnotationType;
-  onClose: () => void; onSaved: () => void;
-}) {
-  const [type, setType] = useState<LakeAnnotationType>(initialType);
-  const [title, setTitle] = useState('');
-  const [desc, setDesc] = useState('');
-  const [busy, setBusy] = useState(false);
-  async function save() {
-    if (!title.trim()) return;
-    setBusy(true);
-    try {
-      await db.createLakeAnnotation({ lake_id: lakeId, type, latitude: lat, longitude: lng, title: title.trim(), description: desc.trim() || null });
-      onSaved();
-    } catch (e: any) { alert(e?.message || 'Failed to save'); }
-    finally { setBusy(false); }
-  }
-  return (
-    <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(3,10,9,0.7)',
-      backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
-      display: 'flex', alignItems: 'flex-end', justifyContent: 'center', touchAction: 'none',
-    }}>
-      <div onClick={(e) => e.stopPropagation()} className="slide-up" style={{
-        width: '100%', maxWidth: 480,
-        background: 'rgba(10,24,22,0.95)',
-        backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-        borderRadius: '24px 24px 0 0', border: '1px solid rgba(234,201,136,0.18)', borderBottom: 'none',
-        padding: '20px 20px max(30px, env(safe-area-inset-bottom))',
-        touchAction: 'pan-y',
-      }}>
-        <div className="sheet-handle" />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, marginBottom: 14 }}>
-          <h3 className="display-font" style={{ fontSize: 18, margin: 0, fontWeight: 500 }}>New annotation</h3>
-          <button onClick={onClose} style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 10, width: 32, height: 32, color: 'var(--text-2)', cursor: 'pointer' }}><X size={16} /></button>
-        </div>
-
-        <label className="label">Type</label>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6, marginBottom: 12 }}>
-          {ANN_TYPES.map(t => (
-            <button key={t.id} onClick={() => setType(t.id)} className="tap" style={{
-              padding: '10px 6px', borderRadius: 12,
-              border: `1px solid ${type === t.id ? 'var(--gold)' : 'rgba(234,201,136,0.18)'}`,
-              background: type === t.id ? 'rgba(212,182,115,0.12)' : 'rgba(10,24,22,0.5)',
-              color: type === t.id ? 'var(--gold-2)' : 'var(--text-2)',
-              fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            }}>{t.emoji} {t.label}</button>
-          ))}
-        </div>
-
-        <label className="label">Title</label>
-        <input className="input" autoFocus value={title} maxLength={60} onChange={(e) => setTitle(e.target.value)}
-          placeholder="e.g. Margin shelf, big-fish bay" style={{ marginBottom: 12 }} />
-
-        <label className="label">Description (optional)</label>
-        <textarea className="input" rows={3} maxLength={300} value={desc} onChange={(e) => setDesc(e.target.value)}
-          placeholder="Anything useful for next time…" style={{ marginBottom: 12, resize: 'vertical', fontFamily: 'inherit' }} />
-
-        <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 14 }}>{lat.toFixed(5)}, {lng.toFixed(5)}</div>
-
-        <button onClick={save} disabled={!title.trim() || busy} className="btn btn-primary" style={{ width: '100%', fontSize: 15, padding: 14 }}>
-          {busy ? <Loader2 size={16} className="spin" /> : <Plus size={16} />} Drop pin
-        </button>
       </div>
     </div>
   );
