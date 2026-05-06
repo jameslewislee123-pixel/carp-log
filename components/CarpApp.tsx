@@ -43,6 +43,7 @@ import {
   useMe, useCatches, useTrips, useMyNotifyConfig, useUnreadCount,
   useProfilesByIds, useCommentCounts, useLakeStatsTiles, useLakesEnriched,
   useCatchLikeCounts, useMyCatchLikes, useRodSpot, useGearItems,
+  useMySavedLakeOverrides, applyLakeOverride,
   prefetchTrip, prefetchLake, prefetchNotifications, prefetchFriendships,
   type EnrichedLake,
 } from '@/lib/queries';
@@ -5160,6 +5161,10 @@ function LakeDetailLoader({ name, catches, profilesById, me, onClose, onOpenCatc
   onOpenTrip?: (t: Trip) => void;
 }) {
   const [lake, setLake] = useState<import('@/lib/types').Lake | null>(null);
+  // Per-user overrides on the bookmark — name + coords. Merged into the
+  // displayed lake below so the page header/map reflect what THIS user
+  // has set, without mutating the canonical row everyone else sees.
+  const overridesQuery = useMySavedLakeOverrides();
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -5169,6 +5174,7 @@ function LakeDetailLoader({ name, catches, profilesById, me, onClose, onOpenCatc
     return () => { cancelled = true; };
   }, [name]);
   if (!lake) return null;
+  const displayLake = applyLakeOverride(lake, overridesQuery.data?.get(lake.id));
   // Prefer the FK link (set at save-time by AddCatch via resolveOrCreateLake,
   // or by the ensure_lake_row trigger). Fall back to case-insensitive name
   // match so legacy catches that pre-date the lake_id backfill still surface.
@@ -5177,7 +5183,7 @@ function LakeDetailLoader({ name, catches, profilesById, me, onClose, onOpenCatc
     (c.lake_id && c.lake_id === lake.id) ||
     (!c.lake_id && (c.lake || '').trim().toLowerCase() === lakeNameLower)
   );
-  return <LakeDetail lake={lake} lakeCatches={lakeCatches} profilesById={profilesById} me={me} onClose={onClose} onOpenCatch={onOpenCatch} onOpenTrip={onOpenTrip} />;
+  return <LakeDetail lake={displayLake} lakeCatches={lakeCatches} profilesById={profilesById} me={me} onClose={onClose} onOpenCatch={onOpenCatch} onOpenTrip={onOpenTrip} />;
 }
 
 function AvatarUploader({ me, onSaved }: { me: Profile; onSaved: (url: string) => Promise<void> | void }) {

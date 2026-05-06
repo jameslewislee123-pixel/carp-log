@@ -72,7 +72,9 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
   // Drives the map's flyTo. Setting a new object animates the map; the
   // initial position is the FALLBACK_CENTER baked into AddLakeMapPane.
   const [mapTarget, setMapTarget] = useState<{ lat: number; lng: number; zoom: number } | null>(null);
-  const [showManualForm, setShowManualForm] = useState(false);
+  // Unified save form — opens for every save path (manual, picked seed/saved,
+  // picked Nominatim) so the user always confirms / can rename before commit.
+  const [showSaveForm, setShowSaveForm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [locateBusy, setLocateBusy] = useState(false);
   const [locateError, setLocateError] = useState<string | null>(null);
@@ -197,37 +199,37 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
     setPicked(null);
   }
 
-  async function bookmarkAndFinish(lake: Lake) {
-    try { await db.saveLakeForUser(lake.id); }
-    catch (e) { console.error('[saveLake] bookmark failed', e); }
-    qc.invalidateQueries({ queryKey: ['lakes'] });
-    onPicked?.(lake);
-    onClose();
+  // Coord-comparison tolerance — Leaflet reports lat/lng with full double
+  // precision but the user "didn't pan" should still mean exactly that even
+  // if a stray pixel of map drift snuck through. ~10cm at the equator.
+  function coordsDiffer(a: { lat: number; lng: number }, b: { lat: number; lng: number } | null): boolean {
+    if (!b) return true;
+    return Math.abs(a.lat - b.lat) > 1e-6 || Math.abs(a.lng - b.lng) > 1e-6;
   }
 
-  async function confirmCta() {
-    if (busy) return;
-    if (!picked) {
-      // Manual placement — the name modal is the next step. The actual
-      // create+bookmark happens in saveManual once the user confirms.
-      setShowManualForm(true);
-      return;
-    }
+  async function commitSave(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
     setBusy(true);
     try {
-      if (picked.kind === 'saved' || picked.kind === 'seed') {
-        // Already a DB row — bookmarking is enough. Pan-adjusted coords
-        // are intentionally ignored here: the user picked an existing
-        // lake, so its canonical coords are the source of truth. Pan
-        // only matters for new manual / Nominatim creates.
-        await bookmarkAndFinish(picked.lake);
-      } else {
-        // Nominatim — create the row with the crosshair-current coords so
-        // the user's pan adjustment is honored.
-        const created = await db.createLakeFromGlobal({
+      // 1) Manual placement — no pick. The user owns the new row, so the
+      //    edited name lands directly on lakes.name.
+      if (!picked) {
+        const lake = await db.createManualLake({ name: trimmed, latitude: crosshair.lat, longitude: crosshair.lng });
+        try { await db.saveLakeForUser(lake.id); } catch {/* idempotent */}
+        qc.invalidateQueries({ queryKey: ['lakes'] });
+        onPicked?.(lake);
+        onClose();
+        return;
+      }
+
+      // 2) Nominatim pick — creates a fresh canonical row owned by the user.
+      //    Edited name + crosshair coords go directly on the new row.
+      if (picked.kind === 'global') {
+        const lake = await db.createLakeFromGlobal({
           osm_id: picked.result.osm_id,
           osm_type: picked.result.osm_type,
-          name: picked.result.name,
+          name: trimmed,
           latitude: crosshair.lat,
           longitude: crosshair.lng,
           country: picked.result.country || null,
@@ -236,13 +238,40 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
           photo_url: picked.result.photo_url,
           photo_source: picked.result.photo_source,
         });
-        await bookmarkAndFinish(created);
+        try { await db.saveLakeForUser(lake.id); } catch {/* idempotent */}
+        qc.invalidateQueries({ queryKey: ['lakes'] });
+        onPicked?.(lake);
+        onClose();
+        return;
       }
+
+      // 3) Saved/seed pick — existing canonical row. Edits land on
+      //    user_saved_lakes.custom_* so the user's view diverges from
+      //    everyone else's, never on the canonical row. Setting an
+      //    override field to its canonical value clears it (passes null).
+      const lake = picked.lake;
+      const canonicalCoords = (lake.latitude != null && lake.longitude != null)
+        ? { lat: lake.latitude, lng: lake.longitude } : null;
+      const panned = coordsDiffer(crosshair, canonicalCoords);
+      const renamed = trimmed !== lake.name;
+      await db.saveLakeForUserWithOverrides(lake.id, {
+        custom_name: renamed ? trimmed : null,
+        custom_latitude: panned ? crosshair.lat : null,
+        custom_longitude: panned ? crosshair.lng : null,
+      });
+      qc.invalidateQueries({ queryKey: ['lakes'] });
+      onPicked?.(lake);
+      onClose();
     } catch (e: any) {
       alert(e?.message || 'Failed to save lake');
     } finally {
       setBusy(false);
     }
+  }
+
+  function confirmCta() {
+    if (busy) return;
+    setShowSaveForm(true);
   }
 
   const hasResults = filteredSaved.length > 0 || seedToShow.length > 0 || globalResults.length > 0;
@@ -391,17 +420,19 @@ export default function AddLakeModal({ onClose, onPicked, stackLevel }: {
         </a>
       </div>
 
-      {/* Manual-name vaul drawer (stack level 2 — sits above this modal). */}
-      {showManualForm && (
-        <NewManualLakeForm
+      {/* Save vaul drawer — opens for every save path. Pre-fills the name
+          field per source so the user can confirm or rename before commit.
+          stackLevel=2 (above the modal) so taps land on the form. */}
+      {showSaveForm && (
+        <SaveLakeForm
+          defaultName={picked ? pickedName(picked) : ''}
           lat={crosshair.lat}
           lng={crosshair.lng}
-          onClose={() => setShowManualForm(false)}
-          onSaved={(lake) => {
-            setShowManualForm(false);
-            qc.invalidateQueries({ queryKey: ['lakes'] });
-            onPicked?.(lake);
-            onClose();
+          busy={busy}
+          onClose={() => setShowSaveForm(false)}
+          onSubmit={async (name) => {
+            await commitSave(name);
+            setShowSaveForm(false);
           }}
         />
       )}
@@ -465,32 +496,22 @@ function ResultRow({ title, subtitle, onClick }: { title: string; subtitle: stri
   );
 }
 
-// Vaul drawer for naming a manual lake. Renders inside the same Drawer.Portal
-// pattern via VaulModalShell so taps don't fall through to the map behind.
-function NewManualLakeForm({ lat, lng, onClose, onSaved }: {
+// Unified save drawer. Opens for every commit path — manual placement,
+// saved/seed pick, Nominatim pick — so the user always confirms / can
+// rename before write. Pre-filled with the picked result's name when one
+// is selected; empty otherwise. Renders inside the vaul portal so taps
+// don't fall through to the leaflet map behind.
+function SaveLakeForm({ defaultName, lat, lng, busy, onClose, onSubmit }: {
+  defaultName: string;
   lat: number;
   lng: number;
+  busy: boolean;
   onClose: () => void;
-  onSaved: (lake: Lake) => void;
+  onSubmit: (name: string) => void | Promise<void>;
 }) {
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-  async function save() {
-    if (!name.trim()) return;
-    setBusy(true);
-    try {
-      const lake = await db.createManualLake({ name: name.trim(), latitude: lat, longitude: lng });
-      // Bookmark for the user so it lands in their "saved" set immediately.
-      try { await db.saveLakeForUser(lake.id); } catch {/* idempotent — fall through */}
-      onSaved(lake);
-    } catch (e: any) {
-      alert(e?.message || 'Failed to add lake');
-    } finally {
-      setBusy(false);
-    }
-  }
+  const [name, setName] = useState(defaultName);
   return (
-    <VaulModalShell title="Name this location" onClose={onClose} stackLevel={2}>
+    <VaulModalShell title="Save lake" onClose={onClose} stackLevel={2}>
       <label className="label">Lake name</label>
       <input
         className="input"
@@ -498,7 +519,7 @@ function NewManualLakeForm({ lat, lng, onClose, onSaved }: {
         value={name}
         maxLength={120}
         onChange={(e) => setName(e.target.value)}
-        placeholder="e.g. Étang du Moulin, Pond at the back"
+        placeholder="e.g. Linear Fisheries — Brasenose 1"
         style={{ marginBottom: 12 }}
       />
       <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 14 }}>
@@ -507,8 +528,13 @@ function NewManualLakeForm({ lat, lng, onClose, onSaved }: {
       <div style={{ display: 'flex', gap: 8 }}>
         <button onClick={onClose} className="btn btn-ghost"
           style={{ flex: 1, border: '1px solid rgba(234,201,136,0.18)' }}>Cancel</button>
-        <button onClick={save} disabled={!name.trim() || busy} className="btn btn-primary" style={{ flex: 2 }}>
-          {busy ? <Loader2 size={16} className="spin" /> : <Check size={16} />} Add
+        <button
+          onClick={() => onSubmit(name)}
+          disabled={!name.trim() || busy}
+          className="btn btn-primary"
+          style={{ flex: 2 }}
+        >
+          {busy ? <Loader2 size={16} className="spin" /> : <Check size={16} />} Save
         </button>
       </div>
     </VaulModalShell>

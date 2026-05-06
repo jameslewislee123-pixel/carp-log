@@ -8,6 +8,7 @@ import {
 import * as db from '@/lib/db';
 import {
   useActiveSetupForTrip, usePastSetupsAtLake, useRodSpotsAtLake, useCatchesForAngler,
+  useMySavedLakeOverrides, applyLakeOverride,
 } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
 import { useAnnotationsVisible } from '@/lib/annotationsVisible';
@@ -114,12 +115,18 @@ export default function TripMap({ trip, me, catches, profilesById, onOpenCatch }
   const [markers, setMarkers] = useState<MarkerCatch[]>(initialMarkers);
   useEffect(() => { setMarkers(initialMarkers); }, [initialMarkers]);
 
+  // Per-user overrides on saved lakes — applied to the trip's linked lake
+  // before centering so a user who relocated this lake for themselves sees
+  // their pin, not the canonical one.
+  const overridesQuery = useMySavedLakeOverrides();
+
   // Center: prefer the trip's linked lake; fall back to marker centroid; else trip.location geocode; else UK midlands.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (trip.lake_id) {
-        const lake = await db.getLake(trip.lake_id);
+        const raw = await db.getLake(trip.lake_id);
+        const lake = raw ? applyLakeOverride(raw, overridesQuery.data?.get(raw.id)) : null;
         if (lake?.latitude != null && lake?.longitude != null) {
           if (!cancelled) setCenter({ lat: lake.latitude, lng: lake.longitude });
           return;

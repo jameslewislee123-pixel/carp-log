@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import * as db from './db';
 import { QK } from './queryKeys';
-import type { Catch, Lake, Profile, Trip } from './types';
+import type { Catch, Lake, Profile, Trip, UserSavedLake } from './types';
 
 // ============================================================
 // Read hooks — these power the cached, deduplicated UI fetches
@@ -214,6 +214,7 @@ export function useLakes() {
   const catchesQuery = useCatches();
   const tripsQuery = useTrips();
   const savedIdsQuery = useMySavedLakeIds();
+  const overridesQuery = useMySavedLakeOverrides();
   const upstreamReady =
     catchesQuery.isSuccess && tripsQuery.isSuccess && savedIdsQuery.isSuccess;
 
@@ -229,13 +230,28 @@ export function useLakes() {
     return Array.from(s).sort();
   }, [upstreamReady, catchesQuery.data, tripsQuery.data, savedIdsQuery.data]);
 
-  return useQuery({
+  const lakesQuery = useQuery({
     queryKey: ['lakes', 'mine', idList.join(',')],
     queryFn: () => db.listLakesByIds(idList),
     enabled: upstreamReady,
     staleTime: 60_000,
     placeholderData: (prev) => prev,
   });
+
+  // Merge overrides client-side. Done here (not in queryFn) so the override
+  // map can update independently of the lakes fetch — toggling a custom
+  // name doesn't refetch the canonical rows.
+  const merged = useMemo<Lake[]>(() => {
+    const lakes = lakesQuery.data || [];
+    const overrides = overridesQuery.data;
+    if (!overrides || overrides.size === 0) return lakes;
+    return lakes.map(l => applyLakeOverride(l, overrides.get(l.id)));
+  }, [lakesQuery.data, overridesQuery.data]);
+
+  // Re-shape the result so consumers reading .data get the merged set.
+  // Other useQuery fields (isFetched, isSuccess, etc.) pass through from
+  // the raw query.
+  return { ...lakesQuery, data: merged };
 }
 
 export function useMySavedLakeIds() {
@@ -245,6 +261,37 @@ export function useMySavedLakeIds() {
     staleTime: 60_000,
     placeholderData: (prev) => prev,
   });
+}
+
+// Full user_saved_lakes rows — returns a Map<lake_id, UserSavedLake> for
+// O(1) lookups when joining canonical Lake rows against the current user's
+// per-user overrides (custom_name / custom_lat / custom_lng).
+export function useMySavedLakeOverrides() {
+  return useQuery({
+    queryKey: ['lakes', 'saved', 'mine', 'overrides'],
+    queryFn: async () => {
+      const rows = await db.listMySavedLakes();
+      const map = new Map<string, UserSavedLake>();
+      rows.forEach(r => map.set(r.lake_id, r));
+      return map;
+    },
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
+// Resolve canonical name / coords against a user's override row. NULL
+// override fields fall back to the canonical lake. Used wherever the UI
+// needs to display a lake the user has potentially renamed/relocated for
+// themselves.
+export function applyLakeOverride(lake: Lake, override?: UserSavedLake | null): Lake {
+  if (!override) return lake;
+  return {
+    ...lake,
+    name: override.custom_name ?? lake.name,
+    latitude: override.custom_latitude ?? lake.latitude,
+    longitude: override.custom_longitude ?? lake.longitude,
+  };
 }
 
 // Trips the current user has at a given lake. Used by Lake Detail's

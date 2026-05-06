@@ -235,6 +235,18 @@ export type Lake = {
   created_at?: string;
 };
 
+// Per-user overrides on a bookmarked lake (migration 0023). Each field is
+// NULL when the user hasn't set an override — display code falls back to
+// the canonical Lake row. saved_at is the original bookmark timestamp.
+export type UserSavedLake = {
+  user_id: string;
+  lake_id: string;
+  saved_at?: string;
+  custom_name: string | null;
+  custom_latitude: number | null;
+  custom_longitude: number | null;
+};
+
 export type LakeAnnotationType = 'productive_spot' | 'snag' | 'note' | 'hot_spot';
 export type LakeAnnotation = {
   id: string;

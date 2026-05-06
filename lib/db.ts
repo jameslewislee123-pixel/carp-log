@@ -4,7 +4,8 @@ import type {
   AppNotification, Catch, CatchComment, CatchLike, CatchVisibility, Comment, CommentLike, FieldVisibility,
   Friendship, GearItem, GearType, Lake, LakeAnnotation, LakeAnnotationType, Moon,
   NotifyConfig, Profile, RodSpot, SwimRollResult, Trip, TripActivity, TripMember, TripMessage,
-  TripStake, TripSwimGroup, TripSwimGroupWithTrip, TripSwimRoll, TripVisibility, Weather,
+  TripStake, TripSwimGroup, TripSwimGroupWithTrip, TripSwimRoll, TripVisibility,
+  UserSavedLake, Weather,
 } from './types';
 
 // ============ PROFILES ============
@@ -739,6 +740,87 @@ export async function listMySavedLakeIds(): Promise<string[]> {
   if (!user) return [];
   const { data } = await supabase().from('user_saved_lakes').select('lake_id').eq('user_id', user.id);
   return ((data || []) as { lake_id: string }[]).map((r) => r.lake_id);
+}
+
+// All my user_saved_lakes rows including any per-user overrides
+// (custom_name / custom_latitude / custom_longitude). Read once and the
+// caller builds a Map<lake_id, UserSavedLake> so display code can join
+// canonical Lake rows against my overrides without an N+1 fetch.
+export async function listMySavedLakes(): Promise<UserSavedLake[]> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return [];
+  const { data } = await supabase()
+    .from('user_saved_lakes')
+    .select('user_id, lake_id, saved_at, custom_name, custom_latitude, custom_longitude')
+    .eq('user_id', user.id);
+  return (data || []) as UserSavedLake[];
+}
+
+// Upsert that lets the caller commit a bookmark + overrides in one round
+// trip. Without overrides this is just a bookmark (same as saveLakeForUser
+// below); pass nullish overrides to clear any previously-set values.
+//
+// Requires the UPDATE policy added in migration 0023 — without it, the
+// ON CONFLICT branch trips RLS for already-bookmarked lakes.
+export async function saveLakeForUserWithOverrides(lakeId: string, overrides: {
+  custom_name?: string | null;
+  custom_latitude?: number | null;
+  custom_longitude?: number | null;
+}): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { error } = await supabase().from('user_saved_lakes').upsert(
+    {
+      user_id: user.id,
+      lake_id: lakeId,
+      custom_name: overrides.custom_name ?? null,
+      custom_latitude: overrides.custom_latitude ?? null,
+      custom_longitude: overrides.custom_longitude ?? null,
+    },
+    { onConflict: 'user_id,lake_id' },
+  );
+  if (error) throw error;
+}
+
+// Patch overrides only — preserves the rest of the row. Used by Lake
+// Detail's Edit name / Edit location flows. Upsert (rather than UPDATE)
+// covers the rare case where a user-owned lake has no bookmark row yet
+// and the user is trying to set an override on it.
+export async function updateMySavedLakeOverrides(lakeId: string, patch: {
+  custom_name?: string | null;
+  custom_latitude?: number | null;
+  custom_longitude?: number | null;
+}): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const payload: Record<string, unknown> = { user_id: user.id, lake_id: lakeId };
+  if ('custom_name' in patch) payload.custom_name = patch.custom_name ?? null;
+  if ('custom_latitude' in patch) payload.custom_latitude = patch.custom_latitude ?? null;
+  if ('custom_longitude' in patch) payload.custom_longitude = patch.custom_longitude ?? null;
+  const { error } = await supabase().from('user_saved_lakes').upsert(
+    payload,
+    { onConflict: 'user_id,lake_id' },
+  );
+  if (error) throw error;
+}
+
+// Mutate the canonical lakes row. Only the creator (or seed/null cases
+// per RLS) is allowed; consumers gate on lake.created_by === me.id before
+// calling. For lakes the user doesn't own, use updateMySavedLakeOverrides
+// instead so the change is per-user.
+export async function updateLake(lakeId: string, patch: {
+  name?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+}): Promise<Lake> {
+  const payload: Record<string, unknown> = {};
+  if (patch.name != null) payload.name = patch.name;
+  if ('latitude' in patch) payload.latitude = patch.latitude ?? null;
+  if ('longitude' in patch) payload.longitude = patch.longitude ?? null;
+  const { data, error } = await supabase()
+    .from('lakes').update(payload).eq('id', lakeId).select().single();
+  if (error) throw error;
+  return data as Lake;
 }
 
 export async function saveLakeForUser(lakeId: string): Promise<void> {
