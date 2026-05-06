@@ -247,6 +247,40 @@ export function useMySavedLakeIds() {
   });
 }
 
+// Trips the current user has at a given lake. Used by Lake Detail's
+// "Trips at this lake" section. Re-runs whenever trips or memberships change.
+export function useTripsAtLake(lakeId: string | null | undefined) {
+  return useQuery({
+    queryKey: lakeId ? ['lakes', lakeId, 'trips'] : ['lakes', 'no-lake', 'trips'],
+    queryFn: () => db.listTripsForLake(lakeId as string),
+    enabled: !!lakeId,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
+// Setups (trip_swim_groups) for a given trip + user. Active = ended_at null;
+// Past = ended_at non-null. Both return empty in PR1 — no write paths exist
+// yet — so the Trip Map tab renders empty states. PR2 wires up the writes.
+export function useActiveSetupForTrip(tripId: string | null | undefined, userId: string | null | undefined) {
+  return useQuery({
+    queryKey: tripId && userId ? ['trip_swim_groups', tripId, userId, 'active'] : ['trip_swim_groups', 'none', 'active'],
+    queryFn: () => db.listActiveTripSwimGroup(tripId as string, userId as string),
+    enabled: !!tripId && !!userId,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  });
+}
+export function usePastSetupsForTrip(tripId: string | null | undefined, userId: string | null | undefined) {
+  return useQuery({
+    queryKey: tripId && userId ? ['trip_swim_groups', tripId, userId, 'past'] : ['trip_swim_groups', 'none', 'past'],
+    queryFn: () => db.listPastTripSwimGroups(tripId as string, userId as string),
+    enabled: !!tripId && !!userId,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
 export function useRodSpotsAtLake(lakeId: string | null | undefined) {
   return useQuery({
     queryKey: lakeId ? QK.lakes.rodSpots(lakeId) : ['lakes', 'no-lake', 'rod_spots'],

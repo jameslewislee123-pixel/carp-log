@@ -277,6 +277,25 @@ export type RodSpot = {
   created_at?: string;
   updated_at?: string;
 };
+// Junction row linking a trip to one of the user's swim_group_ids. As of
+// migration 0022 this also stores the swim's coords + label directly, so a
+// "Setup" exists as soon as the row is created — rod_spots aren't required
+// for a swim marker to render on the trip Map tab. ended_at is null while
+// the setup is active; non-null once the user ends it.
+export type TripSwimGroup = {
+  id: string;
+  trip_id: string;
+  swim_group_id: string;
+  user_id: string;
+  started_at: string;
+  ended_at: string | null;
+  notes: string | null;
+  swim_latitude: number | null;
+  swim_longitude: number | null;
+  swim_label: string | null;
+  created_at?: string;
+};
+
 export type AppNotification = {
   id: string;
   recipient_id: string;

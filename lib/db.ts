@@ -4,7 +4,7 @@ import type {
   AppNotification, Catch, CatchComment, CatchLike, CatchVisibility, Comment, CommentLike, FieldVisibility,
   Friendship, GearItem, GearType, Lake, LakeAnnotation, LakeAnnotationType, Moon,
   NotifyConfig, Profile, RodSpot, SwimRollResult, Trip, TripActivity, TripMember, TripMessage,
-  TripStake, TripSwimRoll, TripVisibility, Weather,
+  TripStake, TripSwimGroup, TripSwimRoll, TripVisibility, Weather,
 } from './types';
 
 // ============ PROFILES ============
@@ -1007,6 +1007,62 @@ export async function deleteSwimGroup(swimGroupId: string): Promise<void> {
     .eq('swim_group_id', swimGroupId)
     .eq('user_id', user.id);
   if (error) throw error;
+}
+
+// ============ TRIP SWIM GROUPS (Setups) ============
+// A "Setup" is a row in trip_swim_groups for the current user on a trip.
+// `ended_at IS NULL` → active. End-of-session sets ended_at = now(); the row
+// is then surfaced under Past Setups. Each row carries swim_latitude/
+// swim_longitude/swim_label directly (migration 0022) so the swim marker
+// renders on the trip Map tab without requiring any rod_spot.
+
+export async function listActiveTripSwimGroup(tripId: string, userId: string): Promise<TripSwimGroup | null> {
+  const { data } = await supabase()
+    .from('trip_swim_groups').select('*')
+    .eq('trip_id', tripId).eq('user_id', userId).is('ended_at', null)
+    .order('started_at', { ascending: false }).limit(1).maybeSingle();
+  return (data as TripSwimGroup) || null;
+}
+
+export async function listPastTripSwimGroups(tripId: string, userId: string): Promise<TripSwimGroup[]> {
+  const { data } = await supabase()
+    .from('trip_swim_groups').select('*')
+    .eq('trip_id', tripId).eq('user_id', userId).not('ended_at', 'is', null)
+    .order('started_at', { ascending: false });
+  return (data || []) as TripSwimGroup[];
+}
+
+// ============ TRIPS AT LAKE ============
+// Used by Lake Detail's "Trips at this lake" section. Returns trips where:
+//   - lake_id matches AND
+//   - the current user is the owner OR a joined member.
+// RLS already restricts read access; the explicit owner/member union is so
+// the UI doesn't have to do its own merge.
+export async function listTripsForLake(lakeId: string): Promise<Trip[]> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return [];
+
+  const ownedRes = await supabase()
+    .from('trips').select('*')
+    .eq('lake_id', lakeId).eq('owner_id', user.id);
+
+  const memberRes = await supabase()
+    .from('trip_members').select('trip_id')
+    .eq('angler_id', user.id).eq('status', 'joined');
+  const memberTripIds = ((memberRes.data || []) as { trip_id: string }[]).map(r => r.trip_id);
+
+  let memberTrips: Trip[] = [];
+  if (memberTripIds.length > 0) {
+    const r = await supabase()
+      .from('trips').select('*')
+      .eq('lake_id', lakeId).in('id', memberTripIds);
+    memberTrips = ((r.data || []) as Trip[]);
+  }
+
+  const all = new Map<string, Trip>();
+  ((ownedRes.data || []) as Trip[]).forEach(t => all.set(t.id, t));
+  memberTrips.forEach(t => all.set(t.id, t));
+  return Array.from(all.values()).sort((a, b) => b.start_date.localeCompare(a.start_date));
 }
 
 // ============ NOTIFICATIONS ============

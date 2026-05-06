@@ -402,7 +402,8 @@ export default function CarpApp() {
       )}
       {detailLakeName && (
         <LakeDetailLoader name={detailLakeName} catches={catches} profilesById={profilesById} me={me}
-          onClose={() => setDetailLakeName(null)} onOpenCatch={setDetailCatch} />
+          onClose={() => setDetailLakeName(null)} onOpenCatch={setDetailCatch}
+          onOpenTrip={(t) => { setDetailLakeName(null); setDetailTrip(t); }} />
       )}
       {detailTrip && (
         <TripDetail
@@ -2114,7 +2115,7 @@ function TripDetail({ me, trip, catches, profilesById, onClose, onEdit, onDelete
       )}
 
       {tab === 'map' && (
-        <TripMap trip={trip} catches={tripCatches} profilesById={memberProfiles} onOpenCatch={onOpenCatch} />
+        <TripMap trip={trip} me={me} catches={tripCatches} profilesById={memberProfiles} onOpenCatch={onOpenCatch} />
       )}
 
       {tab === 'chat' && (
@@ -5133,9 +5134,10 @@ function BottomNav({ view, onChange }: { view: string; onChange: (v: 'feed' | 't
   );
 }
 
-function LakeDetailLoader({ name, catches, profilesById, me, onClose, onOpenCatch }: {
+function LakeDetailLoader({ name, catches, profilesById, me, onClose, onOpenCatch, onOpenTrip }: {
   name: string; catches: CatchT[]; profilesById: Record<string, Profile>; me: Profile;
   onClose: () => void; onOpenCatch: (c: CatchT) => void;
+  onOpenTrip?: (t: Trip) => void;
 }) {
   const [lake, setLake] = useState<import('@/lib/types').Lake | null>(null);
   useEffect(() => {
@@ -5155,7 +5157,7 @@ function LakeDetailLoader({ name, catches, profilesById, me, onClose, onOpenCatc
     (c.lake_id && c.lake_id === lake.id) ||
     (!c.lake_id && (c.lake || '').trim().toLowerCase() === lakeNameLower)
   );
-  return <LakeDetail lake={lake} lakeCatches={lakeCatches} profilesById={profilesById} me={me} onClose={onClose} onOpenCatch={onOpenCatch} />;
+  return <LakeDetail lake={lake} lakeCatches={lakeCatches} profilesById={profilesById} me={me} onClose={onClose} onOpenCatch={onOpenCatch} onOpenTrip={onOpenTrip} />;
 }
 
 function AvatarUploader({ me, onSaved }: { me: Profile; onSaved: (url: string) => Promise<void> | void }) {
