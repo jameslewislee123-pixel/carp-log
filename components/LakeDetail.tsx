@@ -75,9 +75,6 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
     if (filter === 'all') return annos;
     return annos.filter(a => a.type === filter);
   }, [annos, filter]);
-  const myCatchesHere = lakeCatches.filter(c => c.angler_id === me.id).length;
-  const canAnnotate = myCatchesHere > 0;
-
   // Lake Map is the authoring surface for annotations — they always render
   // here (regardless of any visibility preference set on the Trip Map). The
   // filter chips below the map still narrow the rendered set by type.
@@ -207,32 +204,18 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
               lakeName={lake.name}
             />
 
-            {/* FAB — adds an annotation. Only shown if the user has fished
-                here (annotations are visible to anglers who have, and
-                writes are gated on the same condition). */}
-            {canAnnotate && (
-              <FabAddAnnotation
-                open={fabOpen}
-                onToggle={() => {
-                  if (pendingType) { cancelDrop(); return; }
-                  setFabOpen(o => !o);
-                }}
-                onPick={startDrop}
-                cancelLabel={pendingType ? 'Cancel' : null}
-              />
-            )}
-          </div>
-        )}
-
-        {!canAnnotate && (
-          <div style={{
-            marginTop: 10,
-            padding: '10px 14px', borderRadius: 12,
-            background: 'rgba(10,24,22,0.5)',
-            border: '1px dashed rgba(234,201,136,0.18)',
-            color: 'var(--text-3)', fontSize: 12, lineHeight: 1.4,
-          }}>
-            You haven't fished here yet. Annotations are visible to anglers who have.
+            {/* FAB — adds an annotation. Always available on the lake's
+                authoring surface; recce trips and brand-new venues need
+                to be annotated before any catches exist there. */}
+            <FabAddAnnotation
+              open={fabOpen}
+              onToggle={() => {
+                if (pendingType) { cancelDrop(); return; }
+                setFabOpen(o => !o);
+              }}
+              onPick={startDrop}
+              cancelLabel={pendingType ? 'Cancel' : null}
+            />
           </div>
         )}
 
@@ -482,27 +465,13 @@ function NewAnnotationForm({ lakeId, lat, lng, initialType, onClose, onSaved }: 
     } catch (e: any) { alert(e?.message || 'Failed to save'); }
     finally { setBusy(false); }
   }
+  // Renders inside the vaul portal (stackLevel=1) so it sits above the
+  // Lake Detail drawer AND escapes the Leaflet container's stacking
+  // context — without the portal, hand-rolled overlays at zIndex < 700
+  // got tap-through to Leaflet's marker/popup panes (z 600/700).
   return (
-    <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(3,10,9,0.7)',
-      backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
-      display: 'flex', alignItems: 'flex-end', justifyContent: 'center', touchAction: 'none',
-    }}>
-      <div onClick={(e) => e.stopPropagation()} className="slide-up" style={{
-        width: '100%', maxWidth: 480,
-        background: 'rgba(10,24,22,0.95)',
-        backdropFilter: 'blur(40px) saturate(180%)', WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-        borderRadius: '24px 24px 0 0', border: '1px solid rgba(234,201,136,0.18)', borderBottom: 'none',
-        padding: '20px 20px max(30px, env(safe-area-inset-bottom))',
-        touchAction: 'pan-y',
-      }}>
-        <div className="sheet-handle" />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, marginBottom: 14 }}>
-          <h3 className="display-font" style={{ fontSize: 18, margin: 0, fontWeight: 500 }}>New annotation</h3>
-          <button onClick={onClose} style={{ background: 'rgba(20,42,38,0.7)', border: '1px solid rgba(234,201,136,0.18)', borderRadius: 10, width: 32, height: 32, color: 'var(--text-2)', cursor: 'pointer' }}><X size={16} /></button>
-        </div>
-
-        <label className="label">Type</label>
+    <VaulModalShell title="New annotation" onClose={onClose} stackLevel={1}>
+      <label className="label">Type</label>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6, marginBottom: 12 }}>
           {ANN_TYPES.map(t => (
             <button key={t.id} onClick={() => setType(t.id)} className="tap" style={{
@@ -524,21 +493,23 @@ function NewAnnotationForm({ lakeId, lat, lng, initialType, onClose, onSaved }: 
         <textarea className="input" rows={3} maxLength={300} value={desc} onChange={(e) => setDesc(e.target.value)}
           placeholder="Anything useful for next time…" style={{ marginBottom: 12, resize: 'vertical', fontFamily: 'inherit' }} />
 
-        <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 14 }}>{lat.toFixed(5)}, {lng.toFixed(5)}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 14 }}>{lat.toFixed(5)}, {lng.toFixed(5)}</div>
 
-        <button onClick={save} disabled={!title.trim() || busy} className="btn btn-primary" style={{ width: '100%', fontSize: 15, padding: 14 }}>
-          {busy ? <Loader2 size={16} className="spin" /> : <Check size={16} />} Drop pin
-        </button>
-      </div>
-    </div>
+      <button onClick={save} disabled={!title.trim() || busy} className="btn btn-primary" style={{ width: '100%', fontSize: 15, padding: 14 }}>
+        {busy ? <Loader2 size={16} className="spin" /> : <Check size={16} />} Drop pin
+      </button>
+    </VaulModalShell>
   );
 }
 
 function AnnotationDetail({ anno, author, onClose }: { anno: LakeAnnotation; author?: Profile; onClose: () => void }) {
   const t = ANN_TYPES.find(x => x.id === anno.type);
+  // zIndex 1500 sits above Leaflet's popup pane (z 700) and any in-app
+  // overlay we render. Without this, taps on the Close button and the
+  // backdrop fell through to map markers underneath.
   return (
     <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(3,10,9,0.7)',
+      position: 'fixed', inset: 0, zIndex: 1500, background: 'rgba(3,10,9,0.7)',
       backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, touchAction: 'none',
     }}>
