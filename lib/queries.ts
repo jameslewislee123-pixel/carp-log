@@ -271,12 +271,16 @@ export function useActiveSetupForTrip(tripId: string | null | undefined, userId:
     placeholderData: (prev) => prev,
   });
 }
-export function usePastSetupsForTrip(tripId: string | null | undefined, userId: string | null | undefined) {
+// Cross-trip past setups at a lake. Replaces the trip-scoped variant — the
+// Trip Map tab now shows EVERY ended setup the current user has at the
+// trip's lake, not just the ones from this trip. Anglers reuse productive
+// swims across multiple visits to the same venue.
+export function usePastSetupsAtLake(lakeId: string | null | undefined, userId: string | null | undefined) {
   return useQuery({
-    queryKey: tripId && userId ? ['trip_swim_groups', tripId, userId, 'past'] : ['trip_swim_groups', 'none', 'past'],
-    queryFn: () => db.listPastTripSwimGroups(tripId as string, userId as string),
-    enabled: !!tripId && !!userId,
-    staleTime: 60_000,
+    queryKey: lakeId && userId ? ['lakes', lakeId, 'past_setups', userId] : ['lakes', 'no-lake', 'past_setups'],
+    queryFn: () => db.listMyPastSetupsAtLake(lakeId as string),
+    enabled: !!lakeId && !!userId,
+    staleTime: 30_000,
     placeholderData: (prev) => prev,
   });
 }

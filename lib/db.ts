@@ -4,7 +4,7 @@ import type {
   AppNotification, Catch, CatchComment, CatchLike, CatchVisibility, Comment, CommentLike, FieldVisibility,
   Friendship, GearItem, GearType, Lake, LakeAnnotation, LakeAnnotationType, Moon,
   NotifyConfig, Profile, RodSpot, SwimRollResult, Trip, TripActivity, TripMember, TripMessage,
-  TripStake, TripSwimGroup, TripSwimRoll, TripVisibility, Weather,
+  TripStake, TripSwimGroup, TripSwimGroupWithTrip, TripSwimRoll, TripVisibility, Weather,
 } from './types';
 
 // ============ PROFILES ============
@@ -1024,12 +1024,26 @@ export async function listActiveTripSwimGroup(tripId: string, userId: string): P
   return (data as TripSwimGroup) || null;
 }
 
-export async function listPastTripSwimGroups(tripId: string, userId: string): Promise<TripSwimGroup[]> {
-  const { data } = await supabase()
-    .from('trip_swim_groups').select('*')
-    .eq('trip_id', tripId).eq('user_id', userId).not('ended_at', 'is', null)
-    .order('started_at', { ascending: false });
-  return (data || []) as TripSwimGroup[];
+// Cross-trip Past Setups library: every ended setup the current user has
+// at this lake, regardless of which trip it lived under. Server-side join
+// pulls the parent trip's identifying fields; we filter client-side by
+// trip.lake_id since trip_swim_groups doesn't FK to lake directly.
+// Sorted by ended_at desc so the most-recently-finished setup is first.
+export async function listMyPastSetupsAtLake(lakeId: string): Promise<TripSwimGroupWithTrip[]> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return [];
+  const { data, error } = await supabase()
+    .from('trip_swim_groups')
+    .select(`
+      *,
+      trip:trip_id ( id, name, start_date, end_date, lake_id )
+    `)
+    .eq('user_id', user.id)
+    .not('ended_at', 'is', null)
+    .order('ended_at', { ascending: false });
+  if (error) throw error;
+  const rows = (data || []) as unknown as TripSwimGroupWithTrip[];
+  return rows.filter(r => r.trip?.lake_id === lakeId);
 }
 
 // One-active-per-user enforcement: returns the row, if any, that the user

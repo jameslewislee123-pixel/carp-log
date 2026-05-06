@@ -296,6 +296,20 @@ export type TripSwimGroup = {
   created_at?: string;
 };
 
+// trip_swim_groups joined with the parent trip's identifying fields. Used
+// by the cross-trip Past Setups list on the Trip Map tab — anglers reuse
+// productive swims across multiple trips at the same lake, so the row
+// needs to surface which trip the setup originally came from.
+export type TripSwimGroupWithTrip = TripSwimGroup & {
+  trip: {
+    id: string;
+    name: string;
+    start_date: string;
+    end_date: string;
+    lake_id: string | null;
+  } | null;
+};
+
 export type AppNotification = {
   id: string;
   recipient_id: string;

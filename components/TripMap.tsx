@@ -1,18 +1,18 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  Check, ChevronDown, ChevronUp, Eye, EyeOff, Loader2, MapPinned, Pencil, Plus, Ruler, Trash2, X,
+  Check, ChevronDown, ChevronUp, Copy, Eye, EyeOff, Loader2, MapPinned, Pencil, Plus, Ruler, Trash2, X,
 } from 'lucide-react';
 import * as db from '@/lib/db';
 import {
-  useActiveSetupForTrip, usePastSetupsForTrip, useRodSpotsAtLake,
+  useActiveSetupForTrip, usePastSetupsAtLake, useRodSpotsAtLake, useCatchesForAngler,
 } from '@/lib/queries';
 import { QK } from '@/lib/queryKeys';
 import { useAnnotationsVisible } from '@/lib/annotationsVisible';
 import type {
-  Catch, LakeAnnotation, LakeAnnotationType, Profile, RodSpot, Trip, TripSwimGroup,
+  Catch, LakeAnnotation, LakeAnnotationType, Profile, RodSpot, Trip, TripSwimGroup, TripSwimGroupWithTrip,
 } from '@/lib/types';
 import { catchCoverUrl } from '@/lib/db';
 import { geocodeLake } from '@/lib/weather';
@@ -178,12 +178,20 @@ export default function TripMap({ trip, me, catches, profilesById, onOpenCatch }
   }, [trip.lake_id]);
 
   // Setups + their rods (the rods at lake, filtered by swim_group_id).
+  // Past Setups is now LAKE-scoped, not trip-scoped — anglers reuse swims
+  // across visits, so the library shows every ended setup the user has at
+  // this lake regardless of which trip created it.
   const activeQuery = useActiveSetupForTrip(trip.id, me.id);
-  const pastQuery = usePastSetupsForTrip(trip.id, me.id);
+  const pastQuery = usePastSetupsAtLake(trip.lake_id, me.id);
   const rodSpotsQuery = useRodSpotsAtLake(trip.lake_id);
+  // Catches across ALL my trips so cross-trip past setups can compute
+  // accurate catch counts via catches.swim_group_id (catches prop is
+  // scoped to the current trip only).
+  const myCatchesQuery = useCatchesForAngler(me.id);
   const activeSetup = activeQuery.data || null;
   const pastSetups = pastQuery.data || [];
   const allRodSpots = rodSpotsQuery.data || [];
+  const allMyCatches = myCatchesQuery.data || [];
 
   const activeRods = useMemo(
     () => activeSetup ? allRodSpots.filter(r => r.swim_group_id === activeSetup.swim_group_id) : [],
@@ -205,8 +213,15 @@ export default function TripMap({ trip, me, catches, profilesById, onOpenCatch }
   const canStartSetup = !!trip.lake_id;
 
   function invalidateSetupCaches() {
-    qc.invalidateQueries({ queryKey: ['trip_swim_groups', trip.id] });
-    if (trip.lake_id) qc.invalidateQueries({ queryKey: QK.lakes.rodSpots(trip.lake_id) });
+    // Broad on trip_swim_groups: cross-trip Past Setups means a delete here
+    // can affect another trip's view, so we invalidate every key under the
+    // prefix rather than scoping to trip.id.
+    qc.invalidateQueries({ queryKey: ['trip_swim_groups'] });
+    if (trip.lake_id) {
+      qc.invalidateQueries({ queryKey: QK.lakes.rodSpots(trip.lake_id) });
+      qc.invalidateQueries({ queryKey: ['lakes', trip.lake_id, 'past_setups'] });
+    }
+    qc.invalidateQueries({ queryKey: QK.catches.byAngler(me.id) });
   }
 
   async function handleStartSetup() {
@@ -242,6 +257,76 @@ export default function TripMap({ trip, me, catches, profilesById, onOpenCatch }
     setDropMode('idle');
     setPendingSwimDrop(null);
     setPendingRodDrop(null);
+  }
+
+  // "Use this setup" — copies a past setup's swim + rods onto the current
+  // trip as the new active setup. Honors the same one-active enforcement
+  // as Set up: ends the existing active setup on this trip first, plus any
+  // active setup on a different trip, both gated behind confirms.
+  async function copySetupToCurrentTrip(source: TripSwimGroupWithTrip) {
+    if (!trip.lake_id) return;
+    if (source.swim_latitude == null || source.swim_longitude == null) {
+      alert("This setup is missing swim coords and can't be copied.");
+      return;
+    }
+    if (activeSetup) {
+      const ok = window.confirm(
+        `You have an active setup ("${activeSetup.swim_label || 'Untitled swim'}") on this trip. Continuing will end it. Continue?`
+      );
+      if (!ok) return;
+      try {
+        if (activeRods.length > 0) await db.deleteSwimGroup(activeSetup.swim_group_id);
+        await db.endTripSwimGroup(activeSetup.id);
+      } catch (e: any) {
+        alert(e?.message || 'Failed to end existing active setup');
+        return;
+      }
+    }
+    try {
+      const otherActive = await db.getMyActiveTripSwimGroup();
+      if (otherActive && otherActive.trip_id !== trip.id && otherActive.id !== activeSetup?.id) {
+        const ok = window.confirm('You also have an active setup on another trip. Continue will end that setup. Continue?');
+        if (!ok) return;
+        await db.endTripSwimGroup(otherActive.id);
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Could not check existing setups');
+      return;
+    }
+    try {
+      const newSetup = await db.createTripSwimGroup({
+        trip_id: trip.id,
+        swim_latitude: source.swim_latitude,
+        swim_longitude: source.swim_longitude,
+        swim_label: source.swim_label,
+        notes: null,
+      });
+      const sourceRods = allRodSpots.filter(r => r.swim_group_id === source.swim_group_id);
+      // Sequential to keep RLS friendly and to surface the first error rather
+      // than partially succeeding via Promise.all.
+      for (const r of sourceRods) {
+        await db.createRodSpot({
+          lake_id: trip.lake_id,
+          swim_group_id: newSetup.swim_group_id,
+          swim_latitude: source.swim_latitude,
+          swim_longitude: source.swim_longitude,
+          swim_label: source.swim_label,
+          spot_latitude: r.spot_latitude,
+          spot_longitude: r.spot_longitude,
+          spot_label: r.spot_label,
+          wraps_calculated: r.wraps_calculated,
+          wraps_actual: r.wraps_actual,
+          features: r.features,
+          bottom_type: r.bottom_type,
+          default_bait_id: r.default_bait_id,
+          default_rig_id: r.default_rig_id,
+          default_hook_id: r.default_hook_id,
+        });
+      }
+      invalidateSetupCaches();
+    } catch (e: any) {
+      alert(e?.message || 'Failed to copy setup');
+    }
   }
 
   return (
@@ -376,10 +461,13 @@ export default function TripMap({ trip, me, catches, profilesById, onOpenCatch }
           ? <PastSetupsEmpty />
           : <PastSetupsList
               setups={pastSetups}
+              currentTripId={trip.id}
               allRodSpots={allRodSpots}
-              tripCatches={catches.filter(c => c.trip_id === trip.id)}
+              allMyCatches={allMyCatches}
               onOpenCatch={onOpenCatch}
               onChanged={invalidateSetupCaches}
+              onUseSetup={copySetupToCurrentTrip}
+              canUseSetup={!!trip.lake_id}
             />
       )}
 
@@ -699,30 +787,50 @@ function RodRow({ rod, index, onClick }: { rod: RodSpot; index: number; onClick:
 }
 
 // ============================================================================
-// Past Setups list — collapsible rows for trip_swim_groups WHERE ended_at
-// IS NOT NULL on this trip. Cross-trip ("setups at this lake from any of
-// my trips") lands in PR3.
+// Past Setups list — cross-trip library: every ended setup the user has at
+// THIS LAKE, regardless of which trip created it. Each row surfaces the
+// source trip's name so reused swims are obvious. Tapping a row expands to
+// the rod + catch detail; "Use this setup" copies the swim + rods onto the
+// current trip as the new active setup.
 // ============================================================================
-function PastSetupsList({ setups, allRodSpots, tripCatches, onOpenCatch, onChanged }: {
-  setups: TripSwimGroup[];
+function PastSetupsList({
+  setups, currentTripId, allRodSpots, allMyCatches, onOpenCatch, onChanged, onUseSetup, canUseSetup,
+}: {
+  setups: TripSwimGroupWithTrip[];
+  currentTripId: string;
   allRodSpots: RodSpot[];
-  tripCatches: Catch[];
+  allMyCatches: Catch[];
   onOpenCatch: (c: Catch) => void;
   onChanged: () => void;
+  onUseSetup: (s: TripSwimGroupWithTrip) => void | Promise<void>;
+  canUseSetup: boolean;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [openRowId, setOpenRowId] = useState<string | null>(null);
+  // Two-tap delete state. First Delete tap arms `confirmingId`; second tap
+  // (within the auto-revert window) commits. Higher-stakes than PR2's single
+  // confirm because Past Setups can include other trips' data — accidental
+  // deletion would silently drop another trip's history.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current); }, []);
 
-  async function deletePast(setup: TripSwimGroup) {
+  function armConfirm(id: string) {
+    setConfirmingId(id);
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+    confirmTimerRef.current = setTimeout(() => {
+      setConfirmingId((curr) => curr === id ? null : curr);
+    }, 4000);
+  }
+
+  async function commitDelete(setup: TripSwimGroupWithTrip) {
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+    setConfirmingId(null);
+    setOpenRowId(null);
     const rods = allRodSpots.filter(r => r.swim_group_id === setup.swim_group_id);
-    const msg = rods.length > 0
-      ? `Delete this setup and its ${rods.length} rod${rods.length === 1 ? '' : 's'}? Catches keep their data but lose the rod link.`
-      : 'Delete this setup?';
-    if (!confirm(msg)) return;
     try {
       if (rods.length > 0) await db.deleteSwimGroup(setup.swim_group_id);
       await db.deleteTripSwimGroup(setup.id);
-      setOpenRowId(null);
       onChanged();
     } catch (e: any) {
       alert(e?.message || 'Failed to delete setup');
@@ -733,17 +841,24 @@ function PastSetupsList({ setups, allRodSpots, tripCatches, onOpenCatch, onChang
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {setups.map(s => {
         const rods = allRodSpots.filter(r => r.swim_group_id === s.swim_group_id);
-        const cs = tripCatches.filter(c => c.swim_group_id === s.swim_group_id && !c.lost);
+        const cs = allMyCatches.filter(c => c.swim_group_id === s.swim_group_id && !c.lost);
         const isOpen = expanded === s.id;
         const rowOpen = openRowId === s.id;
+        const isConfirming = confirmingId === s.id;
+        const fromCurrent = s.trip?.id === currentTripId;
+        const tripName = s.trip?.name || 'Unknown trip';
         return (
           <SwipeableRow
             key={s.id}
             isOpen={rowOpen}
             onOpen={() => setOpenRowId(s.id)}
             onClose={() => { if (rowOpen) setOpenRowId(null); }}
-            onAction={() => deletePast(s)}
-            actionLabel="Delete"
+            onAction={() => {
+              if (!isConfirming) { armConfirm(s.id); return; }
+              commitDelete(s);
+            }}
+            actionLabel={isConfirming ? 'Confirm?' : 'Delete'}
+            actionColor={isConfirming ? '#ff8276' : '#ff3b30'}
           >
             <div className="card" style={{
               background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
@@ -762,14 +877,25 @@ function PastSetupsList({ setups, allRodSpots, tripCatches, onOpenCatch, onChang
                   <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {s.swim_label || 'Untitled swim'}
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
-                    {formatSetupRange(s.started_at, s.ended_at)} · {rods.length} rod{rods.length === 1 ? '' : 's'} · {cs.length} catch{cs.length === 1 ? '' : 'es'}
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span>{formatSetupRange(s.started_at, s.ended_at)}</span>
+                    <span style={{
+                      padding: '1px 6px', borderRadius: 999,
+                      background: fromCurrent ? 'rgba(141,191,157,0.14)' : 'rgba(234,201,136,0.10)',
+                      border: `1px solid ${fromCurrent ? 'rgba(141,191,157,0.35)' : 'rgba(234,201,136,0.22)'}`,
+                      color: fromCurrent ? '#9DCFAE' : 'var(--gold-2)',
+                      fontSize: 10, fontWeight: 600,
+                      maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      {fromCurrent ? 'this trip' : `from ${tripName}`}
+                    </span>
+                    <span>· {rods.length} rod{rods.length === 1 ? '' : 's'} · {cs.length} catch{cs.length === 1 ? '' : 'es'}</span>
                   </div>
                 </div>
                 {isOpen ? <ChevronUp size={16} style={{ color: 'var(--text-3)' }} /> : <ChevronDown size={16} style={{ color: 'var(--text-3)' }} />}
               </button>
               {isOpen && (
-                <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid rgba(234,201,136,0.08)' }}>
+                <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 10, borderTop: '1px solid rgba(234,201,136,0.08)' }}>
                   {rods.length > 0 && (
                     <div style={{ marginTop: 10 }}>
                       <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--gold-2)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
@@ -787,6 +913,7 @@ function PastSetupsList({ setups, allRodSpots, tripCatches, onOpenCatch, onChang
                               padding: 8, borderRadius: 10,
                               background: 'rgba(10,24,22,0.5)',
                               fontSize: 12, color: 'var(--text-2)',
+                              flexWrap: 'wrap',
                             }}>
                               <span style={{ fontWeight: 600 }}>{r.spot_label || `Rod ${i + 1}`}</span>
                               <span style={{ color: 'var(--text-3)' }}>· {w} wraps</span>
@@ -823,6 +950,33 @@ function PastSetupsList({ setups, allRodSpots, tripCatches, onOpenCatch, onChang
                       </div>
                     </div>
                   )}
+
+                  {/* "Use this setup" — copy swim + rods onto the current trip
+                      as the new active setup. Disabled when the trip has no
+                      lake_id (the Set up CTA is disabled in the same case). */}
+                  <button
+                    onClick={async () => {
+                      const ok = window.confirm(
+                        `Copy "${s.swim_label || 'this swim'}" and ${rods.length} rod${rods.length === 1 ? '' : 's'} to your current trip as the new active setup?`
+                      );
+                      if (!ok) return;
+                      await onUseSetup(s);
+                    }}
+                    disabled={!canUseSetup}
+                    className="tap"
+                    style={{
+                      marginTop: 4,
+                      padding: '10px 12px', borderRadius: 10,
+                      background: canUseSetup ? 'rgba(212,182,115,0.18)' : 'rgba(212,182,115,0.08)',
+                      border: `1px solid ${canUseSetup ? 'rgba(234,201,136,0.45)' : 'rgba(234,201,136,0.18)'}`,
+                      color: canUseSetup ? 'var(--gold-2)' : 'var(--text-3)',
+                      fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+                      cursor: canUseSetup ? 'pointer' : 'not-allowed',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    }}
+                  >
+                    <Copy size={13} /> Use this setup
+                  </button>
                 </div>
               )}
             </div>
