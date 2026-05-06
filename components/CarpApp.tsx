@@ -440,11 +440,31 @@ export default function CarpApp() {
           onClose={() => { setShowAddTrip(false); setEditTrip(null); }}
           onSave={async (data, inviteIds) => {
             try {
+              // Capture the upserted/created row so we can patch the cache
+              // optimistically — the realtime subscription on `trips` does
+              // eventually invalidate, but on mobile/poor-signal it can lag
+              // long enough that the next screen still shows stale data.
+              let saved: Trip;
               if (editTrip) {
-                await db.upsertTrip({ ...data, id: editTrip.id });
+                saved = await db.upsertTrip({ ...data, id: editTrip.id });
+                qc.setQueryData<Trip>(QK.trips.detail(editTrip.id), saved);
+                qc.setQueryData<Trip[] | undefined>(QK.trips.all, (old) =>
+                  old ? old.map(t => t.id === saved.id ? saved : t) : old);
               } else {
-                await db.createTripWithInvites(data, inviteIds);
+                saved = await db.createTripWithInvites(data, inviteIds);
+                qc.setQueryData<Trip[] | undefined>(QK.trips.all, (old) =>
+                  old ? [saved, ...old] : [saved]);
               }
+              // Invalidate so the server confirms the optimistic patch and
+              // any related queries refetch. Lakes prefix covers
+              // useTripsAtLake on BOTH the old and new lake (the section
+              // on Lake Detail) without us having to remember which ids
+              // changed across the edit.
+              await Promise.all([
+                qc.invalidateQueries({ queryKey: QK.trips.all }),
+                editTrip ? qc.invalidateQueries({ queryKey: QK.trips.detail(editTrip.id) }) : Promise.resolve(),
+                qc.invalidateQueries({ queryKey: ['lakes'] }),
+              ]);
               setShowAddTrip(false); setEditTrip(null);
             } catch (e) {
               // eslint-disable-next-line no-console
