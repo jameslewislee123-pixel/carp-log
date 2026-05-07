@@ -213,8 +213,8 @@ export default function GearChecklist() {
                             if (!isConfirming) { armConfirm(item.id); return; }
                             commitDelete(item);
                           }}
-                          actionLabel={isConfirming ? 'Confirm?' : 'Delete'}
-                          actionColor={isConfirming ? '#ff8276' : '#ff3b30'}
+                          actionLabel="Delete"
+                          confirming={isConfirming}
                         >
                           <ChecklistRow
                             item={item}

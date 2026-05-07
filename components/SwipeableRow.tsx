@@ -1,17 +1,26 @@
 'use client';
 import { useEffect, useRef } from 'react';
 import { motion, useMotionValue, type PanInfo } from 'framer-motion';
-import { Trash2 } from 'lucide-react';
+import { Check, Trash2 } from 'lucide-react';
 
 // iOS-style swipe-to-reveal action row.
 //
 // The card content is wrapped in a horizontally-draggable motion.div that
-// reveals a colored action button (Delete / Leave / Remove) when swiped left
+// reveals a colored action button (default: red trash) when swiped left
 // past the threshold. Open state is owned by the parent so only one row in
-// a list can be open at a time.
+// a list can be open at a time. Mail.app idiom: icon-only, narrow.
+//
+// Two-tap arming: callers that want a confirm step set `confirming`
+// when their first-tap state is armed. The icon flips to a check, and
+// the next tap commits via onAction. (See TripMap, GearChecklist.)
+//
+// Red-leak guard: the outer container's background is set to
+// `actionColor`, so any subpixel gap between the foreground and the
+// container's right edge reads as the same red as the action button —
+// invisibly. The opaque foreground motion.div hides the button at rest.
 
-const BUTTON_WIDTH = 88;
-const SWIPE_THRESHOLD = 70;
+const BUTTON_WIDTH = 60;
+const SWIPE_THRESHOLD = 40;
 const VELOCITY_THRESHOLD = 500;
 
 export interface SwipeableRowProps {
@@ -19,8 +28,11 @@ export interface SwipeableRowProps {
   // Fires when the user taps the revealed action button. Caller is
   // responsible for the confirm dialog and the actual mutation.
   onAction: () => void | Promise<void>;
-  actionLabel?: string;        // default 'Delete'
-  actionColor?: string;        // default red
+  actionLabel?: string;        // aria-label only — text is no longer rendered. Default 'Delete'.
+  actionColor?: string;        // default iOS red
+  // When true, the icon flips to a checkmark to indicate "tap again to
+  // confirm". Caller owns the timer + state.
+  confirming?: boolean;
   isOpen: boolean;
   onOpen: () => void;
   onClose: () => void;
@@ -31,6 +43,7 @@ export default function SwipeableRow({
   onAction,
   actionLabel = 'Delete',
   actionColor = '#ff3b30',
+  confirming = false,
   isOpen,
   onOpen,
   onClose,
@@ -79,55 +92,42 @@ export default function SwipeableRow({
       style={{
         position: 'relative',
         overflow: 'hidden',
-        borderRadius: 22,
+        borderRadius: 14,
+        // Container bg = action color so any subpixel gap on the right
+        // edge of the foreground reads as the red trash band, not as a
+        // leak of a different color.
+        background: actionColor,
       }}
     >
       {/* Action button — sits at the right edge, behind the foreground row.
-          Hidden at rest because the opaque motion.div on top covers it.
-          Right corners match the container's radius so the button visually
-          fills the rounded slot when revealed; left corners stay square
-          where it meets the foreground row. */}
-      <div
-        aria-hidden={!isOpen}
+          No own background — the container provides the red. */}
+      <button
+        type="button"
+        onClick={handleActionClick}
+        tabIndex={isOpen ? 0 : -1}
+        aria-label={confirming ? `Confirm ${actionLabel.toLowerCase()}` : actionLabel}
         style={{
           position: 'absolute',
           right: 0,
           top: 0,
           bottom: 0,
           width: BUTTON_WIDTH,
-          background: actionColor,
-          borderTopRightRadius: 22,
-          borderBottomRightRadius: 22,
+          background: 'transparent',
+          border: 'none',
+          color: 'white',
+          fontFamily: 'inherit',
+          cursor: 'pointer',
+          padding: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
           zIndex: 0,
         }}
       >
-        <button
-          type="button"
-          onClick={handleActionClick}
-          tabIndex={isOpen ? 0 : -1}
-          aria-label={actionLabel}
-          style={{
-            background: 'transparent',
-            border: 'none',
-            color: 'white',
-            fontFamily: 'inherit',
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: 'pointer',
-            width: '100%',
-            height: '100%',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 4,
-            padding: 0,
-          }}
-        >
-          <Trash2 size={20} strokeWidth={2.2} />
-          <span>{actionLabel}</span>
-        </button>
-      </div>
+        {confirming
+          ? <Check size={22} strokeWidth={2.6} />
+          : <Trash2 size={20} strokeWidth={2.2} />}
+      </button>
 
       {/* Foreground row — draggable. Solid background is critical: it
           obscures the action button when the row is at rest. Without it,
@@ -151,7 +151,7 @@ export default function SwipeableRow({
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'stretch',
-          background: '#0A1816',
+          background: 'var(--bg-0)',
           touchAction: 'pan-y',
         }}
         animate={{ x: isOpen ? -BUTTON_WIDTH : 0 }}

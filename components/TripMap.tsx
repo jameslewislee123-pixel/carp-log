@@ -864,8 +864,8 @@ function PastSetupsList({
               if (!isConfirming) { armConfirm(s.id); return; }
               commitDelete(s);
             }}
-            actionLabel={isConfirming ? 'Confirm?' : 'Delete'}
-            actionColor={isConfirming ? '#ff8276' : '#ff3b30'}
+            actionLabel="Delete"
+            confirming={isConfirming}
           >
             <div className="card" style={{
               background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
