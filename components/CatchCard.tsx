@@ -23,6 +23,20 @@ const SPECIES = [
   { id: 'other',      label: 'Other',      hue: '#8A9D96' },
 ];
 
+// Display labels in long-form contexts (catch detail, notifications)
+// where we want to spell out "X carp" for the true carp varieties but
+// leave non-carp species as their own name. The SPECIES `label` field
+// stays short (used as-is in pills); this helper expands it where the
+// long form reads better. Without this, the catch detail pill showed
+// "Grass carp carp", "Tench carp", etc. for the non-carp species.
+const CARP_VARIETIES = new Set(['common', 'mirror', 'leather', 'ghost', 'koi']);
+export function formatSpeciesLabel(speciesId: string | null | undefined): string {
+  if (!speciesId) return '';
+  const entry = SPECIES.find(s => s.id === speciesId);
+  if (!entry) return '';
+  return CARP_VARIETIES.has(speciesId) ? `${entry.label} carp` : entry.label;
+}
+
 function PBPeel() {
   return (
     <span title="Personal best" style={{

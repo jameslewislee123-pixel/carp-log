@@ -65,7 +65,7 @@ import {
 } from '@/lib/suncalc';
 import { fetchWeatherFor, geocodeLake, getCurrentLocation } from '@/lib/weather';
 import AvatarBubble from './AvatarBubble';
-import CatchCard, { SPECIES, computePBMap } from './CatchCard';
+import CatchCard, { SPECIES, computePBMap, formatSpeciesLabel } from './CatchCard';
 
 const ANGLER_COLORS = ['#C9A961', '#7BA888', '#D8826B', '#9A8FBF', '#7AA8C4'];
 const WEATHER_CONDITIONS = [
@@ -4190,7 +4190,7 @@ export function CatchDetail({ catchData, me, profilesById, trips, stackLevel, on
           </div>
           {species && (
             <div style={{ marginBottom: 16 }}>
-              <span className="pill" style={{ background: `${species.hue}33`, color: species.hue, border: `1px solid ${species.hue}66` }}>{species.label} carp</span>
+              <span className="pill" style={{ background: `${species.hue}33`, color: species.hue, border: `1px solid ${species.hue}66` }}>{formatSpeciesLabel(catchData.species)}</span>
             </div>
           )}
         </>
