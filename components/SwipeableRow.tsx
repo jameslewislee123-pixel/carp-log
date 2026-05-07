@@ -36,6 +36,10 @@ export interface SwipeableRowProps {
   isOpen: boolean;
   onOpen: () => void;
   onClose: () => void;
+  // Must equal the inner card's border-radius. If they disagree, the
+  // foreground bg shows through the corner gap as a dark ring.
+  // Default 22 = the global .card class.
+  borderRadius?: number;
 }
 
 export default function SwipeableRow({
@@ -47,6 +51,7 @@ export default function SwipeableRow({
   isOpen,
   onOpen,
   onClose,
+  borderRadius = 22,
 }: SwipeableRowProps) {
   const x = useMotionValue(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -92,7 +97,7 @@ export default function SwipeableRow({
       style={{
         position: 'relative',
         overflow: 'hidden',
-        borderRadius: 14,
+        borderRadius,
         // Container bg = action color so any subpixel gap on the right
         // edge of the foreground reads as the red trash band, not as a
         // leak of a different color.
@@ -152,6 +157,11 @@ export default function SwipeableRow({
           flexDirection: 'column',
           alignItems: 'stretch',
           background: 'var(--bg-0)',
+          // Match container so the corner curves align with the inner
+          // card. Without this the foreground's square corners pull
+          // inward from the inner card's rounded corners and the bg
+          // shows as a dark ring at each corner.
+          borderRadius,
           touchAction: 'pan-y',
         }}
         animate={{ x: isOpen ? -BUTTON_WIDTH : 0 }}

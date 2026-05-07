@@ -215,6 +215,7 @@ export default function GearChecklist() {
                           }}
                           actionLabel="Delete"
                           confirming={isConfirming}
+                          borderRadius={0}
                         >
                           <ChecklistRow
                             item={item}

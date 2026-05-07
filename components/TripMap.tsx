@@ -866,6 +866,7 @@ function PastSetupsList({
             }}
             actionLabel="Delete"
             confirming={isConfirming}
+            borderRadius={14}
           >
             <div className="card" style={{
               background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
