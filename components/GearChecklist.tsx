@@ -4,6 +4,7 @@ import { Check, ChevronDown, ChevronRight, Loader2, Plus, RotateCcw, SlidersHori
 import * as db from '@/lib/db';
 import { CHECKLIST_CATEGORIES } from '@/lib/db';
 import type { ChecklistItem, ChecklistRegion } from '@/lib/types';
+import SwipeableRow from './SwipeableRow';
 
 type RegionFilter = 'all' | 'uk' | 'france';
 type CategoryFilter = 'all' | string;
@@ -27,7 +28,22 @@ export default function GearChecklist() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [showAdd, setShowAdd] = useState(false);
   const [resetConfirm, setResetConfirm] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<ChecklistItem | null>(null);
+  // Swipe-row state. Only one row reveals its action at a time. The
+  // two-tap arming flow mirrors TripMap's Past Setups list: first tap
+  // flips the action label to "Confirm?" and starts a 4s auto-revert
+  // timer; second tap within that window commits the delete.
+  const [openSwipeId, setOpenSwipeId] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current); }, []);
+
+  function armConfirm(id: string) {
+    setConfirmingId(id);
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+    confirmTimerRef.current = setTimeout(() => {
+      setConfirmingId((curr) => curr === id ? null : curr);
+    }, 4000);
+  }
 
   async function load() {
     setLoading(true);
@@ -46,8 +62,10 @@ export default function GearChecklist() {
     catch { setItems(prev => prev.map(i => i.id === item.id ? { ...i, is_packed: item.is_packed } : i)); }
   }
 
-  async function doDelete(item: ChecklistItem) {
-    setPendingDelete(null);
+  async function commitDelete(item: ChecklistItem) {
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+    setConfirmingId(null);
+    setOpenSwipeId(null);
     setItems(prev => prev.filter(i => i.id !== item.id));
     try { await db.deleteChecklistItem(item.id); } catch { load(); }
   }
@@ -176,14 +194,37 @@ export default function GearChecklist() {
                 </button>
                 {!isCollapsed && (
                   <div>
-                    {list.map(item => (
-                      <ChecklistRow
-                        key={item.id}
-                        item={item}
-                        onToggle={() => togglePacked(item)}
-                        onLongPress={() => setPendingDelete(item)}
-                      />
-                    ))}
+                    {list.map(item => {
+                      const rowOpen = openSwipeId === item.id;
+                      const isConfirming = confirmingId === item.id;
+                      return (
+                        <SwipeableRow
+                          key={item.id}
+                          isOpen={rowOpen}
+                          onOpen={() => { setOpenSwipeId(item.id); if (confirmingId && confirmingId !== item.id) setConfirmingId(null); }}
+                          onClose={() => {
+                            if (rowOpen) setOpenSwipeId(null);
+                            if (isConfirming) {
+                              if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+                              setConfirmingId(null);
+                            }
+                          }}
+                          onAction={() => {
+                            if (!isConfirming) { armConfirm(item.id); return; }
+                            commitDelete(item);
+                          }}
+                          actionLabel={isConfirming ? 'Confirm?' : 'Delete'}
+                          actionColor={isConfirming ? '#ff8276' : '#ff3b30'}
+                        >
+                          <ChecklistRow
+                            item={item}
+                            rowOpen={rowOpen}
+                            onToggle={() => togglePacked(item)}
+                            onCloseSwipe={() => setOpenSwipeId(null)}
+                          />
+                        </SwipeableRow>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -233,17 +274,6 @@ export default function GearChecklist() {
         />
       )}
 
-      {pendingDelete && (
-        <ConfirmSheet
-          title={pendingDelete.is_default ? 'Delete default item?' : 'Delete custom item?'}
-          message={`"${pendingDelete.name}" will be removed from your checklist.`}
-          confirmLabel="Delete"
-          danger
-          onCancel={() => setPendingDelete(null)}
-          onConfirm={() => doDelete(pendingDelete)}
-        />
-      )}
-
       {resetConfirm && (
         <ConfirmSheet
           title="Reset all items?"
@@ -258,43 +288,24 @@ export default function GearChecklist() {
   );
 }
 
-// Single row. Tap toggles packed (animated strikethrough); long-press
-// (mouse hold, touch hold ~500ms) opens the delete confirm — the spec
-// allows deleting both default and custom items.
-function ChecklistRow({ item, onToggle, onLongPress }: {
+// Single row. Tap toggles packed; if the row is currently swiped open
+// the first tap closes the swipe instead of toggling — same idiom as
+// TripMap / LakesView so users don't accidentally re-tick an item while
+// dismissing the delete affordance.
+function ChecklistRow({ item, rowOpen, onToggle, onCloseSwipe }: {
   item: ChecklistItem;
+  rowOpen: boolean;
   onToggle: () => void;
-  onLongPress: () => void;
+  onCloseSwipe: () => void;
 }) {
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fired = useRef(false);
-
-  function start() {
-    fired.current = false;
-    timer.current = setTimeout(() => { fired.current = true; onLongPress(); }, 500);
-  }
-  function cancel() {
-    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-  }
-  function handleClick() {
-    if (fired.current) { fired.current = false; return; }
-    onToggle();
-  }
-
   const pill = item.region !== 'both' ? REGION_PILLS[item.region] : null;
-
   return (
     <button
-      onClick={handleClick}
-      onPointerDown={start}
-      onPointerUp={cancel}
-      onPointerLeave={cancel}
-      onPointerCancel={cancel}
-      onContextMenu={(e) => { e.preventDefault(); onLongPress(); }}
+      onClick={() => { if (rowOpen) { onCloseSwipe(); return; } onToggle(); }}
       style={{
         display: 'flex', alignItems: 'center', gap: 12,
         padding: '12px 14px', width: '100%',
-        background: 'transparent', border: 'none',
+        background: 'rgba(10,24,22,0.5)', border: 'none',
         borderTop: '1px solid rgba(234,201,136,0.08)',
         color: 'inherit', fontFamily: 'inherit',
         cursor: 'pointer', textAlign: 'left',
