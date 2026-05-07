@@ -1,7 +1,8 @@
 'use client';
 import { supabase } from './supabase/client';
 import type {
-  AppNotification, Catch, CatchComment, CatchLike, CatchVisibility, Comment, CommentLike, FieldVisibility,
+  AppNotification, Catch, CatchComment, CatchLike, CatchVisibility, ChecklistItem, ChecklistRegion,
+  Comment, CommentLike, FieldVisibility,
   Friendship, GearItem, GearType, Lake, LakeAnnotation, LakeAnnotationType, Moon,
   NotifyConfig, Profile, RodSpot, SwimRollResult, Trip, TripActivity, TripMember, TripMessage,
   TripStake, TripSwimGroup, TripSwimGroupWithTrip, TripSwimRoll, TripVisibility,
@@ -642,6 +643,172 @@ export async function archiveGearItem(id: string): Promise<void> {
 }
 export async function setGearShared(id: string, shared: boolean): Promise<void> {
   const { error } = await supabase().from('gear_items').update({ shared }).eq('id', id);
+  if (error) throw error;
+}
+
+// ============ GEAR CHECKLIST (carp packing list) ============
+// Master seed list — UK / France / both. On first open of a user's
+// checklist we insert this exact set so everyone starts from the same
+// canonical packing list, then they can tick / customize from there.
+export const DEFAULT_CHECKLIST_ITEMS: { name: string; category: string; region: ChecklistRegion }[] = [
+  // Cooking
+  { name: 'Stove', category: 'Cooking', region: 'both' },
+  { name: 'Gas', category: 'Cooking', region: 'both' },
+  { name: 'Fox cook set', category: 'Cooking', region: 'both' },
+  { name: 'Tongs', category: 'Cooking', region: 'both' },
+  { name: 'Toastie pan', category: 'Cooking', region: 'both' },
+  { name: 'Lighter / matches', category: 'Cooking', region: 'both' },
+  { name: 'Sharp knife', category: 'Cooking', region: 'both' },
+  // Eating
+  { name: 'Tupperware', category: 'Eating', region: 'both' },
+  { name: 'Spoon', category: 'Eating', region: 'both' },
+  { name: 'Fork', category: 'Eating', region: 'both' },
+  { name: 'Mug', category: 'Eating', region: 'both' },
+  { name: 'Plate', category: 'Eating', region: 'both' },
+  { name: 'Flask', category: 'Eating', region: 'both' },
+  { name: 'Bowl', category: 'Eating', region: 'both' },
+  { name: 'Washing-up sponge + liquid', category: 'Eating', region: 'both' },
+  // Tackle
+  { name: 'Rods', category: 'Tackle', region: 'both' },
+  { name: 'Reels', category: 'Tackle', region: 'both' },
+  { name: 'Brolly + pegs', category: 'Tackle', region: 'both' },
+  { name: 'Bedchair', category: 'Tackle', region: 'both' },
+  { name: 'Cradle', category: 'Tackle', region: 'both' },
+  { name: 'Landing net', category: 'Tackle', region: 'both' },
+  { name: 'Weigh sling', category: 'Tackle', region: 'both' },
+  { name: 'Scales', category: 'Tackle', region: 'both' },
+  { name: 'Distance sticks', category: 'Tackle', region: 'both' },
+  { name: 'Deck chair', category: 'Tackle', region: 'both' },
+  { name: 'Water canteen', category: 'Tackle', region: 'both' },
+  { name: 'Rod pod', category: 'Tackle', region: 'both' },
+  { name: 'Rod bag', category: 'Tackle', region: 'both' },
+  { name: 'Leads', category: 'Tackle', region: 'both' },
+  { name: 'Sleeping bag', category: 'Tackle', region: 'both' },
+  { name: 'Bivvy table', category: 'Tackle', region: 'both' },
+  { name: 'Bait boxes', category: 'Tackle', region: 'both' },
+  { name: 'Alarms', category: 'Tackle', region: 'both' },
+  { name: 'Hook box / rig wallet', category: 'Tackle', region: 'both' },
+  { name: 'Spare line / spool', category: 'Tackle', region: 'both' },
+  { name: 'PVA bag/mesh + tape', category: 'Tackle', region: 'both' },
+  { name: 'Throwing stick / catapult', category: 'Tackle', region: 'both' },
+  { name: 'Spomb / spod', category: 'Tackle', region: 'both' },
+  { name: 'Marker rod + float', category: 'Tackle', region: 'both' },
+  { name: 'Carp care kit', category: 'Tackle', region: 'both' },
+  { name: 'Forceps + scissors', category: 'Tackle', region: 'both' },
+  { name: 'Bait (boilies / particle / pellets)', category: 'Tackle', region: 'both' },
+  { name: 'Ground sheet', category: 'Tackle', region: 'both' },
+  { name: 'Trolley / barrow', category: 'Tackle', region: 'france' },
+  { name: 'Trolley straps + cover', category: 'Tackle', region: 'france' },
+  // Rucksack
+  { name: 'Phone', category: 'Rucksack', region: 'both' },
+  { name: 'Wallet', category: 'Rucksack', region: 'both' },
+  { name: 'Chargers', category: 'Rucksack', region: 'both' },
+  { name: 'Cables', category: 'Rucksack', region: 'both' },
+  { name: 'Power bank', category: 'Rucksack', region: 'both' },
+  { name: 'Head torch + batteries', category: 'Rucksack', region: 'both' },
+  { name: 'Bivvy light', category: 'Rucksack', region: 'both' },
+  { name: 'Meds', category: 'Rucksack', region: 'both' },
+  { name: 'Pillow', category: 'Rucksack', region: 'both' },
+  { name: 'Hot water bottle', category: 'Rucksack', region: 'both' },
+  { name: 'Bungee cord', category: 'Rucksack', region: 'both' },
+  { name: 'Earphones', category: 'Rucksack', region: 'both' },
+  { name: 'Solar panel', category: 'Rucksack', region: 'france' },
+  { name: 'Walkie talkies', category: 'Rucksack', region: 'france' },
+  // Clothes
+  { name: 'Tops', category: 'Clothes', region: 'both' },
+  { name: 'Joggers', category: 'Clothes', region: 'both' },
+  { name: 'Thermals', category: 'Clothes', region: 'both' },
+  { name: 'Socks', category: 'Clothes', region: 'both' },
+  { name: 'Boxers', category: 'Clothes', region: 'both' },
+  { name: 'Hats', category: 'Clothes', region: 'both' },
+  { name: 'Flipflops', category: 'Clothes', region: 'both' },
+  { name: 'Shorts', category: 'Clothes', region: 'both' },
+  { name: 'Snood', category: 'Clothes', region: 'both' },
+  { name: 'Sliders', category: 'Clothes', region: 'both' },
+  { name: 'Waterproof jacket', category: 'Clothes', region: 'both' },
+  { name: 'Waterproof trousers', category: 'Clothes', region: 'both' },
+  { name: 'Wellies / waders', category: 'Clothes', region: 'both' },
+  { name: 'Gloves', category: 'Clothes', region: 'both' },
+  { name: 'Sun hat', category: 'Clothes', region: 'france' },
+  { name: 'Sunglasses (polarised)', category: 'Clothes', region: 'france' },
+  // Toiletries
+  { name: 'Toothbrush', category: 'Toiletries', region: 'both' },
+  { name: 'Toothpaste', category: 'Toiletries', region: 'both' },
+  { name: 'Mouthwash', category: 'Toiletries', region: 'both' },
+  { name: 'Loo roll', category: 'Toiletries', region: 'both' },
+  { name: 'Baby wipes', category: 'Toiletries', region: 'both' },
+  { name: 'Sprays', category: 'Toiletries', region: 'both' },
+  { name: 'Towel', category: 'Toiletries', region: 'both' },
+  { name: 'Hand sanitiser', category: 'Toiletries', region: 'both' },
+  { name: 'Sun cream (high SPF)', category: 'Toiletries', region: 'france' },
+  { name: 'Insect repellent', category: 'Toiletries', region: 'france' },
+  { name: 'Tick remover', category: 'Toiletries', region: 'france' },
+  // Documents
+  { name: 'Fishing licence', category: 'Documents', region: 'both' },
+  { name: 'Day ticket / syndicate ticket', category: 'Documents', region: 'uk' },
+  { name: 'Passport', category: 'Documents', region: 'france' },
+  { name: 'Carte de pêche (French licence)', category: 'Documents', region: 'france' },
+  { name: 'Travel insurance docs', category: 'Documents', region: 'france' },
+  { name: 'Cash (Euros)', category: 'Documents', region: 'france' },
+  { name: 'Driver\'s licence + V5', category: 'Documents', region: 'france' },
+  { name: 'Eurotunnel / ferry booking', category: 'Documents', region: 'france' },
+];
+
+export const CHECKLIST_CATEGORIES = ['Cooking', 'Eating', 'Tackle', 'Rucksack', 'Clothes', 'Toiletries', 'Documents'];
+
+export async function listMyChecklist(): Promise<ChecklistItem[]> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return [];
+  const { data } = await supabase().from('gear_checklist').select('*')
+    .eq('user_id', user.id)
+    .order('category').order('position', { nullsFirst: false }).order('created_at');
+  return (data || []) as ChecklistItem[];
+}
+
+// Insert defaults if the user has no checklist rows yet. Returns the
+// freshly seeded list. Idempotent via the empty-check.
+export async function seedChecklistDefaults(): Promise<ChecklistItem[]> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return [];
+  const existing = await listMyChecklist();
+  if (existing.length > 0) return existing;
+  const rows = DEFAULT_CHECKLIST_ITEMS.map((d, i) => ({
+    user_id: user.id,
+    name: d.name,
+    category: d.category,
+    region: d.region,
+    is_default: true,
+    position: i,
+  }));
+  const { error } = await supabase().from('gear_checklist').insert(rows);
+  if (error) throw error;
+  return listMyChecklist();
+}
+
+export async function setChecklistPacked(id: string, packed: boolean): Promise<void> {
+  const { error } = await supabase().from('gear_checklist').update({ is_packed: packed }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function addCustomChecklistItem(input: { name: string; category: string; region: ChecklistRegion }): Promise<ChecklistItem> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { data, error } = await supabase().from('gear_checklist').insert({
+    user_id: user.id, name: input.name, category: input.category, region: input.region, is_default: false,
+  }).select().single();
+  if (error) throw error;
+  return data as ChecklistItem;
+}
+
+export async function deleteChecklistItem(id: string): Promise<void> {
+  const { error } = await supabase().from('gear_checklist').delete().eq('id', id);
+  if (error) throw error;
+}
+
+export async function resetChecklistPacked(): Promise<void> {
+  const { data: { user } } = await supabase().auth.getUser();
+  if (!user) return;
+  const { error } = await supabase().from('gear_checklist').update({ is_packed: false }).eq('user_id', user.id);
   if (error) throw error;
 }
 

@@ -8,7 +8,7 @@ import {
   Cloud, Wind, Thermometer, MessageCircle, Bell, Send, Anchor, BarChart3,
   Clock, Tent, MapPinned, Star, Users as UsersIcon, Lock, LogOut, UserPlus, Mail,
   Activity as ActivityIcon, Map as MapIcon, MessageSquare, ThumbsUp, Search,
-  Eye, EyeOff, SlidersHorizontal, Box, Navigation,
+  Eye, EyeOff, SlidersHorizontal, Box, Navigation, ClipboardCheck,
 } from 'lucide-react';
 import { Drawer } from 'vaul';
 import nextDynamic from 'next/dynamic';
@@ -24,6 +24,7 @@ import SwimRollModal, { SwimRollResultCard } from './SwimRollModal';
 import WeatherForecastCard, { WeatherLocationSearch, readWxOverride, writeWxOverride, type WxLoc } from './WeatherForecastCard';
 import GearItemPicker from './GearItemPicker';
 import GearManager from './GearManager';
+import GearChecklist from './GearChecklist';
 import LakeDetail from './LakeDetail';
 import PushSettings from './PushSettings';
 import CatchPhotoCarousel from './CatchPhotoCarousel';
@@ -4542,6 +4543,7 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [showNotify, setShowNotify] = useState(false);
   const [showTackleBox, setShowTackleBox] = useState(false);
+  const [showChecklist, setShowChecklist] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
 
   useEffect(() => { (async () => { const { data: { user } } = await supabase().auth.getUser(); setEmail(user?.email || null); })(); }, []);
@@ -4631,6 +4633,24 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
       {showTackleBox && (
         <VaulModalShell title="My Tackle Box" onClose={() => setShowTackleBox(false)} stackLevel={1}>
           <GearManager />
+        </VaulModalShell>
+      )}
+
+      <div className="label">Gear checklist</div>
+      <button onClick={() => setShowChecklist(true)} className="tap" style={{
+        width: '100%', padding: 14, borderRadius: 14,
+        background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
+        color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 12,
+        cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
+        marginBottom: 24,
+      }}>
+        <ClipboardCheck size={16} style={{ color: 'var(--gold-2)', flexShrink: 0 }} />
+        <span style={{ flex: 1, textAlign: 'left' }}>Gear checklist</span>
+        <ChevronRight size={16} style={{ color: 'var(--text-3)' }} />
+      </button>
+      {showChecklist && (
+        <VaulModalShell title="Gear checklist" onClose={() => setShowChecklist(false)} stackLevel={1}>
+          <GearChecklist />
         </VaulModalShell>
       )}
 

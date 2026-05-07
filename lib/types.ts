@@ -213,6 +213,20 @@ export type GearItem = {
   updated_at?: string;
 };
 
+export type ChecklistRegion = 'uk' | 'france' | 'both';
+export type ChecklistItem = {
+  id: string;
+  user_id: string;
+  name: string;
+  category: string;
+  region: ChecklistRegion;
+  is_packed: boolean;
+  is_default: boolean;
+  position: number | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type LakeSource = 'manual' | 'osm' | 'imported' | 'nominatim' | 'seed';
 export type LakePhotoSource = 'wikipedia' | 'satellite';
 export type Lake = {
