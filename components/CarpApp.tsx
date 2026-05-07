@@ -25,6 +25,7 @@ import WeatherForecastCard, { WeatherLocationSearch, readWxOverride, writeWxOver
 import GearItemPicker from './GearItemPicker';
 import GearManager from './GearManager';
 import GearChecklist from './GearChecklist';
+import CountdownWidget from './CountdownWidget';
 import LakeDetail from './LakeDetail';
 import PushSettings from './PushSettings';
 import CatchPhotoCarousel from './CatchPhotoCarousel';
@@ -345,6 +346,7 @@ export default function CarpApp() {
               me={me} catches={catches} trips={trips} profilesById={profilesById}
               commentCounts={commentCounts}
               onOpen={setDetailCatch} onOpenTrip={setDetailTrip}
+              onAddTrip={() => { setEditTrip(null); setShowAddTrip(true); }}
             />
           </PullToRefresh>
         )}
@@ -585,11 +587,12 @@ function activeFilterCount(f: FeedFilter): number {
   return n;
 }
 
-function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenTrip }: {
+function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenTrip, onAddTrip }: {
   me: Profile;
   catches: CatchT[]; trips: Trip[]; profilesById: Record<string, Profile>;
   commentCounts: Record<string, number>;
   onOpen: (c: CatchT) => void; onOpenTrip: (t: Trip) => void;
+  onAddTrip: () => void;
 }) {
   const pbByAngler = useMemo(() => computePBMap(catches), [catches]);
   const qc = useQueryClient();
@@ -672,7 +675,7 @@ function Feed({ me, catches, trips, profilesById, commentCounts, onOpen, onOpenT
 
   return (
     <div style={{ padding: '8px 20px' }}>
-      <ForecastCarousel catches={catches} />
+      <ForecastCarousel catches={catches} trips={trips} onOpenTrip={onOpenTrip} onAddTrip={onAddTrip} />
       {activeTrip && <ActiveTripBanner trip={activeTrip} catches={catches} onClick={() => onOpenTrip(activeTrip)} />}
       {/* Feed controls: segmented All|Mine on the left (matches the radio
           card styling in FeedFilterModal), friend pills (when any are
@@ -816,7 +819,12 @@ function useFeedCoords(catches: CatchT[]) {
   return coords;
 }
 
-function ForecastCarousel({ catches }: { catches: CatchT[] }) {
+function ForecastCarousel({ catches, trips, onOpenTrip, onAddTrip }: {
+  catches: CatchT[];
+  trips: Trip[];
+  onOpenTrip: (t: Trip) => void;
+  onAddTrip: () => void;
+}) {
   const coords = useFeedCoords(catches);
   const ref = useRef<HTMLDivElement | null>(null);
   const [page, setPage] = useState(0);
@@ -827,6 +835,14 @@ function ForecastCarousel({ catches }: { catches: CatchT[] }) {
     const w = el.clientWidth;
     setPage(Math.round(el.scrollLeft / Math.max(1, w)));
   }
+  // Tap target for the countdown slide. If there's an upcoming trip,
+  // open it; otherwise launch the AddTrip flow.
+  const nextUpcomingTrip = useMemo(() => {
+    const now = Date.now();
+    return [...trips]
+      .filter(t => +new Date(t.start_date) > now)
+      .sort((a, b) => +new Date(a.start_date) - +new Date(b.start_date))[0] || null;
+  }, [trips]);
   return (
     <div style={{ marginBottom: 14 }}>
       <div ref={ref} onScroll={onScroll}
@@ -843,9 +859,14 @@ function ForecastCarousel({ catches }: { catches: CatchT[] }) {
         <TappableSlide onTap={() => setExpanded('weather')} style={{ scrollSnapAlign: 'center', minHeight: 92 }}>
           <WeatherForecastCard coords={coords} compact />
         </TappableSlide>
+        <TappableSlide
+          onTap={() => { if (nextUpcomingTrip) onOpenTrip(nextUpcomingTrip); else onAddTrip(); }}
+          style={{ scrollSnapAlign: 'center', minHeight: 92 }}>
+          <CountdownWidget trips={trips} />
+        </TappableSlide>
       </div>
       <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginTop: 6 }}>
-        {[0, 1].map(i => (
+        {[0, 1, 2].map(i => (
           <span key={i} style={{
             width: i === page ? 18 : 6, height: 6, borderRadius: 999,
             background: i === page ? 'var(--gold-2)' : 'rgba(234,201,136,0.25)',
