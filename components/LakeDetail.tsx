@@ -308,29 +308,6 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
               lakeName={lake.name}
             />
 
-            {/* Annotation type filters — overlay top-left of the map so
-                they stay reachable even as the page scrolls long. */}
-            <div
-              className="scrollbar-thin"
-              style={{
-                position: 'absolute', top: 12, left: 12, zIndex: 1000,
-                display: 'flex', gap: 4, overflowX: 'auto',
-                maxWidth: 'calc(100% - 80px)',
-                padding: '6px 8px', borderRadius: 12,
-                background: 'rgba(20,42,38,0.85)',
-                backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-                border: '1px solid rgba(234,201,136,0.18)',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.45)',
-              }}
-            >
-              <OverlayChip active={filter === 'all'} onClick={() => setFilter('all')}>All</OverlayChip>
-              {ANN_TYPES.map(t => (
-                <OverlayChip key={t.id} active={filter === t.id} onClick={() => setFilter(t.id)}>
-                  {t.emoji} {t.label}
-                </OverlayChip>
-              ))}
-            </div>
-
             {/* FAB — adds an annotation. Always available on the lake's
                 authoring surface; recce trips and brand-new venues need
                 to be annotated before any catches exist there. */}
@@ -343,6 +320,28 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
               onPick={startDrop}
               cancelLabel={pendingType ? 'Cancel' : null}
             />
+          </div>
+        )}
+
+        {/* Annotation type filters — sit in normal page flow below the
+            map. An on-map overlay competed with Leaflet's layer toggle
+            and the FAB, so they live here now. Selecting a chip filters
+            both the map pins above AND the list below. */}
+        {annos.length > 0 && (
+          <div
+            className="scrollbar-thin"
+            style={{
+              display: 'flex', gap: 6, overflowX: 'auto',
+              marginTop: 12, paddingBottom: 2,
+              WebkitOverflowScrolling: 'touch',
+            }}
+          >
+            <FilterChip active={filter === 'all'} onClick={() => setFilter('all')}>All</FilterChip>
+            {ANN_TYPES.map(t => (
+              <FilterChip key={t.id} active={filter === t.id} onClick={() => setFilter(t.id)}>
+                {t.emoji} {t.label}
+              </FilterChip>
+            ))}
           </div>
         )}
 
@@ -611,21 +610,6 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
       background: active ? 'rgba(212,182,115,0.12)' : 'rgba(10,24,22,0.5)',
       color: active ? 'var(--gold-2)' : 'var(--text-2)',
       fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
-    }}>{children}</button>
-  );
-}
-
-// Compact pill used by the on-map annotation filter row. Smaller than
-// FilterChip so several fit comfortably without horizontal scroll on a
-// narrow viewport.
-function OverlayChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} className="tap" style={{
-      flexShrink: 0, padding: '4px 10px', borderRadius: 999,
-      border: `1px solid ${active ? 'var(--gold)' : 'rgba(234,201,136,0.22)'}`,
-      background: active ? 'var(--gold)' : 'transparent',
-      color: active ? '#1A1004' : 'var(--text-2)',
-      fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
     }}>{children}</button>
   );
 }
