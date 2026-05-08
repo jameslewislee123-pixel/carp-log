@@ -52,6 +52,7 @@ import {
 import { calculateWraps as calcWraps } from '@/lib/wraps';
 import { bottomTypeMeta as bottomMeta } from '@/lib/bottomTypes';
 import { QK } from '@/lib/queryKeys';
+import { useDragToScroll } from '@/lib/useDragToScroll';
 import type {
   Profile, Catch as CatchT, Comment, Moon as MoonT, NotifyConfig, Trip, TripMember, Weather, CatchVisibility, TripVisibility, Lake,
 } from '@/lib/types';
@@ -827,6 +828,7 @@ function ForecastCarousel({ catches, trips, onOpenTrip, onAddTrip }: {
 }) {
   const coords = useFeedCoords(catches);
   const ref = useRef<HTMLDivElement | null>(null);
+  useDragToScroll(ref);
   const [page, setPage] = useState(0);
   const [expanded, setExpanded] = useState<'bite' | 'weather' | null>(null);
   function onScroll() {

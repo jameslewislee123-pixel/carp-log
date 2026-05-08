@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
+import { useDragToScroll } from '@/lib/useDragToScroll';
 
 // Fullscreen photo viewer for catches with multiple photos. Outer scroll-
 // snap handles horizontal swipe between photos; each panel hosts its own
@@ -12,6 +13,7 @@ export default function CatchPhotoLightbox({ urls, startIndex, onClose }: {
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [current, setCurrent] = useState(Math.max(0, Math.min(urls.length - 1, startIndex)));
+  useDragToScroll(scrollerRef);
 
   // Lock body scroll + close on Escape.
   useEffect(() => {

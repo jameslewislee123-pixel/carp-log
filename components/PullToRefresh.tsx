@@ -4,9 +4,11 @@ import { Loader2 } from 'lucide-react';
 import { useAnyModalOpen } from './CarpApp';
 
 // Lightweight pull-to-refresh wrapper. Wraps full-page content (where the
-// page scroll is the window). Detects touchstart at scrollY === 0, follows
-// the finger up to MAX_PULL with a rubber-band feel, and on release past
-// THRESHOLD calls onRefresh and shows a spinner until the promise resolves.
+// page scroll is the window). Detects pointerdown at scrollY === 0, follows
+// the pointer down up to MAX_PULL with a rubber-band feel, and on release
+// past THRESHOLD calls onRefresh and shows a spinner until the promise
+// resolves. Uses Pointer Events so the gesture works for both touch (phone)
+// and mouse-drag (desktop browser).
 //
 // Suspended whenever any VaulModalShell is mounted — vaul drawers manage
 // their own swipe-to-close from scrollTop=0, and a window-level PTR would
@@ -33,22 +35,24 @@ export default function PullToRefresh({ onRefresh, enabled = true, children }: {
   enabledRef.current = enabled;
 
   useEffect(() => {
-    function onTouchStart(e: TouchEvent) {
+    function onPointerDown(e: PointerEvent) {
       if (refreshing) return;
       if (!enabledRef.current) return;
       if (modalOpenRef.current) return;
+      // Mouse: only the primary button. Pen/touch don't have buttons.
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
       // Only arm when at the very top of the page.
       if (window.scrollY > 2) return;
-      startY.current = e.touches[0].clientY;
+      startY.current = e.clientY;
       tracking.current = true;
     }
-    function onTouchMove(e: TouchEvent) {
+    function onPointerMove(e: PointerEvent) {
       if (!tracking.current || startY.current == null) return;
       if (!enabledRef.current) { tracking.current = false; setPull(0); return; }
       if (modalOpenRef.current) { tracking.current = false; setPull(0); return; }
       // Bail if the page has scrolled away from the top during the gesture.
       if (window.scrollY > 2) { tracking.current = false; setPull(0); return; }
-      const dy = e.touches[0].clientY - startY.current;
+      const dy = e.clientY - startY.current;
       if (dy <= 0) { setPull(0); return; }
       // Rubber-band: square-root falloff past MAX_PULL.
       const eased = dy < MAX_PULL ? dy : MAX_PULL + Math.sqrt(dy - MAX_PULL) * 4;
@@ -56,7 +60,7 @@ export default function PullToRefresh({ onRefresh, enabled = true, children }: {
       // Don't preventDefault — letting the browser bounce keeps scroll feel
       // natural. iOS already prevents body scroll up at scrollY 0.
     }
-    async function onTouchEnd() {
+    async function onPointerEnd() {
       if (!tracking.current) return;
       tracking.current = false;
       const reached = pull >= THRESHOLD;
@@ -68,15 +72,15 @@ export default function PullToRefresh({ onRefresh, enabled = true, children }: {
       setPull(0);
       startY.current = null;
     }
-    window.addEventListener('touchstart', onTouchStart, { passive: true });
-    window.addEventListener('touchmove', onTouchMove, { passive: true });
-    window.addEventListener('touchend', onTouchEnd);
-    window.addEventListener('touchcancel', onTouchEnd);
+    window.addEventListener('pointerdown', onPointerDown, { passive: true });
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerup', onPointerEnd);
+    window.addEventListener('pointercancel', onPointerEnd);
     return () => {
-      window.removeEventListener('touchstart', onTouchStart);
-      window.removeEventListener('touchmove', onTouchMove);
-      window.removeEventListener('touchend', onTouchEnd);
-      window.removeEventListener('touchcancel', onTouchEnd);
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerEnd);
+      window.removeEventListener('pointercancel', onPointerEnd);
     };
   }, [pull, refreshing, onRefresh]);
 

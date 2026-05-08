@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { useDragToScroll } from '@/lib/useDragToScroll';
 
 // Inline carousel.
 //   variant="detail" (default) — used inside CatchDetail. Tap opens the
@@ -16,6 +17,7 @@ export default function CatchPhotoCarousel({ urls, variant = 'detail', onOpenLig
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [current, setCurrent] = useState(0);
+  useDragToScroll(scrollerRef);
 
   // Track current page from scroll position (one-page-wide containers, so
   // index = round(scrollLeft / clientWidth)). Throttled with rAF.
