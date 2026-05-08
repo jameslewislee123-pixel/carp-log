@@ -346,6 +346,73 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
           </div>
         )}
 
+        {/* Annotation list — sits directly below the map (above Trips) so
+            the rows pair visually with their pins. Filter chips overlaid
+            on the map narrow both this list AND the rendered map pins. */}
+        {annos.length > 0 && (
+          <div style={{ marginTop: 18 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--gold-2)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+              Annotations
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {visibleAnnos.length === 0 ? (
+                <p style={{ color: 'var(--text-3)', fontSize: 12, textAlign: 'center', padding: '8px 0' }}>
+                  No annotations{filter !== 'all' ? ' of this type' : ''}.
+                </p>
+              ) : visibleAnnos.map(a => {
+                const author = profilesById[a.angler_id];
+                const isMine = a.angler_id === me.id;
+                const t = ANN_TYPES.find(x => x.id === a.type);
+                return (
+                  <div key={a.id} style={{ display: 'flex', alignItems: 'stretch', gap: 6 }}>
+                    <button
+                      onClick={() => setOpenAnno(a)}
+                      className="tap"
+                      style={{
+                        flex: 1, minWidth: 0,
+                        display: 'flex', alignItems: 'flex-start', gap: 10,
+                        padding: 12, borderRadius: 12,
+                        background: 'rgba(10,24,22,0.5)',
+                        border: '1px solid rgba(234,201,136,0.14)',
+                        cursor: 'pointer', textAlign: 'left',
+                        fontFamily: 'inherit', color: 'var(--text)',
+                      }}
+                    >
+                      <div style={{ fontSize: 18 }}>{t?.emoji}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{a.title}</div>
+                        {a.description && <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2, lineHeight: 1.3 }}>{a.description}</div>}
+                        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
+                          by {author?.display_name || 'Unknown'}
+                        </div>
+                      </div>
+                    </button>
+                    {isMine && (
+                      <button
+                        onClick={async () => {
+                          if (confirm('Delete this annotation?')) { await db.deleteLakeAnnotation(a.id); refreshAnnos(); }
+                        }}
+                        aria-label="Delete annotation"
+                        style={{
+                          flexShrink: 0,
+                          background: 'rgba(10,24,22,0.5)',
+                          border: '1px solid rgba(234,201,136,0.14)',
+                          borderRadius: 12,
+                          color: 'var(--text-3)', cursor: 'pointer',
+                          padding: '0 12px',
+                          display: 'inline-flex', alignItems: 'center',
+                        }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Trips at this lake */}
         <div style={{ marginTop: 18 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--gold-2)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
@@ -376,39 +443,6 @@ export default function LakeDetail({ lake, lakeCatches, profilesById, me, onClos
               ))}
             </div>
           )}
-        </div>
-
-        {/* Annotation list — filter chips moved onto the map overlay so
-            they stay visible regardless of how long the trips list grows. */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 18 }}>
-          {visibleAnnos.length === 0 ? (
-            <p style={{ color: 'var(--text-3)', fontSize: 12, textAlign: 'center', padding: '16px 0' }}>
-              No annotations{filter !== 'all' ? ' of this type' : ''} yet.
-            </p>
-          ) : visibleAnnos.map(a => {
-            const author = profilesById[a.angler_id];
-            const isMine = a.angler_id === me.id;
-            const t = ANN_TYPES.find(x => x.id === a.type);
-            return (
-              <div key={a.id} className="card" style={{ padding: 12, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                <div style={{ fontSize: 18 }}>{t?.emoji}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{a.title}</div>
-                  {a.description && <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2, lineHeight: 1.3 }}>{a.description}</div>}
-                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
-                    by {author?.display_name || 'Unknown'}
-                  </div>
-                </div>
-                {isMine && (
-                  <button onClick={async () => {
-                    if (confirm('Delete this annotation?')) { await db.deleteLakeAnnotation(a.id); refreshAnnos(); }
-                  }} style={{ background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer', padding: 4 }}>
-                    <Trash2 size={12} />
-                  </button>
-                )}
-              </div>
-            );
-          })}
         </div>
       </VaulModalShell>
 
