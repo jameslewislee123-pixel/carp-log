@@ -4556,6 +4556,44 @@ function DetailRow({ icon, label, value, muted, privateBadge }: { icon?: React.R
 }
 
 // ============ SETTINGS ============
+// Shared row used by every Settings entry — primary + advanced views — so the
+// list reads as a single coherent surface (matching icon size + colour, font,
+// padding, and chevron). `danger` flips the row to the destructive palette;
+// `badge` shows a small status tag on the right (e.g. "On" for Telegram).
+function SettingsRow({ icon: Icon, label, onClick, danger, badge, badgeTone }: {
+  icon: React.ComponentType<any>;
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+  badge?: string | null;
+  badgeTone?: 'sage' | 'muted';
+}) {
+  return (
+    <button onClick={onClick} className="tap" style={{
+      width: '100%', padding: 14, borderRadius: 14,
+      background: danger ? 'rgba(220,107,88,0.08)' : 'rgba(10,24,22,0.5)',
+      border: `1px solid ${danger ? 'rgba(220,107,88,0.3)' : 'rgba(234,201,136,0.14)'}`,
+      color: danger ? 'var(--danger)' : 'var(--text)',
+      display: 'flex', alignItems: 'center', gap: 12,
+      cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
+      marginBottom: 10, textAlign: 'left',
+    }}>
+      <Icon size={16} style={{ color: danger ? 'var(--danger)' : 'var(--gold-2)', flexShrink: 0 } as any} />
+      <span style={{ flex: 1 }}>{label}</span>
+      {badge && (
+        <span style={{
+          fontSize: 11, fontWeight: 700, letterSpacing: '0.04em',
+          padding: '3px 8px', borderRadius: 999,
+          background: badgeTone === 'sage' ? 'rgba(141,191,157,0.15)' : 'rgba(20,42,38,0.7)',
+          border: `1px solid ${badgeTone === 'sage' ? 'rgba(141,191,157,0.4)' : 'rgba(234,201,136,0.18)'}`,
+          color: badgeTone === 'sage' ? 'var(--sage)' : 'var(--text-3)',
+        }}>{badge}</span>
+      )}
+      {!danger && <ChevronRight size={16} style={{ color: 'var(--text-3)' }} />}
+    </button>
+  );
+}
+
 function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onSaveNotify }: {
   me: Profile; catches: CatchT[]; trips: Trip[]; notify: NotifyConfig | null;
   onClose: () => void;
@@ -4564,9 +4602,13 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
 }) {
   const router = useRouter();
   const [showProfileEdit, setShowProfileEdit] = useState(false);
-  const [showNotify, setShowNotify] = useState(false);
   const [showTackleBox, setShowTackleBox] = useState(false);
   const [showChecklist, setShowChecklist] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showPush, setShowPush] = useState(false);
+  const [showAppearance, setShowAppearance] = useState(false);
+  const [showTelegram, setShowTelegram] = useState(false);
+  const [showData, setShowData] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
 
   useEffect(() => { (async () => { const { data: { user } } = await supabase().auth.getUser(); setEmail(user?.email || null); })(); }, []);
@@ -4612,18 +4654,18 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
         </Link>
       </div>
 
-      <div className="label">Profile</div>
-      <button onClick={() => setShowProfileEdit(true)} className="tap" style={{
-        width: '100%', padding: 14, borderRadius: 14,
-        background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
-        color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 12,
-        cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
-        marginBottom: 24,
-      }}>
-        <Edit2 size={16} style={{ color: 'var(--gold-2)', flexShrink: 0 }} />
-        <span style={{ flex: 1, textAlign: 'left' }}>Edit display name & bio</span>
-        <ChevronRight size={16} style={{ color: 'var(--text-3)' }} />
-      </button>
+      <SettingsRow icon={Edit2} label="Profile" onClick={() => setShowProfileEdit(true)} />
+      <SettingsRow icon={Box} label="My tackle box" onClick={() => setShowTackleBox(true)} />
+      <SettingsRow icon={ClipboardCheck} label="Gear checklist" onClick={() => setShowChecklist(true)} />
+      <SettingsRow icon={SlidersHorizontal} label="Advanced settings" onClick={() => setShowAdvanced(true)} />
+
+      <div style={{ height: 14 }} />
+      <SettingsRow icon={LogOut} label="Sign out" onClick={signOut} danger />
+
+      <div style={{ marginTop: 24, padding: '16px 0', borderTop: '1px solid rgba(234,201,136,0.1)', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
+        {catches.length} catches · {trips.length} trips
+      </div>
+
       {showProfileEdit && (
         <EditProfileModal
           me={me}
@@ -4631,88 +4673,59 @@ function SettingsModal({ me, catches, trips, notify, onClose, onSaveProfile, onS
           onSave={async (patch) => { await onSaveProfile(patch); setShowProfileEdit(false); }}
         />
       )}
-
-      <div className="label">Push notifications</div>
-      <div style={{ marginBottom: 24 }}>
-        <PushSettings />
-      </div>
-
-      <div className="label">My tackle box</div>
-      <button onClick={() => setShowTackleBox(true)} className="tap" style={{
-        // Same shape as the Edit profile row above so Settings reads as a
-        // consistent list of action rows: leading icon, label, trailing
-        // chevron — gold accent on the icon to match the bottom-nav idiom
-        // where active items are gold.
-        width: '100%', padding: 14, borderRadius: 14,
-        background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
-        color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 12,
-        cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
-        marginBottom: 24,
-      }}>
-        <Box size={16} style={{ color: 'var(--gold-2)', flexShrink: 0 }} />
-        <span style={{ flex: 1, textAlign: 'left' }}>Edit my tackle box</span>
-        <ChevronRight size={16} style={{ color: 'var(--text-3)' }} />
-      </button>
       {showTackleBox && (
         <VaulModalShell title="My Tackle Box" onClose={() => setShowTackleBox(false)} stackLevel={1}>
           <GearManager />
         </VaulModalShell>
       )}
-
-      <div className="label">Gear checklist</div>
-      <button onClick={() => setShowChecklist(true)} className="tap" style={{
-        width: '100%', padding: 14, borderRadius: 14,
-        background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
-        color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 12,
-        cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
-        marginBottom: 24,
-      }}>
-        <ClipboardCheck size={16} style={{ color: 'var(--gold-2)', flexShrink: 0 }} />
-        <span style={{ flex: 1, textAlign: 'left' }}>Gear checklist</span>
-        <ChevronRight size={16} style={{ color: 'var(--text-3)' }} />
-      </button>
       {showChecklist && (
         <VaulModalShell title="Gear checklist" onClose={() => setShowChecklist(false)} stackLevel={1}>
           <GearChecklist />
         </VaulModalShell>
       )}
+      {showAdvanced && (
+        <VaulModalShell title="Advanced settings" onClose={() => setShowAdvanced(false)} stackLevel={1}>
+          <SettingsRow icon={Bell} label="Push notifications" onClick={() => setShowPush(true)} />
+          <SettingsRow icon={Sparkles} label="Appearance" onClick={() => setShowAppearance(true)} />
+          <SettingsRow
+            icon={Send}
+            label="Telegram alerts"
+            onClick={() => setShowTelegram(true)}
+            badge={notify?.enabled ? 'On' : null}
+            badgeTone={notify?.enabled ? 'sage' : 'muted'}
+          />
+          <SettingsRow icon={Download} label="Data" onClick={() => setShowData(true)} />
 
-      <div className="label">Appearance</div>
-      <BgAnimationToggle />
-
-      <div className="label">Telegram alerts</div>
-      <button onClick={() => setShowNotify(!showNotify)} className="tap" style={{
-        width: '100%', padding: 14, borderRadius: 14,
-        background: 'rgba(10,24,22,0.5)',
-        border: `1px solid ${notify?.enabled ? 'var(--sage)' : 'rgba(234,201,136,0.14)'}`,
-        color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, marginBottom: showNotify ? 12 : 24,
-      }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          <Bell size={15} style={{ color: notify?.enabled ? 'var(--sage)' : 'var(--text-3)' }} />
-          {notify?.enabled ? 'Enabled' : 'Setup'}
-        </span>
-        <ChevronRight size={16} style={{ transform: showNotify ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
-      </button>
-      {showNotify && <div className="fade-in" style={{ marginBottom: 24 }}><TelegramSetup notify={notify} onSaveNotify={onSaveNotify} /></div>}
-
-      <div className="label">Data</div>
-      <button onClick={exportCSV} className="tap" style={{ width: '100%', padding: 14, borderRadius: 14, background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)', color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
-        <Download size={16} /> Export catches as CSV
-      </button>
-
-      <div className="label" style={{ marginTop: 24 }}>Account</div>
-      <button onClick={signOut} className="tap" style={{
-        width: '100%', padding: 14, borderRadius: 14, background: 'rgba(220,107,88,0.08)',
-        border: '1px solid rgba(220,107,88,0.3)', color: 'var(--danger)',
-        display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
-      }}>
-        <LogOut size={16} /> Sign out
-      </button>
-
-      <div style={{ marginTop: 24, padding: '16px 0', borderTop: '1px solid rgba(234,201,136,0.1)', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
-        {catches.length} catches · {trips.length} trips
-      </div>
+          {showPush && (
+            <VaulModalShell title="Push notifications" onClose={() => setShowPush(false)} stackLevel={2}>
+              <PushSettings />
+            </VaulModalShell>
+          )}
+          {showAppearance && (
+            <VaulModalShell title="Appearance" onClose={() => setShowAppearance(false)} stackLevel={2}>
+              <BgAnimationToggle />
+            </VaulModalShell>
+          )}
+          {showTelegram && (
+            <VaulModalShell title="Telegram alerts" onClose={() => setShowTelegram(false)} stackLevel={2}>
+              <TelegramSetup notify={notify} onSaveNotify={onSaveNotify} />
+            </VaulModalShell>
+          )}
+          {showData && (
+            <VaulModalShell title="Data" onClose={() => setShowData(false)} stackLevel={2}>
+              <button onClick={exportCSV} className="tap" style={{
+                width: '100%', padding: 14, borderRadius: 14,
+                background: 'rgba(10,24,22,0.5)', border: '1px solid rgba(234,201,136,0.14)',
+                color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 12,
+                cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
+              }}>
+                <Download size={16} style={{ color: 'var(--gold-2)', flexShrink: 0 }} />
+                <span style={{ flex: 1, textAlign: 'left' }}>Export catches as CSV</span>
+              </button>
+            </VaulModalShell>
+          )}
+        </VaulModalShell>
+      )}
     </VaulModalShell>
   );
 }
